@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:hb_shared/hb_shared.dart';
 import 'package:provider/provider.dart';
 
+import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
+import '../../widgets/contact_details_sheet.dart';
 import '../orders/order_tracking_screen.dart';
 
 class CartScreen extends StatefulWidget {
@@ -26,6 +28,17 @@ class _CartScreenState extends State<CartScreen> {
     final cart = context.read<CartState>();
     final vendor = cart.vendor;
     if (vendor == null || cart.isEmpty) return;
+
+    // The backend rejects an order from a customer with no phone, so ask for
+    // one here rather than letting the order fail with an error message.
+    if (!(context.read<AuthState>().currentUser?.hasPhone ?? false)) {
+      final saved = await showContactDetailsSheet(
+        context,
+        title: 'How should the stall reach you?',
+        subtitle: 'They call this number when your order is ready for pickup.',
+      );
+      if (!saved || !mounted) return;
+    }
 
     setState(() => _placing = true);
     try {

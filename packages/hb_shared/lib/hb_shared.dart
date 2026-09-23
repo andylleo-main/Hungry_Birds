@@ -5,6 +5,7 @@ export 'src/models/order.dart';
 export 'src/api/api_client.dart';
 export 'src/api/api_exception.dart';
 export 'src/api/auth_storage.dart';
+export 'src/phone.dart';
 export 'src/theme/app_theme.dart';
 export 'src/widgets/empty_state.dart';
 export 'src/widgets/login_screen.dart';

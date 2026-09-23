@@ -118,7 +118,7 @@ uninstall/reinstall trap applies.
 ```bash
 cd apps/customer_app     # then repeat for apps/merchant_app
 flutter build apk --release --split-per-abi \
-  --dart-define=API_BASE_URL=https://api-production-0f01.up.railway.app
+  --dart-define=API_BASE_URL=https://<your-service>.up.railway.app
 ```
 
 Output lands in `build/app/outputs/flutter-apk/`. Hand out
@@ -136,45 +136,86 @@ Recipients need to allow "install from unknown sources" when opening the file.
 
 ## Deployment (Railway)
 
-Live API: `https://api-production-0f01.up.railway.app`
+No Dockerfile — Railway's Nixpacks builder detects Python from
+`requirements.txt`. Build, start, migrations and healthcheck all come from
+`backend/railway.json`, so the only thing you set by hand is the root
+directory.
 
-Point either app at it:
+### Deploying to a fresh Railway account
+
+1. **New Project** → **Empty Project**.
+2. **+ New** → **Database** → **Add PostgreSQL**.
+3. **+ New** → **Database** → **Add Redis**.
+4. **+ New** → **GitHub Repo** → pick this repo.
+5. On that service: **Settings** → **Root Directory** → `backend`.
+   Everything else is read from `backend/railway.json`. *This is the one
+   setting that can't configure itself — without it the build sees the Flutter
+   apps too and fails.*
+6. **Variables** → add the table below.
+7. **Settings** → **Networking** → **Generate Domain**.
+
+The first deploy runs `alembic upgrade head` before booting, then has to pass
+`/health/ready` — which queries Postgres *and* pings Redis — so a green deploy
+is itself proof both databases are wired up correctly.
+
+### Variables
+
+| Variable | Value |
+| --- | --- |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` — a Railway **reference**, not a pasted URL |
+| `REDIS_URL` | `${{Redis.REDIS_URL}}` — likewise |
+| `JWT_SECRET` | long random string: `openssl rand -hex 32` |
+| `RESEND_API_KEY` | from the Resend dashboard |
+| `RESEND_FROM_EMAIL` | `Hunger Birds <noreply@yourdomain>` — the domain must be verified in Resend |
+| `CLOUDINARY_CLOUD_NAME` | optional; photos are disabled until all three are set |
+| `CLOUDINARY_API_KEY` | optional |
+| `CLOUDINARY_API_SECRET` | optional |
+
+`ALLOWED_EMAIL_DOMAIN` (`bitmesra.ac.in`), `OTP_DEBUG_ECHO` (`false`) and
+`CORS_ORIGINS` (`*`) already default correctly — you only need to set them to
+change them.
+
+> **Never set `OTP_DEBUG_ECHO=true` on a public URL.** It returns the login
+> code in the API response, which lets anyone sign in as anyone. It exists so
+> you can log in locally without a Resend account.
+
+If Postgres and Redis are referenced correctly, a plain `postgres://` URL is
+upgraded to the asyncpg driver automatically — you don't need to rewrite it.
+
+### Seeding
+
+Once deployed, from the service's shell:
 
 ```bash
-flutter run --dart-define=API_BASE_URL=https://api-production-0f01.up.railway.app
+PYTHONPATH=. python scripts/seed.py
 ```
 
-The backend deploys from this repo with no Dockerfile — Railway's builder
-detects Python from `requirements.txt`. The service is configured with:
+Creates the `admin@bitmesra.ac.in` admin plus three demo stalls. It's
+idempotent (skips stalls that already exist) and deliberately *not* part of the
+deploy, so it can't resurrect demo stalls you've deleted. Log in as that
+address in either app to get admin access, then approve real vendors.
 
-- **Root directory** `/backend` (the repo also holds the Flutter apps)
-- **Pre-deploy** `alembic upgrade head` (runs once per deploy, not per replica)
-- **Start command** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- **Healthcheck** `/health/ready` — fails the deploy unless Postgres and Redis
-  both answer, so a bad release never takes traffic
+### Pointing the apps at it
 
-Alongside it run a Postgres and a Redis service. Required variables on the API
-service:
+```bash
+flutter run --dart-define=API_BASE_URL=https://<your-service>.up.railway.app
+```
 
-| Variable | Notes |
-| --- | --- |
-| `DATABASE_URL` | Postgres URL; a plain `postgres://` URL is upgraded to the asyncpg driver automatically |
-| `REDIS_URL` | Redis URL |
-| `JWT_SECRET` | Long random string |
-| `ALLOWED_EMAIL_DOMAIN` | `bitmesra.ac.in` |
-| `OTP_DEBUG_ECHO` | `false` in production |
-| `RESEND_API_KEY` | Required for OTP emails to actually send |
-| `RESEND_FROM_EMAIL` | Must use a domain verified in Resend |
-| `CLOUDINARY_*` | Cloud name, API key, API secret for menu/cover photos |
-
-Images are uploaded straight from the phone to Cloudinary's free tier using a
-short-lived signature minted by `GET /media/signature`, so image bytes never
-pass through the backend.
+Images upload straight from the phone to Cloudinary using a short-lived
+signature minted by `GET /media/signature`, so image bytes never pass through
+the backend.
 
 ## Things to know before going live
 
-- **Resend needs a verified domain** before it will deliver to real
-  `@bitmesra.ac.in` inboxes. Until then OTP emails won't arrive.
+- **Resend needs a verified domain of its own** before it will deliver to real
+  `@bitmesra.ac.in` inboxes. Until then OTP emails only reach your own Resend
+  account address, so nobody else can log in. Note you can't verify
+  `bitmesra.ac.in` itself — that's the institute's DNS — so register any cheap
+  domain, verify it in Resend, and send from it. Sending *to* institute
+  addresses is unaffected. DNS propagation is the slow part; start it early.
+- **Customers must add a phone number** before their first order — the backend
+  rejects an order without one, and the app prompts for it at checkout. It's
+  how a stall calls about a ready order, since everything is cash on pickup.
 - **Distributing the apps** is not covered here. Android can be sideloaded as
   an APK; iOS requires an Apple Developer account ($99/yr) even for TestFlight.
 - **No ratings or reviews** — deliberately out of scope for the first version.

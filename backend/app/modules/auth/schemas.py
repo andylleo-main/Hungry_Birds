@@ -30,9 +30,15 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: str
     full_name: str | None
+    phone: str | None
     role: UserRole
 
     model_config = {"from_attributes": True}
+
+
+class UpdateMe(BaseModel):
+    full_name: str | None = None
+    phone: str | None = None
 
 
 class TokenResponse(BaseModel):

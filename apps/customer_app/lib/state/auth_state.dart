@@ -39,6 +39,13 @@ class AuthState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Saves name/phone and keeps [currentUser] in sync. The backend normalizes
+  /// the phone, so we adopt whatever it returns rather than what was typed.
+  Future<void> updateProfile({String? fullName, String? phone}) async {
+    currentUser = await api.updateMe(fullName: fullName, phone: phone);
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     await api.logout();
     currentUser = null;

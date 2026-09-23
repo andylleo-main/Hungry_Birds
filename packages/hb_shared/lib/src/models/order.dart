@@ -65,6 +65,11 @@ class Order {
   final DateTime updatedAt;
   final List<OrderLineItem> items;
 
+  /// Customer contact, so a stall can call about a ready order. Only sent to
+  /// the order's own customer, the owning vendor, or an admin.
+  final String? customerName;
+  final String? customerPhone;
+
   const Order({
     required this.id,
     required this.vendorId,
@@ -76,6 +81,8 @@ class Order {
     required this.createdAt,
     required this.updatedAt,
     required this.items,
+    required this.customerName,
+    required this.customerPhone,
   });
 
   factory Order.fromJson(Map<String, dynamic> json) => Order(
@@ -91,5 +98,7 @@ class Order {
         items: (json['items'] as List)
             .map((e) => OrderLineItem.fromJson(e as Map<String, dynamic>))
             .toList(),
+        customerName: json['customer_name'] as String?,
+        customerPhone: json['customer_phone'] as String?,
       );
 }

@@ -168,6 +168,17 @@ class ApiClient {
     return AppUser.fromJson(data);
   }
 
+  /// Updates the signed-in user's own profile. Only the fields passed are
+  /// changed. The backend normalizes the phone to E.164 and rejects invalid
+  /// numbers, so the returned user is the source of truth.
+  Future<AppUser> updateMe({String? fullName, String? phone}) async {
+    final body = <String, dynamic>{};
+    if (fullName != null) body['full_name'] = fullName;
+    if (phone != null) body['phone'] = phone;
+    final data = await _request('PATCH', '/auth/me', body: body) as Map<String, dynamic>;
+    return AppUser.fromJson(data);
+  }
+
   Future<void> logout() => authStorage.clear();
 
   // --- Vendors ---

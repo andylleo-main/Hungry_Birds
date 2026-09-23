@@ -23,7 +23,9 @@ vendor_orders_router = APIRouter(prefix="/vendors/me/orders", tags=["orders"])
 
 async def _load_order_with_items(order_id: uuid.UUID, db: AsyncSession) -> Order | None:
     result = await db.execute(
-        select(Order).where(Order.id == order_id).options(selectinload(Order.items))
+        select(Order)
+        .where(Order.id == order_id)
+        .options(selectinload(Order.items), selectinload(Order.customer))
     )
     return result.scalar_one_or_none()
 
@@ -40,6 +42,14 @@ async def place_order(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Vendor not found")
     if not vendor.is_open:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This vendor is currently closed")
+
+    # COD pickup only works if the stall can reach the customer about a ready
+    # order, so a phone number is a hard requirement to place one.
+    if not user.phone:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Add a phone number to your profile so the stall can reach you about your order.",
+        )
 
     order = Order(customer_id=user.id, vendor_id=vendor.id, note=payload.note, total_amount=0)
     total = 0
@@ -84,7 +94,7 @@ async def list_my_orders(
     result = await db.execute(
         select(Order)
         .where(Order.customer_id == user.id)
-        .options(selectinload(Order.items))
+        .options(selectinload(Order.items), selectinload(Order.customer))
         .order_by(Order.created_at.desc())
     )
     return [OrderOut.model_validate(o) for o in result.scalars().all()]
@@ -145,7 +155,7 @@ async def list_vendor_orders(
     result = await db.execute(
         select(Order)
         .where(Order.vendor_id == vendor.id)
-        .options(selectinload(Order.items))
+        .options(selectinload(Order.items), selectinload(Order.customer))
         .order_by(Order.created_at.desc())
     )
     return [OrderOut.model_validate(o) for o in result.scalars().all()]

@@ -24,9 +24,16 @@ from app.modules.auth.schemas import (
     OTPVerify,
     RefreshRequest,
     TokenResponse,
+    UpdateMe,
     UserOut,
 )
-from app.modules.auth.service import assert_allowed_domain, normalize_email, request_otp, verify_otp
+from app.modules.auth.service import (
+    assert_allowed_domain,
+    normalize_email,
+    normalize_phone,
+    request_otp,
+    verify_otp,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -92,4 +99,25 @@ async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_
 
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)) -> UserOut:
+    return UserOut.model_validate(user)
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_me(
+    payload: UpdateMe,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserOut:
+    changes = payload.model_dump(exclude_unset=True)
+
+    if "phone" in changes and changes["phone"] is not None:
+        changes["phone"] = normalize_phone(changes["phone"])
+    if "full_name" in changes and changes["full_name"] is not None:
+        changes["full_name"] = changes["full_name"].strip() or None
+
+    for field, value in changes.items():
+        setattr(user, field, value)
+
+    await db.commit()
+    await db.refresh(user)
     return UserOut.model_validate(user)

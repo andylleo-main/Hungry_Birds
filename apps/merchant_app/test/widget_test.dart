@@ -41,7 +41,7 @@ void main() {
   test('a customer-role user is asked to apply', () async {
     final state = _stateWith(_clientReturning({}));
     await state.onAuthenticated(
-      AuthResult('a', 'r', const AppUser(id: 'u1', email: 'a@b.c', fullName: null, role: UserRole.customer)),
+      AuthResult('a', 'r', const AppUser(id: 'u1', email: 'a@b.c', fullName: null, phone: null, role: UserRole.customer)),
     );
     expect(state.stage, MerchantStage.needsApplication);
   });
@@ -58,7 +58,7 @@ void main() {
       },
     }));
     await state.onAuthenticated(
-      AuthResult('a', 'r', const AppUser(id: 'u1', email: 'a@b.c', fullName: null, role: UserRole.vendor)),
+      AuthResult('a', 'r', const AppUser(id: 'u1', email: 'a@b.c', fullName: null, phone: null, role: UserRole.vendor)),
     );
     expect(state.stage, MerchantStage.awaitingApproval);
   });
@@ -75,7 +75,7 @@ void main() {
       },
     }));
     await state.onAuthenticated(
-      AuthResult('a', 'r', const AppUser(id: 'u1', email: 'a@b.c', fullName: null, role: UserRole.vendor)),
+      AuthResult('a', 'r', const AppUser(id: 'u1', email: 'a@b.c', fullName: null, phone: null, role: UserRole.vendor)),
     );
     expect(state.stage, MerchantStage.ready);
     expect(state.vendor!.stallName, 'Momo Point');
@@ -84,7 +84,7 @@ void main() {
   test('a vendor-role user with no vendor row is sent back to apply', () async {
     final state = _stateWith(_clientReturning({'/vendors/me': 404}));
     await state.onAuthenticated(
-      AuthResult('a', 'r', const AppUser(id: 'u1', email: 'a@b.c', fullName: null, role: UserRole.vendor)),
+      AuthResult('a', 'r', const AppUser(id: 'u1', email: 'a@b.c', fullName: null, phone: null, role: UserRole.vendor)),
     );
     expect(state.stage, MerchantStage.needsApplication);
   });

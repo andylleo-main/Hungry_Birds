@@ -43,5 +43,9 @@ class OrderOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     items: list[OrderItemOut]
+    # Only ever reaches the order's own customer, the owning vendor, or an
+    # admin - every route returning OrderOut is ownership-gated.
+    customer_name: str | None
+    customer_phone: str | None
 
     model_config = {"from_attributes": True}

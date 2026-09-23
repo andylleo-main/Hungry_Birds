@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hb_shared/hb_shared.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../state/merchant_state.dart';
 import '../state/orders_state.dart';
@@ -181,12 +182,18 @@ class _OrderCardState extends State<_OrderCard> {
             ),
             Row(
               children: [
-                Text(
-                  'Collect ₹${order.totalAmount.toStringAsFixed(0)} in cash',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                Expanded(
+                  child: Text(
+                    'Collect ₹${order.totalAmount.toStringAsFixed(0)} in cash',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                 ),
               ],
             ),
+            if (order.customerPhone != null) ...[
+              const SizedBox(height: 10),
+              _CustomerContact(name: order.customerName, phone: order.customerPhone!),
+            ],
             if (widget.live) ...[
               const SizedBox(height: 12),
               _actions(order),
@@ -278,6 +285,63 @@ class _StatusChip extends StatelessWidget {
       child: Text(
         status.label,
         style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12),
+      ),
+    );
+  }
+}
+
+/// Customer name + phone with a one-tap call button. COD pickup means the
+/// stall regularly needs to ring the customer when an order is ready.
+class _CustomerContact extends StatelessWidget {
+  const _CustomerContact({required this.name, required this.phone});
+
+  final String? name;
+  final String phone;
+
+  Future<void> _call(BuildContext context) async {
+    final uri = Uri(scheme: 'tel', path: phone);
+    if (!await launchUrl(uri)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start a call. Number: $phone')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.background,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.person_outline, size: 18, color: AppTheme.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name?.isNotEmpty == true ? name! : 'Customer',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                Text(
+                  '+91 ${formatPhoneForDisplay(phone)}',
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => _call(context),
+            icon: const Icon(Icons.call, size: 16),
+            label: const Text('Call'),
+          ),
+        ],
       ),
     );
   }

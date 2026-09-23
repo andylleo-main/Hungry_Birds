@@ -3,6 +3,7 @@ import 'package:hb_shared/hb_shared.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/auth_state.dart';
+import '../../widgets/contact_details_sheet.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -52,6 +53,30 @@ class ProfileScreen extends StatelessWidget {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.phone_outlined, color: AppTheme.textSecondary),
+              title: Text(
+                user != null && user.hasPhone
+                    ? '+91 ${formatPhoneForDisplay(user.phone!)}'
+                    : 'Add a phone number',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                user != null && user.hasPhone
+                    ? 'Stalls call this number when your order is ready'
+                    : 'Required before you can place an order',
+                style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+              ),
+              trailing: const Icon(Icons.edit_outlined, size: 18),
+              onTap: () => showContactDetailsSheet(
+                context,
+                title: 'Contact details',
+                subtitle: 'Stalls use this to reach you about your order.',
               ),
             ),
           ),

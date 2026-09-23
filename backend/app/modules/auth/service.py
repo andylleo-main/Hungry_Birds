@@ -18,6 +18,30 @@ def normalize_email(email: str) -> str:
     return f"{local}@{domain}"
 
 
+def normalize_phone(phone: str) -> str:
+    """Normalize an Indian mobile number to E.164 (+919876543210).
+
+    Accepts what people actually type: spaces, dashes, a leading 0, a +91 or 91
+    country prefix. Rejects anything that isn't a valid Indian mobile, which
+    start with 6-9. Raises HTTPException so callers can pass user input
+    straight through.
+    """
+    digits = "".join(ch for ch in phone if ch.isdigit())
+
+    # Strip the country code or a domestic trunk '0' to get the 10-digit number.
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+
+    if len(digits) != 10 or digits[0] not in "6789":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Enter a valid 10-digit Indian mobile number.",
+        )
+    return f"+91{digits}"
+
+
 def assert_allowed_domain(email: str, settings: Settings) -> None:
     domain = email.rsplit("@", 1)[-1].lower()
     if domain != settings.allowed_email_domain.lower():

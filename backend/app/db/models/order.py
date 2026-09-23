@@ -39,6 +39,21 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
+    # Read-only link used to surface the customer's name/phone to the stall.
+    # ALWAYS eager-load this before serialising an Order: OrderOut is built in
+    # async paths (including the WebSocket broadcast) where a lazy load raises
+    # MissingGreenlet. See _load_order_with_items in the orders router.
+    customer: Mapped["User"] = relationship(lazy="raise")
+
+    # Flattened onto the order so OrderOut picks them up by attribute name,
+    # keeping every existing OrderOut.model_validate(order) call site unchanged.
+    @property
+    def customer_phone(self) -> str | None:
+        return self.customer.phone
+
+    @property
+    def customer_name(self) -> str | None:
+        return self.customer.full_name
 
 
 class OrderItem(UUIDPrimaryKeyMixin, Base):
