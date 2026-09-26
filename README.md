@@ -136,10 +136,17 @@ Recipients need to allow "install from unknown sources" when opening the file.
 
 ## Deployment (Railway)
 
-No Dockerfile — Railway's Nixpacks builder detects Python from
-`requirements.txt`. Build, start, migrations and healthcheck all come from
-`backend/railway.json`, so the only thing you set by hand is the root
-directory.
+Build, start, migrations and healthcheck all come from `backend/railway.json`,
+so the only thing you set by hand is the root directory.
+
+The backend builds from `backend/Dockerfile`. It started on Railway's Nixpacks
+builder, but that produced an image missing `libstdc++.so.6` — which greenlet's
+compiled extension links against, and SQLAlchemy's async engine routes every
+query through greenlet. The result was an app that booted, passed `/health`,
+and then failed on its first database call while `alembic upgrade head` failed
+the same way. Pinning `python:3.11-slim` makes the C runtime predictable rather
+than something rediscovered per deploy. You don't need Docker installed —
+Railway builds the image.
 
 ### Deploying to a fresh Railway account
 
@@ -158,16 +165,19 @@ The first deploy runs migrations before booting, then has to pass
 `/health/ready` — which queries Postgres *and* pings Redis — so a green deploy
 is itself proof both databases are wired up correctly.
 
-Migrations run as `python -m alembic.config upgrade head`, not the bare
-`alembic` console script: the deploy container resolves `python` but does not
-put the installed entry-point scripts on `PATH`, so `alembic upgrade head`
-fails with *command not found* and the schema silently stays behind. The same
-applies in the service's **Console** tab — use the `python -m` form there too:
+Migrations run as `alembic upgrade head`. The Docker image installs packages
+with pip into `/usr/local`, which is on PATH, so this works both as the
+pre-deploy step and in the service's **Console** tab:
 
 ```bash
-PYTHONPATH=. python -m alembic.config current      # which revision is applied
-PYTHONPATH=. python -m alembic.config upgrade head # apply the rest
+alembic current      # which revision is applied
+alembic upgrade head # apply the rest
 ```
+
+If you ever see `alembic: command not found` in the Console, you're on a
+Nixpacks-built image rather than this Dockerfile — there the virtualenv lives
+at `/opt/venv` and isn't on the shell's PATH, so use
+`/opt/venv/bin/alembic` instead.
 
 `/health/ready` does **not** catch a missed migration — it only runs a trivial
 query, so it passes against an out-of-date schema while every real query
