@@ -154,9 +154,24 @@ directory.
 6. **Variables** → add the table below.
 7. **Settings** → **Networking** → **Generate Domain**.
 
-The first deploy runs `alembic upgrade head` before booting, then has to pass
+The first deploy runs migrations before booting, then has to pass
 `/health/ready` — which queries Postgres *and* pings Redis — so a green deploy
 is itself proof both databases are wired up correctly.
+
+Migrations run as `python -m alembic.config upgrade head`, not the bare
+`alembic` console script: the deploy container resolves `python` but does not
+put the installed entry-point scripts on `PATH`, so `alembic upgrade head`
+fails with *command not found* and the schema silently stays behind. The same
+applies in the service's **Console** tab — use the `python -m` form there too:
+
+```bash
+PYTHONPATH=. python -m alembic.config current      # which revision is applied
+PYTHONPATH=. python -m alembic.config upgrade head # apply the rest
+```
+
+`/health/ready` does **not** catch a missed migration — it only runs a trivial
+query, so it passes against an out-of-date schema while every real query
+against `users` fails with *column users.phone does not exist*.
 
 ### Variables
 
