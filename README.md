@@ -180,14 +180,12 @@ and then failed on its first database call while `alembic upgrade head` failed
 the same way. Pinning a Debian base makes the C runtime predictable rather
 than something rediscovered per deploy.
 
-It uses the full `python:3.11` image rather than `-slim`. The slim build
-compiles Python and then purges its build dependencies, and the C++ runtime
-goes with them — so slim needed `apt-get install libstdc++6` layered back on
-top, which made every build depend on reaching a Debian mirror. That step
-failed on Railway's builder. The full image is built on `buildpack-deps`, keeps
-`g++`, and never purges it, so the library is simply present and the build has
-no apt step to fail. The cost is image size, roughly 1GB against 150MB — a
-slower first pull and nothing else at this scale. You don't need Docker installed —
+The slim build compiles Python and then purges its build dependencies, and the
+C++ runtime goes with them — so the Dockerfile installs `libstdc++6` back
+explicitly. That step was once blamed for a failed build and the image was
+moved to the full `python:3.11` to avoid it; the diagnosis was wrong (see the
+Root Directory note above) and it has since been moved back, because slim is
+~150MB against ~1GB. You don't need Docker installed —
 Railway builds the image.
 
 ### Deploying to a fresh Railway account
