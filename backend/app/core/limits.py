@@ -32,6 +32,12 @@ OTP_VERIFY_PER_IP = (Limit(10, MINUTE), Limit(60, HOUR))
 # token-guessing surface and free load. No honest client refreshes this often.
 TOKEN_REFRESH_PER_IP = (Limit(20, MINUTE),)
 
+# A password is guessable in a way a random 6-digit code plus a 5-minute
+# expiry is not, and this one opens the highest-privilege account in the
+# system. Tight on purpose, and it fails closed: if Redis is unreachable the
+# endpoint refuses rather than becoming unlimited.
+ADMIN_LOGIN_PER_IP = (Limit(5, MINUTE), Limit(20, HOUR))
+
 # --- Profile ----------------------------------------------------------------
 PROFILE_READ = (Limit(120, MINUTE),)
 PROFILE_WRITE = (Limit(20, MINUTE),)

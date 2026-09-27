@@ -292,6 +292,47 @@ Images upload straight from the phone to Cloudinary using a short-lived
 signature minted by `GET /media/signature`, so image bytes never pass through
 the backend.
 
+## Admin sign-in without an OTP
+
+Admins can sign in with a password instead of waiting for a code. That matters
+because the admin is exactly the account you need when email is the thing that
+has broken, and a code you cannot receive is a bad way to be locked out of your
+own service.
+
+Set it up once, from `backend/`:
+
+```bash
+PYTHONPATH=. python scripts/set_admin_password.py
+```
+
+It prompts without echoing and prints a hash. Put that in Railway as
+`ADMIN_PASSWORD_HASH`. The password itself is never stored anywhere and cannot
+be recovered from the hash, so keep it in a password manager.
+
+The login page then offers **Admin sign-in** beneath the normal form.
+
+It is a second way in, so it is built like one:
+
+- **Off unless configured.** With `ADMIN_PASSWORD_HASH` empty the endpoint
+  returns 404 — the door does not exist rather than standing locked.
+- **The role is what grants access, not the password.** A customer who somehow
+  learned the password still gets 401; only an account already holding the
+  admin role can use it.
+- **One message for every failure.** Unknown address, non-admin account and
+  wrong password all return the same 401, and an unknown address spends the
+  same time as a real check, so nobody can map which addresses are admins
+  before they start guessing.
+- **Five attempts a minute, twenty an hour, per address**, and that limiter
+  *fails closed* — if Redis is unreachable the endpoint refuses rather than
+  becoming an unlimited guessing surface. A password is guessable in a way a
+  random six-digit code with a five-minute life is not.
+- Hashed with scrypt (stdlib, no new dependency), salted per password, with the
+  work factor stored alongside so it can be raised later.
+
+Nothing about the resulting session is special: it is the same rotating,
+revocable session the OTP flow issues, and it appears in *Where you're signed
+in* like any other device.
+
 ## Rate limiting
 
 Every endpoint is rate limited, and the limits live in one file —

@@ -38,6 +38,13 @@ class OTPVerify(BaseModel):
         return v
 
 
+class AdminLogin(BaseModel):
+    email: EmailStr
+    # Bounded only to keep an absurd value out of the hashing function; there
+    # is no upper limit on a sensible password's length.
+    password: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+
+
 class UserOut(BaseModel):
     id: uuid.UUID
     email: str

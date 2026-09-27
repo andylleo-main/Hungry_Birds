@@ -11,6 +11,7 @@ interface AuthValue {
   isAdmin: boolean;
   requestOtp: (email: string) => Promise<{ debugCode: string | null; resendAfter: number }>;
   verifyOtp: (email: string, code: string) => Promise<void>;
+  adminLogin: (email: string, password: string) => Promise<void>;
   updateProfile: (changes: { full_name?: string; phone?: string }) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -74,6 +75,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('signedIn');
   }, []);
 
+  const adminLogin = useCallback(async (email: string, password: string) => {
+    const result = await api.adminLogin(email, password);
+    setUser(result.user);
+    setStatus('signedIn');
+  }, []);
+
   const updateProfile = useCallback(
     async (changes: { full_name?: string; phone?: string }) => {
       // Adopt what the backend returns - it normalizes the phone.
@@ -97,10 +104,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAdmin: user?.role === 'admin',
       requestOtp,
       verifyOtp,
+      adminLogin,
       updateProfile,
       signOut,
     }),
-    [status, user, requestOtp, verifyOtp, updateProfile, signOut],
+    [status, user, requestOtp, verifyOtp, adminLogin, updateProfile, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

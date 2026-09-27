@@ -174,6 +174,18 @@ export const api = {
     return result;
   },
 
+  /** Admin sign-in with a password instead of an OTP. Only ever succeeds for
+   *  an account that already holds the admin role, and only when the server
+   *  has ADMIN_PASSWORD_HASH set - otherwise the route 404s. */
+  async adminLogin(email: string, password: string): Promise<AuthResult> {
+    const result = await request<AuthResult>('POST', '/auth/admin/login', {
+      body: { email, password },
+      auth: false,
+    });
+    tokens.save(result.access_token, result.refresh_token);
+    return result;
+  },
+
   me: () => request<AppUser>('GET', '/auth/me'),
 
   /** Restores a session from the refresh token alone, for a returning visitor

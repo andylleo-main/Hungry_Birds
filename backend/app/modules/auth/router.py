@@ -11,10 +11,12 @@ from app.core.deps import get_current_user
 from app.core.ratelimit import limit_by_ip, limit_by_user
 from app.core.redis import get_redis
 from app.core.security import create_access_token
-from app.db.models.user import User
+from app.db.models.user import User, UserRole
 from app.db.session import get_db
+from app.modules.auth.passwords import verify_password, waste_time_like_a_verification
 from app.modules.auth.schemas import (
     AccessTokenResponse,
+    AdminLogin,
     OTPRequest,
     OTPRequestResponse,
     OTPVerify,
@@ -138,6 +140,66 @@ async def refresh_token(
     return AccessTokenResponse(
         access_token=create_access_token(str(user.id)),
         refresh_token=new_refresh,
+        user=UserOut.model_validate(user),
+    )
+
+
+@router.post(
+    "/admin/login",
+    response_model=TokenResponse,
+    dependencies=[
+        Depends(limit_by_ip("admin_login", *limits.ADMIN_LOGIN_PER_IP, fail_open=False))
+    ],
+)
+async def admin_login(
+    payload: AdminLogin,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Sign in an admin with a password, skipping the OTP email.
+
+    This exists because the admin is precisely the account you need when email
+    is the thing that has broken, and waiting on a code you cannot receive is
+    a bad way to be locked out of your own service.
+
+    It is a second door, so it is built like one. It only opens for an account
+    that already holds the admin role - the password alone grants nothing.
+    It is off unless ADMIN_PASSWORD_HASH is set, it is rate limited hard, and
+    the limiter fails closed so that an unreachable Redis cannot turn it into
+    an unlimited guessing surface. Everything after this point is the ordinary
+    session flow; nothing about it is privileged.
+    """
+    if not settings.admin_password_hash:
+        # Not configured: behave as though the route does not exist rather
+        # than advertising a door that is merely locked.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+
+    email = normalize_email(payload.email)
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    # One message for every failure - unknown address, non-admin account, wrong
+    # password. Distinguishing them would let someone map which addresses are
+    # admins before they start guessing.
+    if user is None or user.role != UserRole.ADMIN:
+        # Spend the same time a real check would, so a wrong address is not
+        # measurably faster to reject than a wrong password.
+        waste_time_like_a_verification()
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+
+    if not verify_password(payload.password, settings.admin_password_hash):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+
+    _, refresh_token = await create_session(
+        user.id,
+        db,
+        lifetime_days=settings.refresh_token_expire_days,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return TokenResponse(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=refresh_token,
         user=UserOut.model_validate(user),
     )
 
