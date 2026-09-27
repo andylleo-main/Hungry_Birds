@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import limits
 from app.core.deps import require_role
+from app.core.ratelimit import limit_by_user
 from app.db.models.user import UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
@@ -15,7 +17,11 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=list[VendorOut])
+@router.get(
+    "",
+    response_model=list[VendorOut],
+    dependencies=[Depends(limit_by_user("admin_read", *limits.ADMIN_READ))],
+)
 async def list_vendors_for_admin(
     pending_only: bool = False, db: AsyncSession = Depends(get_db)
 ) -> list[VendorOut]:
@@ -33,7 +39,11 @@ async def _get_vendor_or_404(vendor_id: uuid.UUID, db: AsyncSession) -> Vendor:
     return vendor
 
 
-@router.post("/{vendor_id}/approve", response_model=VendorOut)
+@router.post(
+    "/{vendor_id}/approve",
+    response_model=VendorOut,
+    dependencies=[Depends(limit_by_user("admin_write", *limits.ADMIN_WRITE))],
+)
 async def approve_vendor(vendor_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> VendorOut:
     vendor = await _get_vendor_or_404(vendor_id, db)
     vendor.is_approved = True
@@ -42,7 +52,11 @@ async def approve_vendor(vendor_id: uuid.UUID, db: AsyncSession = Depends(get_db
     return VendorOut.model_validate(vendor)
 
 
-@router.post("/{vendor_id}/suspend", response_model=VendorOut)
+@router.post(
+    "/{vendor_id}/suspend",
+    response_model=VendorOut,
+    dependencies=[Depends(limit_by_user("admin_write", *limits.ADMIN_WRITE))],
+)
 async def suspend_vendor(vendor_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> VendorOut:
     vendor = await _get_vendor_or_404(vendor_id, db)
     vendor.is_approved = False

@@ -52,4 +52,10 @@ COPY backend/ ./
 COPY --from=web /web/dist ./static
 
 # Railway injects PORT; the default keeps `docker run` usable locally.
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# --no-proxy-headers is deliberate. Uvicorn rewrites request.client from
+# X-Forwarded-For by default, taking the LEFTMOST entry - the one a caller can
+# forge. The rate limiter needs the opposite (see client_ip in
+# app/core/ratelimit.py), so uvicorn is told to leave the request alone and the
+# header is interpreted in one place, with TRUSTED_PROXY_COUNT saying how many
+# hops to trust.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-proxy-headers"]

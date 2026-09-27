@@ -3,14 +3,16 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import limits
 from app.core.config import get_settings
 from app.core.logging import install_log_redaction
+from app.core.ratelimit import Limit, client_ip, consume, limit_by_ip
 from app.core.redis import get_redis
 from app.db.session import get_db
 from app.modules.admin.router import router as admin_router
@@ -26,14 +28,82 @@ settings = get_settings()
 
 install_log_redaction()
 
-if settings.otp_debug_echo:
-    logging.getLogger('uvicorn.error').warning(
+_startup_log = logging.getLogger('uvicorn.error')
+
+if settings.debug_echo_enabled:
+    _startup_log.warning(
         'OTP_DEBUG_ECHO is ON: login codes are returned in API responses. '
         'This is a full authentication bypass - never run a public deployment '
         'with it enabled.'
     )
+elif settings.otp_debug_echo:
+    _startup_log.info(
+        'OTP_DEBUG_ECHO is set but ignored because ENVIRONMENT is not '
+        'development. Login codes will not be echoed.'
+    )
+
+if settings.cors_origin_list == ['*']:
+    _startup_log.warning(
+        'CORS_ORIGINS is "*": every website may call this API. The web app is '
+        'served from this same origin, so the correct value is your own domain '
+        '- or empty, which disables cross-origin access entirely.'
+    )
 
 app = FastAPI(title="Hunger Birds API")
+
+# A blanket ceiling per address, underneath the per-endpoint limits in
+# app/core/limits.py. Those are sized for each endpoint's specific abuse; this
+# one catches the general case - a client hammering the API broadly, or
+# spreading a scrape across many endpoints to stay under each individual cap.
+_GLOBAL_LIMIT = (Limit(settings.global_rate_limit_requests, settings.global_rate_limit_seconds),)
+
+# Exempt from both middlewares below. Static assets are many-per-pageload and
+# served from memory. /health is a bare liveness reply that touches nothing, and
+# the platform polls it on a schedule - throttling it would read as a dead
+# service and roll the release back. /health/ready is deliberately NOT exempt:
+# it queries Postgres and pings Redis, so it gets its own generous limit on the
+# route itself rather than a free pass.
+_UNMETERED_PREFIXES = ('/assets/', '/favicon')
+_UNMETERED_PATHS = ('/health',)
+
+
+@app.middleware('http')
+async def enforce_request_limits(request: Request, call_next):
+    path = request.url.path
+    if path in _UNMETERED_PATHS or path.startswith(_UNMETERED_PREFIXES):
+        return await call_next(request)
+
+    # Refuse an oversized body before anything tries to buffer or parse it.
+    declared = request.headers.get('content-length')
+    if declared is not None:
+        try:
+            if int(declared) > settings.max_request_bytes:
+                return JSONResponse(
+                    {'detail': 'Request body too large'},
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                )
+        except ValueError:
+            return JSONResponse(
+                {'detail': 'Invalid Content-Length'},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+    try:
+        await consume(
+            get_redis(),
+            'global',
+            f'ip:{client_ip(request, settings)}',
+            _GLOBAL_LIMIT,
+        )
+    except HTTPException as exc:
+        return JSONResponse(
+            {'detail': exc.detail},
+            status_code=exc.status_code,
+            headers=exc.headers or {},
+        )
+
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -71,7 +141,10 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/health/ready")
+@app.get(
+    "/health/ready",
+    dependencies=[Depends(limit_by_ip("health_ready", *limits.HEALTH_READY))],
+)
 async def readiness(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),

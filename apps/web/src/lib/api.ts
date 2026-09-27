@@ -164,14 +164,25 @@ export const api = {
 };
 
 /**
- * WebSocket URL for live updates on a single order. Resolved against the
- * page's own origin when API_BASE_URL is empty (same-origin production), so
- * this works without knowing the deployed hostname.
+ * WebSocket URL for live updates on a single order.
+ *
+ * A browser can't set headers on a WebSocket handshake, so whatever authorises
+ * the socket has to sit in the URL - and URLs leak, into server logs, proxy
+ * logs and browser history. So the access token is never put there. It buys a
+ * ticket over a normal authenticated request first: single-use, dead in 30
+ * seconds, and worthless to anyone who finds it in a log afterwards.
+ *
+ * Resolved against the page's own origin when API_BASE_URL is relative
+ * (same-origin production), so this works without knowing the deployed host.
  */
-export function orderSocketUrl(orderId: string): string {
+export async function orderSocketUrl(orderId: string): Promise<string> {
+  const { ticket } = await request<{ ticket: string; expires_in: number }>(
+    'POST',
+    '/realtime/ticket',
+  );
   const url = new URL(`${API_BASE_URL}/ws/orders/${orderId}`, window.location.origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.searchParams.set('token', tokens.access ?? '');
+  url.searchParams.set('ticket', ticket);
   return url.toString();
 }
 

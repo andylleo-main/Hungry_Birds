@@ -49,20 +49,24 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         _order = order;
         _error = null;
       });
-      _connectSocket();
+      unawaited(_connectSocket());
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e);
     }
   }
 
-  void _connectSocket() {
+  // Async because the socket URL needs a ticket fetched from the API first
+  // (see ApiClient._wsUri); failing to get one just schedules a reconnect.
+  Future<void> _connectSocket() async {
     _subscription?.cancel();
     _channel?.sink.close();
 
     final api = context.read<ApiClient>();
     try {
-      final channel = WebSocketChannel.connect(api.orderSocketUrl(widget.orderId));
+      final url = await api.orderSocketUrl(widget.orderId);
+      if (!mounted) return;
+      final channel = WebSocketChannel.connect(url);
       _channel = channel;
       _subscription = channel.stream.listen(
         (event) {

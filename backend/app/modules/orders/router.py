@@ -6,7 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import limits
 from app.core.deps import get_current_user
+from app.core.ratelimit import limit_by_user
 from app.core.redis import get_redis
 from app.db.models.menu import MenuItem
 from app.db.models.order import Order, OrderItem, OrderStatus
@@ -30,7 +32,12 @@ async def _load_order_with_items(order_id: uuid.UUID, db: AsyncSession) -> Order
     return result.scalar_one_or_none()
 
 
-@router.post("", response_model=OrderOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=OrderOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_by_user("place_order", *limits.PLACE_ORDER))],
+)
 async def place_order(
     payload: OrderCreate,
     user: User = Depends(get_current_user),
@@ -87,7 +94,11 @@ async def place_order(
     return OrderOut.model_validate(order)
 
 
-@router.get("", response_model=list[OrderOut])
+@router.get(
+    "",
+    response_model=list[OrderOut],
+    dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
+)
 async def list_my_orders(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> list[OrderOut]:
@@ -117,7 +128,11 @@ async def _get_order_for_user(order_id: uuid.UUID, user: User, db: AsyncSession)
     return order
 
 
-@router.get("/{order_id}", response_model=OrderOut)
+@router.get(
+    "/{order_id}",
+    response_model=OrderOut,
+    dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
+)
 async def get_order(
     order_id: uuid.UUID,
     user: User = Depends(get_current_user),
@@ -127,7 +142,11 @@ async def get_order(
     return OrderOut.model_validate(order)
 
 
-@router.post("/{order_id}/cancel", response_model=OrderOut)
+@router.post(
+    "/{order_id}/cancel",
+    response_model=OrderOut,
+    dependencies=[Depends(limit_by_user("cancel_order", *limits.CANCEL_ORDER))],
+)
 async def cancel_order(
     order_id: uuid.UUID,
     user: User = Depends(get_current_user),
@@ -148,7 +167,11 @@ async def cancel_order(
     return OrderOut.model_validate(order)
 
 
-@vendor_orders_router.get("", response_model=list[OrderOut])
+@vendor_orders_router.get(
+    "",
+    response_model=list[OrderOut],
+    dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
+)
 async def list_vendor_orders(
     vendor: Vendor = Depends(get_own_vendor), db: AsyncSession = Depends(get_db)
 ) -> list[OrderOut]:
@@ -161,7 +184,11 @@ async def list_vendor_orders(
     return [OrderOut.model_validate(o) for o in result.scalars().all()]
 
 
-@vendor_orders_router.patch("/{order_id}/status", response_model=OrderOut)
+@vendor_orders_router.patch(
+    "/{order_id}/status",
+    response_model=OrderOut,
+    dependencies=[Depends(limit_by_user("order_status", *limits.ORDER_STATUS_UPDATE))],
+)
 async def update_order_status(
     order_id: uuid.UUID,
     payload: OrderStatusUpdate,

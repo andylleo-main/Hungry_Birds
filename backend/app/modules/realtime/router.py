@@ -2,35 +2,61 @@ import asyncio
 import contextlib
 import uuid
 
-import jwt
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import limits
+from app.core.config import Settings, get_settings
+from app.core.deps import get_current_user
+from app.core.ratelimit import client_ip, consume, limit_by_user
 from app.core.redis import get_redis
-from app.core.security import TokenType, decode_token
 from app.db.models.order import Order
 from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
 from app.modules.orders.service import order_channel, vendor_channel
+from app.modules.realtime.service import (
+    acquire_socket_slot,
+    issue_ticket,
+    redeem_ticket,
+    release_socket_slot,
+)
 
 router = APIRouter(tags=["realtime"])
 
 CLOSE_UNAUTHORIZED = 4401
+CLOSE_RATE_LIMITED = 4429
 
 
-async def _authenticate_ws(token: str, db: AsyncSession) -> User | None:
-    try:
-        payload = decode_token(token)
-    except jwt.PyJWTError:
-        return None
-    if payload.get("type") != TokenType.ACCESS.value:
-        return None
-    try:
-        user_id = uuid.UUID(payload["sub"])
-    except (KeyError, ValueError):
+class WSTicket(BaseModel):
+    ticket: str
+    expires_in: int
+
+
+@router.post(
+    "/realtime/ticket",
+    response_model=WSTicket,
+    dependencies=[Depends(limit_by_user("ws_ticket", *limits.WS_TICKET))],
+)
+async def create_ws_ticket(
+    user: User = Depends(get_current_user),
+    redis: Redis = Depends(get_redis),
+) -> WSTicket:
+    """Exchange an access token for a single-use ticket to open a socket with.
+
+    The token stays in an Authorization header where it belongs; only the
+    throwaway ticket ever appears in a URL. See realtime/service.py.
+    """
+    ticket, ttl = await issue_ticket(user.id, redis)
+    return WSTicket(ticket=ticket, expires_in=ttl)
+
+
+async def _authenticate_ws(ticket: str, db: AsyncSession, redis: Redis) -> User | None:
+    user_id = await redeem_ticket(ticket, redis)
+    if user_id is None:
         return None
     return await db.get(User, user_id)
 
@@ -55,17 +81,44 @@ async def _watch_for_disconnect(websocket: WebSocket) -> None:
         await websocket.receive_text()
 
 
+async def _guard_handshake(websocket: WebSocket, redis: Redis, settings: Settings) -> bool:
+    """Cap handshakes per address before any work is done.
+
+    Sending handshakes is cheap; serving one costs us a Redis pub/sub
+    subscription, so an unlimited reconnect loop is a way to exhaust
+    connections with a single client.
+    """
+    address = client_ip(websocket, settings)
+    try:
+        await consume(
+            redis,
+            "ws_connect",
+            f"ip:{address}",
+            limits.WS_CONNECT_PER_IP,
+        )
+    except HTTPException:
+        # close() before accept() rejects the handshake outright, which is all a
+        # flooding client deserves.
+        await websocket.close(code=CLOSE_RATE_LIMITED)
+        return False
+    return True
+
+
 @router.websocket("/ws/orders/{order_id}")
 async def ws_order_tracking(
     websocket: WebSocket,
     order_id: uuid.UUID,
-    token: str = Query(...),
+    ticket: str = Query(...),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> None:
+    if not await _guard_handshake(websocket, redis, settings):
+        return
+
     await websocket.accept()
 
-    user = await _authenticate_ws(token, db)
+    user = await _authenticate_ws(ticket, db, redis)
     order = await db.get(Order, order_id) if user is not None else None
 
     authorized = False
@@ -82,20 +135,24 @@ async def ws_order_tracking(
         await websocket.close(code=CLOSE_UNAUTHORIZED)
         return
 
-    await _run_socket_after_accept(websocket, redis, order_channel(order_id))
+    await _run_socket_after_accept(websocket, redis, order_channel(order_id), user)
 
 
 @router.websocket("/ws/vendor/{vendor_id}")
 async def ws_vendor_queue(
     websocket: WebSocket,
     vendor_id: uuid.UUID,
-    token: str = Query(...),
+    ticket: str = Query(...),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> None:
+    if not await _guard_handshake(websocket, redis, settings):
+        return
+
     await websocket.accept()
 
-    user = await _authenticate_ws(token, db)
+    user = await _authenticate_ws(ticket, db, redis)
     vendor = await db.get(Vendor, vendor_id) if user is not None else None
 
     authorized = (
@@ -108,10 +165,16 @@ async def ws_vendor_queue(
         await websocket.close(code=CLOSE_UNAUTHORIZED)
         return
 
-    await _run_socket_after_accept(websocket, redis, vendor_channel(vendor_id))
+    await _run_socket_after_accept(websocket, redis, vendor_channel(vendor_id), user)
 
 
-async def _run_socket_after_accept(websocket: WebSocket, redis: Redis, channel: str) -> None:
+async def _run_socket_after_accept(
+    websocket: WebSocket, redis: Redis, channel: str, user: User
+) -> None:
+    if not await acquire_socket_slot(user.id, redis, limits.MAX_SOCKETS_PER_USER):
+        await websocket.close(code=CLOSE_RATE_LIMITED)
+        return
+
     pump_task = asyncio.create_task(_pump_channel_to_socket(websocket, redis, channel))
     watch_task = asyncio.create_task(_watch_for_disconnect(websocket))
     try:
@@ -122,3 +185,5 @@ async def _run_socket_after_accept(websocket: WebSocket, redis: Redis, channel: 
         for task in (pump_task, watch_task):
             with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, Exception):
                 await task
+        with contextlib.suppress(Exception):
+            await release_socket_slot(user.id, redis)

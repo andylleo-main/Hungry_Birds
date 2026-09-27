@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import limits
+from app.core.ratelimit import limit_by_user
 from app.db.models.menu import MenuCategory, MenuItem
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
@@ -40,7 +42,12 @@ async def _get_own_item(vendor: Vendor, item_id: uuid.UUID, db: AsyncSession) ->
     return item
 
 
-@router.post("/categories", response_model=CategoryOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/categories",
+    response_model=CategoryOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_by_user("menu_write", *limits.MENU_WRITE))],
+)
 async def create_category(
     payload: CategoryCreate,
     vendor: Vendor = Depends(get_own_vendor),
@@ -53,7 +60,11 @@ async def create_category(
     return CategoryOut.model_validate(category)
 
 
-@router.get("/categories", response_model=list[CategoryOut])
+@router.get(
+    "/categories",
+    response_model=list[CategoryOut],
+    dependencies=[Depends(limit_by_user("menu_read", *limits.PROFILE_READ))],
+)
 async def list_categories(
     vendor: Vendor = Depends(get_own_vendor), db: AsyncSession = Depends(get_db)
 ) -> list[CategoryOut]:
@@ -63,7 +74,11 @@ async def list_categories(
     return [CategoryOut.model_validate(c) for c in result.scalars().all()]
 
 
-@router.patch("/categories/{category_id}", response_model=CategoryOut)
+@router.patch(
+    "/categories/{category_id}",
+    response_model=CategoryOut,
+    dependencies=[Depends(limit_by_user("menu_write", *limits.MENU_WRITE))],
+)
 async def update_category(
     category_id: uuid.UUID,
     payload: CategoryUpdate,
@@ -78,7 +93,11 @@ async def update_category(
     return CategoryOut.model_validate(category)
 
 
-@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/categories/{category_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(limit_by_user("menu_write", *limits.MENU_WRITE))],
+)
 async def delete_category(
     category_id: uuid.UUID,
     vendor: Vendor = Depends(get_own_vendor),
@@ -89,7 +108,12 @@ async def delete_category(
     await db.commit()
 
 
-@router.post("/items", response_model=ItemOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/items",
+    response_model=ItemOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_by_user("menu_write", *limits.MENU_WRITE))],
+)
 async def create_item(
     payload: ItemCreate,
     vendor: Vendor = Depends(get_own_vendor),
@@ -105,7 +129,11 @@ async def create_item(
     return ItemOut.model_validate(item)
 
 
-@router.get("/items", response_model=list[ItemOut])
+@router.get(
+    "/items",
+    response_model=list[ItemOut],
+    dependencies=[Depends(limit_by_user("menu_read", *limits.PROFILE_READ))],
+)
 async def list_items(
     vendor: Vendor = Depends(get_own_vendor), db: AsyncSession = Depends(get_db)
 ) -> list[ItemOut]:
@@ -113,7 +141,11 @@ async def list_items(
     return [ItemOut.model_validate(i) for i in result.scalars().all()]
 
 
-@router.patch("/items/{item_id}", response_model=ItemOut)
+@router.patch(
+    "/items/{item_id}",
+    response_model=ItemOut,
+    dependencies=[Depends(limit_by_user("menu_write", *limits.MENU_WRITE))],
+)
 async def update_item(
     item_id: uuid.UUID,
     payload: ItemUpdate,
@@ -131,7 +163,11 @@ async def update_item(
     return ItemOut.model_validate(item)
 
 
-@router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(limit_by_user("menu_write", *limits.MENU_WRITE))],
+)
 async def delete_item(
     item_id: uuid.UUID,
     vendor: Vendor = Depends(get_own_vendor),

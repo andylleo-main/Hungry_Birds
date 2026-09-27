@@ -3,14 +3,20 @@ import time
 import cloudinary.utils
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core import limits
 from app.core.config import Settings, get_settings
+from app.core.ratelimit import limit_by_user
 from app.core.deps import get_current_user
 from app.modules.media.schemas import UploadSignature
 
 router = APIRouter(prefix="/media", tags=["media"])
 
 
-@router.get("/signature", response_model=UploadSignature)
+@router.get(
+    "/signature",
+    response_model=UploadSignature,
+    dependencies=[Depends(limit_by_user("media_signature", *limits.MEDIA_SIGNATURE))],
+)
 async def get_upload_signature(
     _=Depends(get_current_user),
     settings: Settings = Depends(get_settings),

@@ -117,7 +117,7 @@ async def request_otp(email: str, redis: Redis, settings: Settings) -> str | Non
             }
         )
 
-    return code if settings.otp_debug_echo else None
+    return code if settings.debug_echo_enabled else None
 
 
 async def verify_otp(email: str, code: str, redis: Redis) -> bool:

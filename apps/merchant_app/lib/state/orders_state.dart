@@ -27,7 +27,7 @@ class OrdersState extends ChangeNotifier {
   Future<void> start(String vendorId) async {
     _vendorId = vendorId;
     await load();
-    _connect();
+    await _connect();
   }
 
   Future<void> load() async {
@@ -42,12 +42,15 @@ class OrdersState extends ChangeNotifier {
     }
   }
 
-  void _connect() {
+  // Async because the socket URL now needs a ticket fetched from the API first
+  // (see ApiClient._wsUri). A failure to get one is just another reason to
+  // retry, handled by the same reconnect path as a dropped socket.
+  Future<void> _connect() async {
     if (_vendorId == null) return;
     _subscription?.cancel();
     _channel?.sink.close();
     try {
-      final channel = WebSocketChannel.connect(api.vendorSocketUrl(_vendorId!));
+      final channel = WebSocketChannel.connect(await api.vendorSocketUrl(_vendorId!));
       _channel = channel;
       _subscription = channel.stream.listen(
         (event) => _apply(Order.fromJson(jsonDecode(event as String) as Map<String, dynamic>)),
@@ -65,7 +68,7 @@ class OrdersState extends ChangeNotifier {
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(const Duration(seconds: 3), () async {
       await load();
-      _connect();
+      await _connect();
     });
   }
 

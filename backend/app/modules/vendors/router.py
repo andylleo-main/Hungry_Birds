@@ -5,7 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import limits
 from app.core.deps import get_current_user
+from app.core.ratelimit import limit_by_ip, limit_by_user
 from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
@@ -16,7 +18,12 @@ from app.modules.vendors.schemas import VendorApply, VendorDetailOut, VendorOut,
 router = APIRouter(prefix="/vendors", tags=["vendors"])
 
 
-@router.post("/apply", response_model=VendorOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/apply",
+    response_model=VendorOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_by_user("vendor_apply", *limits.VENDOR_APPLY))],
+)
 async def apply_as_vendor(
     payload: VendorApply,
     user: User = Depends(get_current_user),
@@ -35,12 +42,20 @@ async def apply_as_vendor(
     return VendorOut.model_validate(vendor)
 
 
-@router.get("/me", response_model=VendorOut)
+@router.get(
+    "/me",
+    response_model=VendorOut,
+    dependencies=[Depends(limit_by_user("vendor_read", *limits.PROFILE_READ))],
+)
 async def get_my_vendor(vendor: Vendor = Depends(get_own_vendor)) -> VendorOut:
     return VendorOut.model_validate(vendor)
 
 
-@router.patch("/me", response_model=VendorOut)
+@router.patch(
+    "/me",
+    response_model=VendorOut,
+    dependencies=[Depends(limit_by_user("vendor_update", *limits.VENDOR_UPDATE))],
+)
 async def update_my_vendor(
     payload: VendorUpdate,
     vendor: Vendor = Depends(get_own_vendor),
@@ -53,7 +68,11 @@ async def update_my_vendor(
     return VendorOut.model_validate(vendor)
 
 
-@router.get("", response_model=list[VendorOut])
+@router.get(
+    "",
+    response_model=list[VendorOut],
+    dependencies=[Depends(limit_by_ip("public_browse", *limits.PUBLIC_BROWSE))],
+)
 async def list_vendors(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -64,7 +83,11 @@ async def list_vendors(
     return [VendorOut.model_validate(v) for v in result.scalars().all()]
 
 
-@router.get("/{vendor_id}", response_model=VendorDetailOut)
+@router.get(
+    "/{vendor_id}",
+    response_model=VendorDetailOut,
+    dependencies=[Depends(limit_by_ip("public_browse", *limits.PUBLIC_BROWSE))],
+)
 async def get_vendor_detail(
     vendor_id: uuid.UUID,
     _: User = Depends(get_current_user),

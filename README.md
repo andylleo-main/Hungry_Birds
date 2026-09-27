@@ -57,13 +57,20 @@ cp .env.example .env          # then edit DATABASE_URL / JWT_SECRET
 alembic upgrade head
 PYTHONPATH=. python scripts/seed.py    # optional: demo stalls + admin user
 
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --no-proxy-headers
 ```
 
-With `OTP_DEBUG_ECHO=true` (the default in `.env.example`) the login endpoint
-returns the OTP in its response, so you can sign in locally without a Resend
-key. **Keep it `false` in production** — it would otherwise let anyone log in
-as any address.
+`.env.example` sets `ENVIRONMENT=development`, which unlocks two local
+conveniences: `OTP_DEBUG_ECHO=true` makes the login endpoint return the OTP in
+its response, so you can sign in without a Resend key, and CORS is opened to
+Vite's ports so the web app can call the API across origins. Both are inert
+without `ENVIRONMENT=development`, so neither can be switched on in production
+by setting a single variable.
+
+It also sets `TRUSTED_PROXY_COUNT=0`, because nothing sits in front of the app
+locally. Combined with `--no-proxy-headers` above, that means `X-Forwarded-For`
+is ignored entirely and rate limits key off the real connection — matching how
+production behaves behind Railway's one proxy.
 
 To make a user an admin, have them log in once, then:
 
@@ -222,14 +229,25 @@ against `users` fails with *column users.phone does not exist*.
 | `CLOUDINARY_CLOUD_NAME` | optional; photos are disabled until all three are set |
 | `CLOUDINARY_API_KEY` | optional |
 | `CLOUDINARY_API_SECRET` | optional |
+| `CORS_ORIGINS` | your own domain, e.g. `https://hungerbirds.food`. Leave unset for none at all — correct when the backend serves the web app, which it does |
 
-`ALLOWED_EMAIL_DOMAIN` (`bitmesra.ac.in`), `OTP_DEBUG_ECHO` (`false`) and
-`CORS_ORIGINS` (`*`) already default correctly — you only need to set them to
-change them.
+Everything else defaults safely and only needs setting to change it:
+`ALLOWED_EMAIL_DOMAIN` (`bitmesra.ac.in`), `ENVIRONMENT` (`production`),
+`OTP_DEBUG_ECHO` (`false`), `TRUSTED_PROXY_COUNT` (`1`, which is right for
+Railway), `MAX_REQUEST_BYTES` (256 KB) and the two `GLOBAL_RATE_LIMIT_*`
+values.
 
 > **Never set `OTP_DEBUG_ECHO=true` on a public URL.** It returns the login
 > code in the API response, which lets anyone sign in as anyone. It exists so
-> you can log in locally without a Resend account.
+> you can log in locally without a Resend account. As a second line of defence
+> it is ignored unless `ENVIRONMENT=development` as well, so copying it into
+> Railway by accident does nothing — but don't rely on that.
+
+> **Don't change `TRUSTED_PROXY_COUNT` unless the number of proxies in front of
+> the app changes.** It says how far into `X-Forwarded-For` to look for the real
+> client address. Setting it higher than the true number of hops lets a caller
+> forge that address and get a fresh rate-limit budget on every request, which
+> disables the per-IP limits. Railway is exactly one hop.
 
 If Postgres and Redis are referenced correctly, a plain `postgres://` URL is
 upgraded to the asyncpg driver automatically — you don't need to rewrite it.
@@ -256,6 +274,56 @@ flutter run --dart-define=API_BASE_URL=https://<your-service>.up.railway.app/api
 Images upload straight from the phone to Cloudinary using a short-lived
 signature minted by `GET /media/signature`, so image bytes never pass through
 the backend.
+
+## Rate limiting
+
+Every endpoint is rate limited, and the limits live in one file —
+`backend/app/core/limits.py` — so they can be reviewed as a whole rather than
+hunted through the routers. Each is sized by the harm it prevents:
+
+- **Login** is limited per email address *and* per client address. The per-address
+  limits stop someone working one account; the per-IP ones stop them spraying
+  many, which would otherwise enumerate accounts and burn the Resend quota —
+  and once that quota is spent, nobody can log in at all.
+- **Orders** are capped per account, because a few hundred junk orders makes a
+  stall's tablet useless during a lunch rush. That is an outage for that vendor
+  even though every individual order looked legitimate.
+- **Upload signatures** are capped because each one is a permit to upload to the
+  Cloudinary account — unlimited permits means one user can fill the free tier
+  and take image hosting down for every stall.
+- **Public browsing** is capped per address; the stall detail endpoint loads a
+  whole menu per call, so it is the cheapest way to put load on the database.
+- **A blanket per-IP ceiling** sits under all of it, to catch a client that
+  spreads abuse across many endpoints to stay below each individual limit.
+
+Anything behind a token is counted per account rather than per address, so
+switching networks doesn't reset it and the shared campus NAT doesn't punish
+everyone for one person. Health checks are never throttled — a 429 there would
+read as a dead service and roll back a deploy.
+
+Two things that are easy to get wrong and are asserted by tests
+(`backend/tests/test_deploy_config.py`, `backend/tests/test_ratelimit.py`):
+
+- Uvicorn is started with **`--no-proxy-headers`**. Its default rewrites the
+  client address from the *leftmost* `X-Forwarded-For` entry — the forgeable
+  one. The limiter reads that header itself, from the right, trusting only
+  `TRUSTED_PROXY_COUNT` hops. If uvicorn is allowed to substitute a forged value
+  underneath it, every per-IP limit becomes bypassable with one header.
+- The login limits **fail closed**. If Redis is unreachable they refuse requests
+  rather than allowing them, because a limiter that silently stops working there
+  is the whole hole; the codes live in Redis anyway, so those endpoints cannot
+  work without it. Every other limit fails open, so a Redis blip doesn't take
+  the app down.
+
+## Live updates
+
+The apps get order updates over a WebSocket. A browser can't set headers on a
+WebSocket handshake, so the credential has to travel in the URL — and URLs end
+up in server logs, proxy logs and browser history. The access token therefore
+never goes there. The client spends it once, over a normal authenticated
+request to `POST /api/realtime/ticket`, on a ticket that is valid for 30
+seconds and destroyed the moment the socket redeems it. A ticket found in a log
+afterwards is worthless, and it can't be replayed.
 
 ## Things to know before going live
 

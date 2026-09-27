@@ -43,9 +43,22 @@ export default function OrderTracking() {
     let closed = false;
     let retry: ReturnType<typeof setTimeout>;
 
-    function connect() {
+    async function connect() {
       if (closed) return;
-      const socket = new WebSocket(orderSocketUrl(orderId));
+
+      let url: string;
+      try {
+        url = await orderSocketUrl(orderId);
+      } catch {
+        // No ticket (offline, rate limited, expired session) - the page still
+        // works, it just falls back to the retry below instead of live pushes.
+        setLive(false);
+        if (!closed) retry = setTimeout(() => void connect(), 4000);
+        return;
+      }
+      if (closed) return;
+
+      const socket = new WebSocket(url);
       socketRef.current = socket;
 
       socket.onopen = () => setLive(true);
@@ -62,13 +75,13 @@ export default function OrderTracking() {
         // Resync on reconnect in case we missed a transition while away.
         retry = setTimeout(() => {
           void load();
-          connect();
+          void connect();
         }, 4000);
       };
       socket.onerror = () => socket.close();
     }
 
-    connect();
+    void connect();
     return () => {
       closed = true;
       clearTimeout(retry);

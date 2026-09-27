@@ -340,13 +340,22 @@ class ApiClient {
   }
 
   /// WebSocket URL for tracking a single order (customer or owning vendor).
-  Uri orderSocketUrl(String orderId) => _wsUri('/ws/orders/$orderId');
+  Future<Uri> orderSocketUrl(String orderId) => _wsUri('/ws/orders/$orderId');
 
   /// WebSocket URL for a vendor's live incoming-order queue.
-  Uri vendorSocketUrl(String vendorId) => _wsUri('/ws/vendor/$vendorId');
+  Future<Uri> vendorSocketUrl(String vendorId) => _wsUri('/ws/vendor/$vendorId');
 
-  Uri _wsUri(String path) {
-    final httpUri = _uri(path, {'token': authStorage.accessToken ?? ''});
+  /// Builds a socket URL authorised by a single-use ticket.
+  ///
+  /// A WebSocket handshake carries no headers we can set, so the credential has
+  /// to ride in the query string - and query strings end up in access logs,
+  /// proxy logs and browser history. The access token therefore never goes
+  /// there. It is spent once, over a normal authenticated request, on a ticket
+  /// that is valid for 30 seconds and destroyed the moment the socket redeems
+  /// it, so a copy found in a log later is worthless.
+  Future<Uri> _wsUri(String path) async {
+    final data = await _request('POST', '/realtime/ticket') as Map<String, dynamic>;
+    final httpUri = _uri(path, {'ticket': data['ticket']});
     final scheme = httpUri.scheme == 'https' ? 'wss' : 'ws';
     return httpUri.replace(scheme: scheme);
   }

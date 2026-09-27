@@ -6,8 +6,10 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import limits
 from app.core.config import Settings, get_settings
 from app.core.deps import get_current_user
+from app.core.ratelimit import limit_by_ip, limit_by_user
 from app.core.redis import get_redis
 from app.core.security import (
     TokenType,
@@ -38,7 +40,13 @@ from app.modules.auth.service import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/otp/request", response_model=OTPRequestResponse)
+@router.post(
+    "/otp/request",
+    response_model=OTPRequestResponse,
+    dependencies=[
+        Depends(limit_by_ip("otp_request", *limits.OTP_REQUEST_PER_IP, fail_open=False))
+    ],
+)
 async def otp_request(
     payload: OTPRequest,
     redis: Redis = Depends(get_redis),
@@ -51,7 +59,13 @@ async def otp_request(
     return OTPRequestResponse(message="OTP sent", debug_code=debug_code)
 
 
-@router.post("/otp/verify", response_model=TokenResponse)
+@router.post(
+    "/otp/verify",
+    response_model=TokenResponse,
+    dependencies=[
+        Depends(limit_by_ip("otp_verify", *limits.OTP_VERIFY_PER_IP, fail_open=False))
+    ],
+)
 async def otp_verify(
     payload: OTPVerify,
     redis: Redis = Depends(get_redis),
@@ -79,7 +93,11 @@ async def otp_verify(
     )
 
 
-@router.post("/refresh", response_model=AccessTokenResponse)
+@router.post(
+    "/refresh",
+    response_model=AccessTokenResponse,
+    dependencies=[Depends(limit_by_ip("token_refresh", *limits.TOKEN_REFRESH_PER_IP))],
+)
 async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -> AccessTokenResponse:
     try:
         decoded = decode_token(payload.refresh_token)
@@ -97,12 +115,20 @@ async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_
     return AccessTokenResponse(access_token=create_access_token(str(user.id)))
 
 
-@router.get("/me", response_model=UserOut)
+@router.get(
+    "/me",
+    response_model=UserOut,
+    dependencies=[Depends(limit_by_user("profile_read", *limits.PROFILE_READ))],
+)
 async def me(user: User = Depends(get_current_user)) -> UserOut:
     return UserOut.model_validate(user)
 
 
-@router.patch("/me", response_model=UserOut)
+@router.patch(
+    "/me",
+    response_model=UserOut,
+    dependencies=[Depends(limit_by_user("profile_write", *limits.PROFILE_WRITE))],
+)
 async def update_me(
     payload: UpdateMe,
     user: User = Depends(get_current_user),
