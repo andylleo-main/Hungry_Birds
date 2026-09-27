@@ -28,13 +28,27 @@ COPY apps/web/ ./
 RUN npm run build
 
 # --- Stage 2: the API, which also serves the built app ----------------------
-FROM python:3.11-slim
-
-# greenlet's wheel needs the C++ runtime. Installed explicitly so this doesn't
-# silently depend on whatever the base image happens to ship.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libstdc++6 \
-    && rm -rf /var/lib/apt/lists/*
+#
+# The full image rather than -slim, and deliberately so. greenlet's compiled
+# extension links against libstdc++.so.6, which python:3.11-slim does not ship:
+# the official slim build compiles Python, then purges its build dependencies,
+# and the C++ runtime goes with them. That was the cause of the greenlet crash
+# described above.
+#
+# The obvious fix - `apt-get install libstdc++6` on top of slim - is what this
+# replaced, because it failed on Railway's builder: apt died three seconds into
+# the build, before it could fetch a single index. Whether that was a transient
+# mirror problem or the builder having no route to deb.debian.org, the build
+# had a hard dependency on reaching a Debian mirror at image-build time, and it
+# only had that dependency to reinstate a library the base image had just
+# thrown away.
+#
+# python:3.11 is built on buildpack-deps, keeps g++ and never purges it, so the
+# C++ runtime is simply there. No apt step, no network round trip, nothing to
+# be flaky. The cost is image size, roughly 1GB against 150MB. At this scale
+# that is a slower first pull and nothing else, and it buys a build that cannot
+# fail for reasons outside this repository.
+FROM python:3.11
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
