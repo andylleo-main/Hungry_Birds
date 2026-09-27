@@ -24,6 +24,13 @@ apps/**/android/key.properties
 *.jks
 *.keystore
 
+# Web app
+node_modules/
+apps/web/dist/
+apps/web/.env
+apps/web/.env.local
+*.tsbuildinfo
+
 # OS
 .DS_Store
 

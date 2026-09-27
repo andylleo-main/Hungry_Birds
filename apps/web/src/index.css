@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    @apply bg-surface text-on-surface font-sans text-body-md antialiased;
+    overscroll-behavior: none;
+  }
+
+  /* Material Symbols, used throughout the mockups for iconography. */
+  .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal;
+    font-style: normal;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    -webkit-font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer components {
+  /* Primary CTA: pill, 48px, per the spec's Buttons section. */
+  .btn-primary {
+    @apply inline-flex h-12 items-center justify-center gap-space-sm rounded-full bg-primary px-space-lg
+           text-label-lg text-on-primary transition-colors hover:bg-primary-hover
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex h-12 items-center justify-center gap-space-sm rounded-full bg-primary-tint px-space-lg
+           text-label-lg text-primary transition-colors hover:bg-[#FFCDD2]
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-space-sm rounded px-space-md py-space-sm
+           text-label-lg text-on-surface transition-colors hover:bg-surface-container;
+  }
+
+  /* Card level (1dp) from the elevation scale. */
+  .card {
+    @apply rounded-lg border border-outline-variant bg-surface-container-lowest shadow-card;
+  }
+
+  /* 48px field, container fill, red focus ring. */
+  .field {
+    @apply h-12 w-full rounded bg-surface-container px-space-md text-body-md text-on-surface
+           placeholder:text-on-surface-variant focus:bg-surface-container-lowest focus:outline-none
+           focus:ring-[1.5px] focus:ring-primary;
+  }
+
+  .pill {
+    @apply inline-flex h-9 items-center gap-space-xs rounded-full border border-outline-variant
+           bg-surface-container-lowest px-space-md text-label-md text-on-surface-medium
+           transition-colors hover:bg-surface-container;
+  }
+
+  .pill-active {
+    @apply border-transparent bg-primary text-on-primary hover:bg-primary-hover;
+  }
+
+  /* Micro-pill used for tags (Bestseller, Veg, Closed...). */
+  .badge {
+    @apply inline-flex h-5 items-center gap-space-xs rounded-full bg-primary-tint px-space-sm
+           text-label-sm uppercase tracking-[0.02em] text-primary;
+  }
+}
