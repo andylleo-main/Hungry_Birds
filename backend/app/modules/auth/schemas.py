@@ -21,7 +21,13 @@ class OTPVerify(BaseModel):
     @field_validator("code")
     @classmethod
     def code_must_be_six_digits(cls, v: str) -> str:
-        if not v.isdigit() or len(v) != 6:
+        # Deliberately not str.isdigit(), which is True for non-ASCII digits
+        # such as Arabic-Indic "\u0661\u0662\u0663\u0664\u0665\u0666". Those would pass this check and then
+        # reach secrets.compare_digest, which raises TypeError on any
+        # non-ASCII string - turning a bad code into a 500 instead of a clean
+        # rejection. ASCII digits only, so the comparison downstream is always
+        # safe.
+        if len(v) != 6 or not all(c in "0123456789" for c in v):
             raise ValueError("code must be a 6-digit number")
         return v
 
