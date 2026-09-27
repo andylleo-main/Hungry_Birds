@@ -25,6 +25,7 @@ apps/**/android/key.properties
 *.keystore
 
 # Web app
+backend/static/
 node_modules/
 apps/web/dist/
 apps/web/.env

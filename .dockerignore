@@ -1,0 +1,28 @@
+# Build context is the repo root, so keep it small and keep secrets out.
+.git/
+.github/
+
+# Never bake local secrets or virtualenvs into an image.
+**/.env
+**/.env.local
+!**/.env.example
+backend/.venv/
+backend/static/
+
+# Installed inside the image, not copied in.
+apps/web/node_modules/
+apps/web/dist/
+
+# Not used by the API or the web app.
+apps/customer_app/
+apps/merchant_app/
+packages/
+
+**/__pycache__/
+**/*.pyc
+backend/.pytest_cache/
+backend/tests/
+
+*.jks
+*.keystore
+**/key.properties

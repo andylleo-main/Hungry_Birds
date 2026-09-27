@@ -74,13 +74,28 @@ PYTHONPATH=. python scripts/promote_admin.py you@bitmesra.ac.in
 ## Running the apps
 
 ```bash
-cd apps/customer_app     # or apps/merchant_app
+cd apps/merchant_app
 flutter pub get
-flutter run --dart-define=API_BASE_URL=http://localhost:8000
+flutter run --dart-define=API_BASE_URL=http://localhost:8000/api
 ```
 
-Point `API_BASE_URL` at the deployed URL to run against production. On an
-Android emulator, localhost on the host machine is `http://10.0.2.2:8000`.
+Point `API_BASE_URL` at the deployed URL to run against production — note the
+`/api` suffix. On an Android emulator, localhost on the host machine is
+`http://10.0.2.2:8000/api`.
+
+> `apps/customer_app` is the retired Flutter customer app. The customer side is
+> now the web app in `apps/web`; that directory is kept only as history.
+
+### The customer web app
+
+```bash
+cd apps/web
+npm install
+VITE_API_BASE_URL=http://localhost:8000/api npm run dev
+```
+
+In production no such variable is set: the API is same-origin under `/api`, so
+the deployed hostname never has to be baked into the bundle.
 
 Tests: `flutter test` in either app, `flutter analyze` for lints.
 
@@ -116,9 +131,9 @@ uninstall/reinstall trap applies.
 ### Build
 
 ```bash
-cd apps/customer_app     # then repeat for apps/merchant_app
+cd apps/merchant_app
 flutter build apk --release --split-per-abi \
-  --dart-define=API_BASE_URL=https://<your-service>.up.railway.app
+  --dart-define=API_BASE_URL=https://<your-service>.up.railway.app/api
 ```
 
 Output lands in `build/app/outputs/flutter-apk/`. Hand out
@@ -136,8 +151,19 @@ Recipients need to allow "install from unknown sources" when opening the file.
 
 ## Deployment (Railway)
 
-Build, start, migrations and healthcheck all come from `backend/railway.json`,
-so the only thing you set by hand is the root directory.
+Build, start, migrations and healthcheck all come from `railway.json` at the
+repo root.
+
+**One service serves everything.** The Docker build compiles the customer web
+app and the API copies the result into `backend/static`, serving it alongside
+the API on the same origin. That means one Railway service instead of two (half
+the cost), no CORS to configure, and no deployed hostname baked into the
+frontend bundle at build time.
+
+The API lives under **`/api`**, which is load-bearing rather than cosmetic:
+without it the API's `GET /orders/{id}` shadows the web app's `/orders/:id`
+tracking route, and refreshing that page returns JSON instead of the page.
+`/health` and `/health/ready` stay at the root for the deploy healthcheck.
 
 The backend builds from `backend/Dockerfile`. It started on Railway's Nixpacks
 builder, but that produced an image missing `libstdc++.so.6` — which greenlet's
@@ -154,10 +180,11 @@ Railway builds the image.
 2. **+ New** → **Database** → **Add PostgreSQL**.
 3. **+ New** → **Database** → **Add Redis**.
 4. **+ New** → **GitHub Repo** → pick this repo.
-5. On that service: **Settings** → **Root Directory** → `backend`.
-   Everything else is read from `backend/railway.json`. *This is the one
-   setting that can't configure itself — without it the build sees the Flutter
-   apps too and fails.*
+5. On that service: **Settings** → **Root Directory** → leave it **empty**
+   (the repo root). The Docker build needs both `backend/` and `apps/web/`, so
+   the context has to be the whole repo. Everything else is read from
+   `railway.json`. *If you previously set this to `backend`, clear it — with
+   it set the build can't see `apps/web` and fails.*
 6. **Variables** → add the table below.
 7. **Settings** → **Networking** → **Generate Domain**.
 
@@ -223,7 +250,7 @@ address in either app to get admin access, then approve real vendors.
 ### Pointing the apps at it
 
 ```bash
-flutter run --dart-define=API_BASE_URL=https://<your-service>.up.railway.app
+flutter run --dart-define=API_BASE_URL=https://<your-service>.up.railway.app/api
 ```
 
 Images upload straight from the phone to Cloudinary using a short-lived

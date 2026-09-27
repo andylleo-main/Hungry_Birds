@@ -1,8 +1,19 @@
 import type { AppUser, Order, OrderStatus, Vendor, VendorDetail } from './types';
 
-/** Override at build time: VITE_API_BASE_URL=https://your-service.up.railway.app */
-export const API_BASE_URL: string =
-  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+/**
+ * Empty means same-origin, which is how production runs: the backend serves
+ * this SPA, so `/auth/me` resolves against whatever host it was loaded from.
+ * That avoids CORS entirely and means the deployed URL isn't baked into the
+ * bundle at build time.
+ *
+ * In dev the SPA is on Vite's port and the API on another, so point at it:
+ *   VITE_API_BASE_URL=http://localhost:8000/api npm run dev
+ *
+ * The /api namespace matters: without it the API's GET /orders/{id} shadows
+ * this app's /orders/:id tracking route, and refreshing that page returns
+ * JSON instead of the app.
+ */
+export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
 const ACCESS_KEY = 'hb_access_token';
 const REFRESH_KEY = 'hb_refresh_token';
@@ -152,9 +163,13 @@ export const api = {
   suspendVendor: (id: string) => request<Vendor>('POST', `/admin/vendors/${id}/suspend`),
 };
 
-/** WebSocket URL for live updates on a single order. */
+/**
+ * WebSocket URL for live updates on a single order. Resolved against the
+ * page's own origin when API_BASE_URL is empty (same-origin production), so
+ * this works without knowing the deployed hostname.
+ */
 export function orderSocketUrl(orderId: string): string {
-  const url = new URL(`${API_BASE_URL}/ws/orders/${orderId}`);
+  const url = new URL(`${API_BASE_URL}/ws/orders/${orderId}`, window.location.origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.searchParams.set('token', tokens.access ?? '');
   return url.toString();
