@@ -201,6 +201,16 @@ Railway builds the image.
    the context has to be the whole repo. Everything else is read from
    `railway.json`. *If you previously set this to `backend`, clear it — with
    it set the build can't see `apps/web` and fails.*
+
+   > **How this failure looks, because it is not obvious.** The build dies in
+   > about three seconds, and the step it blames is whatever happened to be
+   > running in the *other* stage — an `apt-get`, a `pip install` — not the
+   > `COPY apps/web/...` that actually failed. BuildKit runs both stages of
+   > this Dockerfile in parallel and cancels everything in flight when one
+   > dies, so a cancelled step gets reported as a failed one. If a build fails
+   > in a few seconds and the named step looks unrelated to anything you
+   > changed, check Root Directory before believing the error. Railway's
+   > **Diagnose** button identifies this correctly.
 6. **Variables** → add the table below.
 7. **Settings** → **Networking** → **Generate Domain**.
 
