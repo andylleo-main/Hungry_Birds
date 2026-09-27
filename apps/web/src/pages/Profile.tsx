@@ -1,8 +1,121 @@
-import { useState } from 'react';
-import { ApiError } from '../lib/api';
+import { useEffect, useState } from 'react';
+import { ApiError, api } from '../lib/api';
+import type { UserSession } from '../lib/api';
 import { displayPhone, validateIndianMobile } from '../lib/format';
 import { Icon, Spinner } from '../components/ui';
 import { useAuth } from '../state/AuthContext';
+
+/** Short, human description of a browser from its user-agent string.
+ *  Full UA strings are unreadable, and the only question being answered here is
+ *  "do I recognise this device?" */
+function describeDevice(ua: string | null): string {
+  if (!ua) return 'Unknown device';
+  const browser =
+    /Edg\//.test(ua) ? 'Edge'
+    : /OPR\//.test(ua) ? 'Opera'
+    : /Chrome\//.test(ua) ? 'Chrome'
+    : /Firefox\//.test(ua) ? 'Firefox'
+    : /Safari\//.test(ua) ? 'Safari'
+    : 'Browser';
+  const os =
+    /Android/.test(ua) ? 'Android'
+    : /iPhone|iPad|iOS/.test(ua) ? 'iOS'
+    : /Windows/.test(ua) ? 'Windows'
+    : /Mac OS X/.test(ua) ? 'macOS'
+    : /Linux/.test(ua) ? 'Linux'
+    : '';
+  return os ? `${browser} on ${os}` : browser;
+}
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diff / 60000);
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins} minutes ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+}
+
+function SignedInDevices() {
+  const [sessions, setSessions] = useState<UserSession[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function load() {
+    try {
+      setSessions(await api.listSessions());
+    } catch {
+      setError("Couldn't load your devices.");
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function end(id: string) {
+    setBusyId(id);
+    try {
+      await api.endSession(id);
+      setSessions((current) => (current ?? []).filter((s) => s.id !== id));
+    } catch {
+      setError("Couldn't sign that device out.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (error) return <p className="text-body-sm text-primary">{error}</p>;
+  if (!sessions) return <Spinner className="text-primary" />;
+
+  return (
+    <div className="flex flex-col gap-space-sm">
+      <ul className="flex flex-col gap-space-xs">
+        {sessions.map((session) => (
+          <li
+            key={session.id}
+            className="flex flex-wrap items-center gap-space-sm rounded-md bg-surface-container px-space-md py-space-sm"
+          >
+            <Icon name="devices" className="text-[20px] text-on-surface-variant" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-label-md text-on-surface">
+                {describeDevice(session.user_agent)}
+              </p>
+              <p className="text-body-sm text-on-surface-variant">
+                Last used {relativeTime(session.last_used_at)}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="text-label-md text-primary disabled:opacity-60"
+              onClick={() => void end(session.id)}
+              disabled={busyId === session.id}
+            >
+              {busyId === session.id ? 'Ending...' : 'Sign out'}
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      {sessions.length > 1 && (
+        <button
+          type="button"
+          className="self-start text-label-md text-primary"
+          onClick={async () => {
+            await api.endAllSessions();
+            // Revoking everything includes this device, so the only honest
+            // next step is back to the login page.
+            window.location.href = '/';
+          }}
+        >
+          Sign out of all devices
+        </button>
+      )}
+    </div>
+  );
+}
 
 export default function Profile() {
   const { user, updateProfile, signOut } = useAuth();
@@ -107,7 +220,18 @@ export default function Profile() {
         </p>
       </div>
 
-      <button type="button" onClick={signOut} className="btn-secondary mt-space-lg w-full sm:w-fit">
+      <section className="card mt-space-md flex flex-col gap-space-md p-space-md">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-title-md text-on-surface">Where you're signed in</h2>
+          <p className="text-body-sm text-on-surface-variant">
+            Signing a device out here ends its session immediately, even if someone
+            else has it.
+          </p>
+        </div>
+        <SignedInDevices />
+      </section>
+
+      <button type="button" onClick={() => void signOut()} className="btn-secondary mt-space-lg w-full sm:w-fit">
         <Icon name="logout" className="text-[18px]" />
         Log out
       </button>

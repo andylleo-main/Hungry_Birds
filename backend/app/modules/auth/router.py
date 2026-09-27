@@ -1,7 +1,6 @@
 import uuid
 
-import jwt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,12 +10,7 @@ from app.core.config import Settings, get_settings
 from app.core.deps import get_current_user
 from app.core.ratelimit import limit_by_ip, limit_by_user
 from app.core.redis import get_redis
-from app.core.security import (
-    TokenType,
-    create_access_token,
-    create_refresh_token,
-    decode_token,
-)
+from app.core.security import create_access_token
 from app.db.models.user import User
 from app.db.session import get_db
 from app.modules.auth.schemas import (
@@ -25,11 +19,22 @@ from app.modules.auth.schemas import (
     OTPRequestResponse,
     OTPVerify,
     RefreshRequest,
+    SessionOut,
     TokenResponse,
     UpdateMe,
     UserOut,
 )
+from app.modules.auth.sessions import (
+    SessionRejected,
+    create_session,
+    list_active,
+    revoke_all_for_user,
+    revoke_by_id,
+    revoke_session,
+    rotate_session,
+)
 from app.modules.auth.service import (
+    OTP_RATE_LIMIT_SECONDS,
     assert_allowed_domain,
     normalize_email,
     normalize_phone,
@@ -56,7 +61,11 @@ async def otp_request(
     assert_allowed_domain(email, settings)
 
     debug_code = await request_otp(email, redis, settings)
-    return OTPRequestResponse(message="OTP sent", debug_code=debug_code)
+    return OTPRequestResponse(
+        message="OTP sent",
+        debug_code=debug_code,
+        resend_after_seconds=OTP_RATE_LIMIT_SECONDS,
+    )
 
 
 @router.post(
@@ -68,6 +77,7 @@ async def otp_request(
 )
 async def otp_verify(
     payload: OTPVerify,
+    request: Request,
     redis: Redis = Depends(get_redis),
     settings: Settings = Depends(get_settings),
     db: AsyncSession = Depends(get_db),
@@ -86,9 +96,16 @@ async def otp_verify(
         await db.commit()
         await db.refresh(user)
 
+    _, refresh_token = await create_session(
+        user.id,
+        db,
+        lifetime_days=settings.refresh_token_expire_days,
+        user_agent=request.headers.get("user-agent"),
+    )
+
     return TokenResponse(
         access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
+        refresh_token=refresh_token,
         user=UserOut.model_validate(user),
     )
 
@@ -98,21 +115,83 @@ async def otp_verify(
     response_model=AccessTokenResponse,
     dependencies=[Depends(limit_by_ip("token_refresh", *limits.TOKEN_REFRESH_PER_IP))],
 )
-async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -> AccessTokenResponse:
+async def refresh_token(
+    payload: RefreshRequest, db: AsyncSession = Depends(get_db)
+) -> AccessTokenResponse:
+    """Trade a refresh token for a new access token and a new refresh token.
+
+    The old refresh token stops working here, not when it expires. That is the
+    point: it bounds how long a stolen copy is useful, and makes a replay
+    detectable - see rotate_session.
+    """
     try:
-        decoded = decode_token(payload.refresh_token)
-    except jwt.PyJWTError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
+        session, new_refresh = await rotate_session(payload.refresh_token, db)
+    except SessionRejected:
+        # One message for unknown, expired, revoked and replayed alike. Saying
+        # which would tell someone probing with stolen tokens what they have.
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Please sign in again")
 
-    if decoded.get("type") != TokenType.REFRESH.value:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token type")
-
-    user_id = uuid.UUID(decoded["sub"])
-    user = await db.get(User, user_id)
+    user = await db.get(User, session.user_id)
     if user is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Please sign in again")
 
-    return AccessTokenResponse(access_token=create_access_token(str(user.id)))
+    return AccessTokenResponse(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=new_refresh,
+        user=UserOut.model_validate(user),
+    )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -> Response:
+    """End this device's session.
+
+    Deliberately unauthenticated: signing out must work even when the access
+    token has already expired, and the refresh token is itself the proof that
+    the caller holds this session. Revoking is idempotent, and an unknown token
+    returns the same 204 so this cannot be used to test whether one is valid.
+    """
+    await revoke_session(payload.refresh_token, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/sessions",
+    response_model=list[SessionOut],
+    dependencies=[Depends(limit_by_user("profile_read", *limits.PROFILE_READ))],
+)
+async def my_sessions(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> list[SessionOut]:
+    return [SessionOut.model_validate(s) for s in await list_active(user.id, db)]
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(limit_by_user("profile_write", *limits.PROFILE_WRITE))],
+)
+async def end_session(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    if not await revoke_by_id(session_id, user.id, db):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/sessions/revoke-all",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(limit_by_user("profile_write", *limits.PROFILE_WRITE))],
+)
+async def end_all_sessions(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> Response:
+    """Sign out everywhere - the button you want after losing a phone."""
+    await revoke_all_for_user(user.id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

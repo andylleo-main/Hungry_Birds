@@ -15,6 +15,7 @@ from app.core.logging import install_log_redaction
 from app.core.ratelimit import Limit, client_ip, consume, limit_by_ip
 from app.core.redis import get_redis
 from app.db.session import get_db
+from app.modules.admin.router import analytics_router
 from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import router as auth_router
 from app.modules.media.router import router as media_router
@@ -130,6 +131,7 @@ app.include_router(auth_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
 app.include_router(menu_router, prefix=API_PREFIX)
 app.include_router(admin_router, prefix=API_PREFIX)
+app.include_router(analytics_router, prefix=API_PREFIX)
 app.include_router(media_router, prefix=API_PREFIX)
 app.include_router(orders_router, prefix=API_PREFIX)
 app.include_router(vendor_orders_router, prefix=API_PREFIX)

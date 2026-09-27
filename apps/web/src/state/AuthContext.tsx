@@ -9,10 +9,10 @@ interface AuthValue {
   status: Status;
   user: AppUser | null;
   isAdmin: boolean;
-  requestOtp: (email: string) => Promise<string | null>;
+  requestOtp: (email: string) => Promise<{ debugCode: string | null; resendAfter: number }>;
   verifyOtp: (email: string, code: string) => Promise<void>;
   updateProfile: (changes: { full_name?: string; phone?: string }) => Promise<void>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthValue | null>(null);
@@ -24,20 +24,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     async function bootstrap() {
-      if (!tokens.access) {
-        if (!cancelled) setStatus('signedOut');
-        return;
+      // A returning visitor usually has an access token that expired while
+      // they were away. Asking /auth/me first lets the client's silent
+      // refresh-and-retry handle that case transparently.
+      if (tokens.access) {
+        try {
+          const me = await api.me();
+          if (cancelled) return;
+          setUser(me);
+          setStatus('signedIn');
+          return;
+        } catch {
+          // Fall through and try the refresh token on its own below.
+        }
       }
+
+      // No access token at all - cleared storage, or a device that has been
+      // away longer than the access lifetime. The refresh token is still good
+      // for thirty days, so use it instead of demanding another login.
       try {
-        const me = await api.me();
+        const me = await api.restoreSession();
         if (cancelled) return;
-        setUser(me);
-        setStatus('signedIn');
+        if (me) {
+          setUser(me);
+          setStatus('signedIn');
+          return;
+        }
       } catch {
-        // Expired or revoked - start clean rather than half-signed-in.
-        tokens.clear();
-        if (!cancelled) setStatus('signedOut');
+        // Nothing recoverable.
       }
+
+      tokens.clear();
+      if (!cancelled) setStatus('signedOut');
     }
     void bootstrap();
     return () => {
@@ -47,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const requestOtp = useCallback(async (email: string) => {
     const res = await api.requestOtp(email);
-    return res.debug_code;
+    return { debugCode: res.debug_code, resendAfter: res.resend_after_seconds };
   }, []);
 
   const verifyOtp = useCallback(async (email: string, code: string) => {
@@ -64,10 +82,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const signOut = useCallback(() => {
-    api.logout();
+  const signOut = useCallback(async () => {
+    // Local state goes first so the UI never looks signed in while the network
+    // call is in flight; the server revocation follows.
     setUser(null);
     setStatus('signedOut');
+    await api.logout();
   }, []);
 
   const value = useMemo<AuthValue>(

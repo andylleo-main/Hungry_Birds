@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,11 +10,32 @@ from app.core.ratelimit import limit_by_user
 from app.db.models.user import UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
+from app.modules.admin.analytics import AnalyticsOut, build_analytics
 from app.modules.vendors.schemas import VendorOut
 
 router = APIRouter(
     prefix="/admin/vendors", tags=["admin"], dependencies=[Depends(require_role(UserRole.ADMIN))]
 )
+
+# Separate router because the one above is prefixed /admin/vendors, and
+# analytics is about the whole service rather than the vendor list.
+analytics_router = APIRouter(
+    prefix="/admin", tags=["admin"], dependencies=[Depends(require_role(UserRole.ADMIN))]
+)
+
+
+@analytics_router.get(
+    "/analytics",
+    response_model=AnalyticsOut,
+    dependencies=[Depends(limit_by_user("admin_read", *limits.ADMIN_READ))],
+)
+async def analytics(
+    # Bounded deliberately: this scans orders, and an unbounded range would let
+    # one dashboard refresh become a full table scan as the data grows.
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+) -> AnalyticsOut:
+    return await build_analytics(days, db)
 
 
 @router.get(
@@ -64,3 +85,4 @@ async def suspend_vendor(vendor_id: uuid.UUID, db: AsyncSession = Depends(get_db
     await db.commit()
     await db.refresh(vendor)
     return VendorOut.model_validate(vendor)
+

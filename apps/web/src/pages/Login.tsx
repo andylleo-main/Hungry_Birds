@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../lib/api';
 import { useAuth } from '../state/AuthContext';
 import { Icon, Spinner } from '../components/ui';
@@ -12,19 +12,59 @@ export default function Login() {
   const [code, setCode] = useState('');
   const [debugCode, setDebugCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [resending, setResending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Seconds until another code may be requested. The server decides the
+  // number and sends it back, so this countdown can't drift from the real
+  // policy the way a hard-coded 60 would.
+  const [cooldown, setCooldown] = useState(0);
+  const codeInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
 
   async function sendCode(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      setDebugCode(await requestOtp(email.trim()));
+      const { debugCode: dev, resendAfter } = await requestOtp(email.trim());
+      setDebugCode(dev);
+      setCooldown(resendAfter);
       setStep('code');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not send the code. Try again.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function resend() {
+    setResending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const { debugCode: dev, resendAfter } = await requestOtp(email.trim());
+      setDebugCode(dev);
+      setCooldown(resendAfter);
+      setCode('');
+      setNotice('A new code is on its way.');
+      codeInputRef.current?.focus();
+    } catch (err) {
+      // A 429 here means the cooldown is still running - most likely this tab
+      // drifted from the server, so adopt the server's number rather than
+      // arguing with it.
+      if (err instanceof ApiError && err.status === 429) {
+        const seconds = Number(err.message.match(/(\d+)s/)?.[1]);
+        if (Number.isFinite(seconds) && seconds > 0) setCooldown(seconds);
+      }
+      setError(err instanceof ApiError ? err.message : 'Could not resend the code.');
+    } finally {
+      setResending(false);
     }
   }
 
@@ -136,6 +176,7 @@ export default function Login() {
               <label className="flex flex-col gap-space-xs">
                 <span className="text-label-md text-on-surface-medium">6-digit code</span>
                 <input
+                  ref={codeInputRef}
                   className="field text-center text-headline-md tracking-[0.5em]"
                   inputMode="numeric"
                   pattern="[0-9]{6}"
@@ -150,10 +191,35 @@ export default function Login() {
               </label>
 
               {error && <p className="text-body-sm text-primary">{error}</p>}
+              {notice && !error && (
+                <p className="text-body-sm text-success" role="status">
+                  {notice}
+                </p>
+              )}
 
               <button type="submit" className="btn-primary w-full" disabled={busy}>
                 {busy ? <Spinner /> : 'Verify & continue'}
               </button>
+
+              <div className="flex items-center justify-center gap-space-xs text-body-sm">
+                <span className="text-on-surface-variant">Didn't get it?</span>
+                {cooldown > 0 ? (
+                  // Disabled rather than hidden, so the wait is visible and
+                  // nobody sits wondering whether resending is possible.
+                  <span className="text-on-surface-medium" aria-live="polite">
+                    Resend in {cooldown}s
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="font-medium text-primary underline underline-offset-2 disabled:opacity-60"
+                    onClick={() => void resend()}
+                    disabled={resending}
+                  >
+                    {resending ? 'Sending...' : 'Resend code'}
+                  </button>
+                )}
+              </div>
 
               <button
                 type="button"
@@ -162,6 +228,8 @@ export default function Login() {
                   setStep('email');
                   setCode('');
                   setError(null);
+                  setNotice(null);
+                  setCooldown(0);
                 }}
               >
                 Use a different email

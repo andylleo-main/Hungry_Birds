@@ -79,10 +79,12 @@ def _hourly_key(email: str) -> str:
 async def request_otp(email: str, redis: Redis, settings: Settings) -> str | None:
     """Generates and stores an OTP, sends it via Resend. Returns the code
     only when OTP_DEBUG_ECHO is enabled, for local-dev convenience."""
-    if await redis.get(_rate_limit_key(email)):
+    remaining = await redis.ttl(_rate_limit_key(email))
+    if remaining and remaining > 0:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            "Please wait a minute before requesting another code.",
+            f"Please wait {remaining}s before requesting another code.",
+            headers={"Retry-After": str(remaining)},
         )
 
     # Without an hourly cap, an attacker can mint a fresh code every 60s and

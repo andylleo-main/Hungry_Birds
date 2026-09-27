@@ -130,9 +130,21 @@ class ApiClient {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'refresh_token': authStorage.refreshToken}),
       );
-      if (response.statusCode != 200) return false;
+      if (response.statusCode != 200) {
+        // Expired, revoked or replayed - none of which a retry fixes, so drop
+        // the dead pair instead of sending it again on the next call.
+        await authStorage.clear();
+        return false;
+      }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      await authStorage.updateAccessToken(decoded['access_token'] as String);
+      // Both tokens, not just the access one. The server rotates the refresh
+      // token on every use and treats the retired one as a replay - so keeping
+      // the old value would make this client destroy its own session the next
+      // time it refreshed.
+      await authStorage.saveTokens(
+        accessToken: decoded['access_token'] as String,
+        refreshToken: decoded['refresh_token'] as String,
+      );
       return true;
     } catch (_) {
       return false;
@@ -179,7 +191,6 @@ class ApiClient {
     return AppUser.fromJson(data);
   }
 
-  Future<void> logout() => authStorage.clear();
 
   // --- Vendors ---
 
@@ -337,6 +348,27 @@ class ApiClient {
       body: {'status': status.name},
     ) as Map<String, dynamic>;
     return Order.fromJson(data);
+  }
+
+  /// Ends this device's session on the server, then forgets it locally.
+  ///
+  /// Clearing local storage alone used to be the whole of "log out", which left
+  /// the refresh token usable by anything that had a copy of it for another
+  /// thirty days.
+  Future<void> logout() async {
+    final refresh = authStorage.refreshToken;
+    await authStorage.clear();
+    if (refresh == null) return;
+    try {
+      await _client.post(
+        _uri('/auth/logout'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'refresh_token': refresh}),
+      );
+    } catch (_) {
+      // Offline: local state is already gone and the session expires on its
+      // own, so failing the sign-out here would be worse than letting it pass.
+    }
   }
 
   /// WebSocket URL for tracking a single order (customer or owning vendor).

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '../../lib/api';
 import type { Vendor } from '../../lib/types';
 import { EmptyState, ErrorRetry, Icon, PageLoader, Spinner } from '../../components/ui';
+import Analytics from './Analytics';
 
-type Tab = 'pending' | 'approved';
+type Tab = 'overview' | 'pending' | 'approved';
 
 function VendorRow({
   vendor,
@@ -70,7 +71,7 @@ export default function AdminPanel() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('pending');
+  const [tab, setTab] = useState<Tab>('overview');
 
   async function load() {
     setError(null);
@@ -129,7 +130,7 @@ export default function AdminPanel() {
         <div>
           <h1 className="text-headline-lg text-on-surface">Admin</h1>
           <p className="text-body-sm text-on-surface-variant">
-            Approve stalls before they become visible to students.
+            How the service is doing, and which stalls are waiting on you.
           </p>
         </div>
       </div>
@@ -140,6 +141,7 @@ export default function AdminPanel() {
         <PageLoader />
       ) : (
         <>
+          {tab !== 'overview' && (
           <div className="mb-space-lg grid gap-space-md sm:grid-cols-3">
             {[
               ['pending_actions', 'Awaiting approval', pending.length],
@@ -157,8 +159,16 @@ export default function AdminPanel() {
               </div>
             ))}
           </div>
+          )}
 
-          <div className="mb-space-md flex gap-space-sm">
+          <div className="mb-space-md flex flex-wrap gap-space-sm">
+            <button
+              type="button"
+              onClick={() => setTab('overview')}
+              className={`pill ${tab === 'overview' ? 'pill-active' : ''}`}
+            >
+              Overview
+            </button>
             <button
               type="button"
               onClick={() => setTab('pending')}
@@ -181,7 +191,9 @@ export default function AdminPanel() {
             </p>
           )}
 
-          {shown.length === 0 ? (
+          {tab === 'overview' ? (
+            <Analytics />
+          ) : shown.length === 0 ? (
             <EmptyState
               icon={tab === 'pending' ? 'task_alt' : 'storefront'}
               title={tab === 'pending' ? 'Nothing waiting' : 'No approved stalls yet'}

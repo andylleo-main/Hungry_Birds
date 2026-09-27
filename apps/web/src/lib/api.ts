@@ -48,6 +48,15 @@ export const tokens = {
   },
 };
 
+/**
+ * Trades the refresh token for a fresh access token - and a fresh refresh
+ * token, because the server rotates on every use.
+ *
+ * Storing the new one is not optional. The token we just sent is now retired,
+ * and sending it again is treated as a replay: the server destroys the whole
+ * session on the assumption it was stolen. So a client that forgets to save
+ * the rotation logs itself out on its next refresh.
+ */
 async function refreshAccessToken(): Promise<boolean> {
   const refresh = tokens.refresh;
   if (!refresh) return false;
@@ -57,9 +66,14 @@ async function refreshAccessToken(): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: refresh }),
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      // Expired, revoked, or replayed - there is no way back from any of
+      // them, so drop the stale pair rather than retrying with it forever.
+      tokens.clear();
+      return false;
+    }
     const data = await res.json();
-    tokens.setAccess(data.access_token);
+    tokens.save(data.access_token, data.refresh_token);
     return true;
   } catch {
     return false;
@@ -117,13 +131,39 @@ export interface AuthResult {
   user: AppUser;
 }
 
+export interface UserSession {
+  id: string;
+  created_at: string;
+  last_used_at: string;
+  expires_at: string;
+  user_agent: string | null;
+  current: boolean;
+}
+
+export interface Analytics {
+  range_days: number;
+  generated_at: string;
+  totals: {
+    orders: number;
+    revenue: number;
+    customers: number;
+    vendors: number;
+    pending_vendors: number;
+    active_orders: number;
+  };
+  orders_by_day: { day: string; orders: number; revenue: number }[];
+  status_breakdown: { status: OrderStatus; count: number }[];
+  top_vendors: { vendor_id: string; stall_name: string; orders: number; revenue: number }[];
+}
+
 export const api = {
   // --- Auth ---
   requestOtp: (email: string) =>
-    request<{ message: string; debug_code: string | null }>('POST', '/auth/otp/request', {
-      body: { email },
-      auth: false,
-    }),
+    request<{ message: string; debug_code: string | null; resend_after_seconds: number }>(
+      'POST',
+      '/auth/otp/request',
+      { body: { email }, auth: false },
+    ),
 
   async verifyOtp(email: string, code: string): Promise<AuthResult> {
     const result = await request<AuthResult>('POST', '/auth/otp/verify', {
@@ -136,10 +176,46 @@ export const api = {
 
   me: () => request<AppUser>('GET', '/auth/me'),
 
+  /** Restores a session from the refresh token alone, for a returning visitor
+   *  whose access token has gone. Returns null when there is nothing to
+   *  restore, so the caller can simply show the login page. */
+  async restoreSession(): Promise<AppUser | null> {
+    if (!tokens.refresh) return null;
+    const ok = await refreshAccessToken();
+    if (!ok) return null;
+    try {
+      return await request<AppUser>('GET', '/auth/me');
+    } catch {
+      tokens.clear();
+      return null;
+    }
+  },
+
+  listSessions: () => request<UserSession[]>('GET', '/auth/sessions'),
+  endSession: (id: string) => request<void>('DELETE', `/auth/sessions/${id}`),
+  endAllSessions: () => request<void>('POST', '/auth/sessions/revoke-all'),
+
   updateMe: (changes: { full_name?: string; phone?: string }) =>
     request<AppUser>('PATCH', '/auth/me', { body: changes }),
 
-  logout: () => tokens.clear(),
+  /** Ends the session server-side, then clears local storage.
+   *  Clearing alone used to be the whole of "sign out", which left the refresh
+   *  token valid for another thirty days on whatever had a copy of it. */
+  async logout(): Promise<void> {
+    const refresh = tokens.refresh;
+    tokens.clear();
+    if (!refresh) return;
+    try {
+      await fetch(`${API_BASE_URL}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
+    } catch {
+      // Offline: local state is already cleared, and the session expires on
+      // its own. Failing the sign-out here would be worse than this.
+    }
+  },
 
   // --- Vendors & menu ---
   listVendors: () => request<Vendor[]>('GET', '/vendors'),
@@ -157,6 +233,8 @@ export const api = {
   cancelOrder: (id: string) => request<Order>('POST', `/orders/${id}/cancel`),
 
   // --- Admin ---
+  analytics: (days = 30) => request<Analytics>('GET', `/admin/analytics?days=${days}`),
+
   adminVendors: (pendingOnly = false) =>
     request<Vendor[]>('GET', `/admin/vendors?pending_only=${pendingOnly}`),
   approveVendor: (id: string) => request<Vendor>('POST', `/admin/vendors/${id}/approve`),

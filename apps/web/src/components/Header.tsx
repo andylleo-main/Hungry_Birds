@@ -127,7 +127,7 @@ export default function Header() {
                     type="button"
                     onClick={() => {
                       setMenuOpen(false);
-                      signOut();
+                      void signOut();
                     }}
                     className="flex w-full items-center gap-space-sm border-t border-outline-variant px-space-md py-space-sm text-left text-body-sm text-primary hover:bg-surface-container"
                   >

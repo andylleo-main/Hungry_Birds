@@ -7,6 +7,15 @@ from app.core.config import get_settings
 
 
 class TokenType(StrEnum):
+    """Access tokens are JWTs; refresh tokens are not.
+
+    Refresh tokens moved to opaque, database-backed session keys so they can be
+    revoked (see modules/auth/sessions.py). REFRESH stays here so that any JWT
+    still carrying it - issued before that change, or forged - fails the
+    "is this an access token" check in deps.get_current_user rather than being
+    treated as one.
+    """
+
     ACCESS = "access"
     REFRESH = "refresh"
 
@@ -29,15 +38,6 @@ def create_access_token(user_id: str) -> str:
         user_id,
         TokenType.ACCESS,
         timedelta(minutes=settings.access_token_expire_minutes),
-    )
-
-
-def create_refresh_token(user_id: str) -> str:
-    settings = get_settings()
-    return _create_token(
-        user_id,
-        TokenType.REFRESH,
-        timedelta(days=settings.refresh_token_expire_days),
     )
 
 

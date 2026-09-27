@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, field_validator
 
@@ -12,6 +13,9 @@ class OTPRequest(BaseModel):
 class OTPRequestResponse(BaseModel):
     message: str
     debug_code: str | None = None
+    # How long before another code may be requested. The login page counts down
+    # with it instead of hard-coding a guess that could drift from the server.
+    resend_after_seconds: int
 
 
 class OTPVerify(BaseModel):
@@ -60,4 +64,21 @@ class RefreshRequest(BaseModel):
 
 class AccessTokenResponse(BaseModel):
     access_token: str
+    # Rotated on every refresh, so the client must store this one and discard
+    # the token it sent. Reusing the old one now ends the session.
+    refresh_token: str
     token_type: str = "bearer"
+    user: UserOut
+
+
+class SessionOut(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    last_used_at: datetime
+    expires_at: datetime
+    user_agent: str | None
+    # True for the device asking, so the UI can label it "this device" rather
+    # than inviting someone to sign themselves out by mistake.
+    current: bool = False
+
+    model_config = {"from_attributes": True}
