@@ -113,8 +113,21 @@ class ApiClient {
     String message = 'Something went wrong (${response.statusCode})';
     try {
       final decoded = jsonDecode(response.body);
-      if (decoded is Map && decoded['detail'] != null) {
-        message = decoded['detail'].toString();
+      final detail = decoded is Map ? decoded['detail'] : null;
+      if (detail is String) {
+        message = detail;
+      } else if (detail is List && detail.isNotEmpty) {
+        // FastAPI reports validation failures as a list of objects. Printing
+        // the list gives the vendor a blob of Python-looking punctuation, so
+        // take the first message and name the field it belongs to.
+        final first = detail.first;
+        if (first is Map && first['msg'] != null) {
+          final loc = first['loc'];
+          final field = (loc is List && loc.isNotEmpty) ? loc.last.toString() : null;
+          message = field == null ? '${first['msg']}' : '$field: ${first['msg']}';
+        }
+      } else if (detail != null) {
+        message = detail.toString();
       }
     } catch (_) {
       // non-JSON error body, keep the generic message

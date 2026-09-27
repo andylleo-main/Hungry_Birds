@@ -1,8 +1,10 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, StringConstraints, field_validator
 
+from app.core.fields import Name
 from app.db.models.user import UserRole
 
 
@@ -47,8 +49,10 @@ class UserOut(BaseModel):
 
 
 class UpdateMe(BaseModel):
-    full_name: str | None = None
-    phone: str | None = None
+    full_name: Name | None = None
+    # Normalised to E.164 by the router; the length cap only stops an absurd
+    # value reaching the normaliser.
+    phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=20)] | None = None
 
 
 class TokenResponse(BaseModel):
@@ -59,7 +63,7 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: Annotated[str, StringConstraints(min_length=1, max_length=512)]
 
 
 class AccessTokenResponse(BaseModel):

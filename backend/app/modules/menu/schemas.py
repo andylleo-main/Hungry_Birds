@@ -3,15 +3,17 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
+from app.core.fields import Description, ImageUrl, Money, Name, SortOrder
+
 
 class CategoryCreate(BaseModel):
-    name: str
-    sort_order: int = 0
+    name: Name
+    sort_order: SortOrder = 0
 
 
 class CategoryUpdate(BaseModel):
-    name: str | None = None
-    sort_order: int | None = None
+    name: Name | None = None
+    sort_order: SortOrder | None = None
 
 
 class CategoryOut(BaseModel):
@@ -23,19 +25,19 @@ class CategoryOut(BaseModel):
 
 
 class ItemCreate(BaseModel):
-    name: str
-    description: str | None = None
-    price: Decimal
+    name: Name
+    description: Description | None = None
+    price: Money
     category_id: uuid.UUID | None = None
-    image_url: str | None = None
+    image_url: ImageUrl | None = None
 
 
 class ItemUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    price: Decimal | None = None
+    name: Name | None = None
+    description: Description | None = None
+    price: Money | None = None
     category_id: uuid.UUID | None = None
-    image_url: str | None = None
+    image_url: ImageUrl | None = None
     is_available: bool | None = None
 
 

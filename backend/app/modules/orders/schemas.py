@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from app.core.fields import MAX_ORDER_LINES, Note
 from app.db.models.order import OrderStatus
 
 
@@ -14,8 +15,11 @@ class OrderItemIn(BaseModel):
 
 class OrderCreate(BaseModel):
     vendor_id: uuid.UUID
-    items: list[OrderItemIn] = Field(min_length=1)
-    note: str | None = None
+    # Bounded at both ends: an empty order is meaningless, and every line costs
+    # a database round trip when the order is priced, so a long list is a way
+    # to turn one request into thousands of queries.
+    items: list[OrderItemIn] = Field(min_length=1, max_length=MAX_ORDER_LINES)
+    note: Note | None = None
 
 
 class OrderStatusUpdate(BaseModel):
