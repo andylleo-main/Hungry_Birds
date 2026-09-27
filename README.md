@@ -342,6 +342,33 @@ request to `POST /api/realtime/ticket`, on a ticket that is valid for 30
 seconds and destroyed the moment the socket redeems it. A ticket found in a log
 afterwards is worthless, and it can't be replayed.
 
+## Icons and branding
+
+Every icon — the web favicon and touch icons, both Android apps' launcher
+icons, and the Play Store listing image — is generated from one master by
+`design/make_icons.py`. Re-run it after changing the artwork; it is idempotent,
+so a run with no change to the master rewrites nothing.
+
+`design/logo.svg` is the supplied artwork and is **not** used at runtime. It is
+a VTracer auto-trace: 2,848 paths, 1.1MB, no viewBox, with an opaque backdrop
+baked in as a full-canvas path. That is several times the size of the entire
+web bundle, for a mark drawn at 40 pixels. `design/logo-master.png` is the
+usable form — backdrop removed, cropped to the artwork, squared. The crop is
+what makes the icon legible at 48px instead of a scattering of specks.
+
+The Android icons are both legacy and adaptive:
+
+- `mipmap-*/ic_launcher.png` — opaque and rounded, for Android 7 and below,
+  which draws a launcher icon exactly as given. A transparent one would leave
+  the bird floating with no shape behind it.
+- `mipmap-anydpi-v26/ic_launcher.xml` plus `ic_launcher_foreground.png` — the
+  adaptive icon used from Android 8 on. The launcher masks it to a circle,
+  squircle or teardrop, so the artwork sits at 62% of the 108dp canvas, inside
+  the 72dp area the system guarantees is visible.
+
+No manifest change is needed: `@mipmap/ic_launcher` resolves to the adaptive
+XML on API 26+ and to the PNGs below that.
+
 ## Things to know before going live
 
 - **Resend needs a verified domain of its own** before it will deliver to real

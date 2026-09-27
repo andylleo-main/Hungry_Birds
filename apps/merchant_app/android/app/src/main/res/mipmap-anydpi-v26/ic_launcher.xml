@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive icon, used from Android 8 onwards. The launcher masks these two
+  layers into whatever shape the device uses - circle, squircle, teardrop - so
+  the artwork must not rely on its own corners. The PNGs in mipmap-* remain as
+  the fallback for older devices.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>
