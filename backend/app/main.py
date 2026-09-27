@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -9,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.logging import install_log_redaction
 from app.core.redis import get_redis
 from app.db.session import get_db
 from app.modules.admin.router import router as admin_router
@@ -22,12 +24,28 @@ from app.modules.vendors.router import router as vendors_router
 
 settings = get_settings()
 
+install_log_redaction()
+
+if settings.otp_debug_echo:
+    logging.getLogger('uvicorn.error').warning(
+        'OTP_DEBUG_ECHO is ON: login codes are returned in API responses. '
+        'This is a full authentication bypass - never run a public deployment '
+        'with it enabled.'
+    )
+
 app = FastAPI(title="Hunger Birds API")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
+    # Deliberately False. Auth is a Bearer token held in the client and set
+    # explicitly on each request, never a cookie, so "credentials" in the CORS
+    # sense are not used. Pairing allow_credentials=True with an "*" origin is
+    # the dangerous combination - it tells the browser any site may make
+    # credentialed cross-origin calls. Turning it off keeps the Authorization
+    # header working (that is an ordinary request header, covered by
+    # allow_headers) while removing that grant.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

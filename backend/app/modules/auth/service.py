@@ -9,6 +9,15 @@ from app.core.config import Settings
 OTP_TTL_SECONDS = 5 * 60
 OTP_RATE_LIMIT_SECONDS = 60
 
+# A 6-digit code is only a million possibilities, so the code itself is not
+# the defence - limiting guesses is. After this many wrong attempts the code
+# is burned and the attacker has to request a new one, which the 60s limit
+# plus the hourly cap below make slow enough to be useless.
+MAX_VERIFY_ATTEMPTS = 5
+# Bounds the "request a fresh code every 60s and keep grinding" loop.
+MAX_REQUESTS_PER_HOUR = 10
+REQUEST_WINDOW_SECONDS = 60 * 60
+
 
 def normalize_email(email: str) -> str:
     """Lowercase and strip +tag local-part addressing so name+1@x and name@x
@@ -59,6 +68,14 @@ def _rate_limit_key(email: str) -> str:
     return f"otp:rl:{email}"
 
 
+def _attempt_key(email: str) -> str:
+    return f"otp:fail:{email}"
+
+
+def _hourly_key(email: str) -> str:
+    return f"otp:hr:{email}"
+
+
 async def request_otp(email: str, redis: Redis, settings: Settings) -> str | None:
     """Generates and stores an OTP, sends it via Resend. Returns the code
     only when OTP_DEBUG_ECHO is enabled, for local-dev convenience."""
@@ -68,9 +85,22 @@ async def request_otp(email: str, redis: Redis, settings: Settings) -> str | Non
             "Please wait a minute before requesting another code.",
         )
 
+    # Without an hourly cap, an attacker can mint a fresh code every 60s and
+    # keep guessing indefinitely, which defeats the per-code attempt limit.
+    hourly = await redis.incr(_hourly_key(email))
+    if hourly == 1:
+        await redis.expire(_hourly_key(email), REQUEST_WINDOW_SECONDS)
+    if hourly > MAX_REQUESTS_PER_HOUR:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many codes requested for this address. Try again later.",
+        )
+
     code = f"{secrets.randbelow(1_000_000):06d}"
     await redis.set(_otp_key(email), code, ex=OTP_TTL_SECONDS)
     await redis.set(_rate_limit_key(email), "1", ex=OTP_RATE_LIMIT_SECONDS)
+    # A new code starts a fresh attempt budget.
+    await redis.delete(_attempt_key(email))
 
     if settings.resend_api_key:
         resend.api_key = settings.resend_api_key
@@ -91,8 +121,31 @@ async def request_otp(email: str, redis: Redis, settings: Settings) -> str | Non
 
 
 async def verify_otp(email: str, code: str, redis: Redis) -> bool:
+    """Checks a code, counting wrong guesses and burning the code once too
+    many pile up.
+
+    Returns False for an ordinary bad/expired code. Raises 429 once the
+    attempt budget is spent, so the caller can tell the user to request a new
+    one rather than letting them keep grinding.
+    """
+    attempts = int(await redis.get(_attempt_key(email)) or 0)
+    if attempts >= MAX_VERIFY_ATTEMPTS:
+        await redis.delete(_otp_key(email))
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many incorrect codes. Request a new one.",
+        )
+
     stored = await redis.get(_otp_key(email))
-    if stored is None or stored != code:
+    if stored is None or not secrets.compare_digest(stored, code):
+        # Counter lives as long as the code, so a fresh code resets the budget.
+        failures = await redis.incr(_attempt_key(email))
+        if failures == 1:
+            await redis.expire(_attempt_key(email), OTP_TTL_SECONDS)
+        if failures >= MAX_VERIFY_ATTEMPTS:
+            await redis.delete(_otp_key(email))
         return False
+
     await redis.delete(_otp_key(email))
+    await redis.delete(_attempt_key(email))
     return True
