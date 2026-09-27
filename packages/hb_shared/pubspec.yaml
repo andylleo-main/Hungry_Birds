@@ -1,5 +1,5 @@
 name: hb_shared
-description: Shared models, API client, auth storage, and theme for the Hunger Birds customer and merchant apps.
+description: Shared models, API client, auth storage, and theme for the Hungry Birds customer and merchant apps.
 version: 0.1.0
 publish_to: "none"
 

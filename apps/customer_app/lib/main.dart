@@ -29,7 +29,7 @@ class HungerBirdsApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Hunger Birds',
+      title: 'Hungry Birds',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       home: const AuthGate(),

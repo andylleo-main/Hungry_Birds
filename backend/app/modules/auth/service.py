@@ -110,9 +110,9 @@ async def request_otp(email: str, redis: Redis, settings: Settings) -> str | Non
             {
                 "from": settings.resend_from_email,
                 "to": [email],
-                "subject": "Your Hunger Birds login code",
+                "subject": "Your Hungry Birds login code",
                 "html": (
-                    f"<p>Your Hunger Birds login code is:</p>"
+                    f"<p>Your Hungry Birds login code is:</p>"
                     f"<h2>{code}</h2>"
                     f"<p>It expires in 5 minutes. If you didn't request this, ignore this email.</p>"
                 ),

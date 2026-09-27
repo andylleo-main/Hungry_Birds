@@ -50,7 +50,7 @@ if settings.cors_origin_list == ['*']:
         '- or empty, which disables cross-origin access entirely.'
     )
 
-app = FastAPI(title="Hunger Birds API")
+app = FastAPI(title="Hungry Birds API")
 
 # A blanket ceiling per address, underneath the per-endpoint limits in
 # app/core/limits.py. Those are sized for each endpoint's specific abuse; this
@@ -185,16 +185,20 @@ if (STATIC_DIR / 'index.html').is_file():
         name='assets',
     )
 
-    @app.get('/favicon.svg', include_in_schema=False)
-    async def favicon() -> FileResponse:
-        return FileResponse(STATIC_DIR / 'favicon.svg')
-
     @app.get('/{full_path:path}', include_in_schema=False)
     async def spa(request: Request, full_path: str) -> FileResponse:
-        """History fallback for client-side routes.
+        """Serve a real file when there is one, otherwise the app shell.
 
         React Router owns paths like /orders/<id>, so a refresh or a shared
         link must still return index.html rather than a 404.
+
+        But the build also drops files at the root of the bundle - the favicon,
+        the logo, touch icons - and those are not client-side routes. Until
+        this checked for them, every one of them fell through to the fallback
+        and was answered with index.html: the browser asked for a PNG, got
+        HTML, and quietly showed no icon at all. Checking the filesystem first
+        covers whatever the build emits next (a manifest, robots.txt) without
+        another hardcoded route.
 
         An unknown /api or /health path 404s as JSON rather than being handed
         the HTML shell, which would otherwise reach the client as a confusing
@@ -202,4 +206,12 @@ if (STATIC_DIR / 'index.html').is_file():
         """
         if full_path.startswith(('api/', 'health')):
             raise HTTPException(status.HTTP_404_NOT_FOUND, 'Not found')
+
+        if full_path:
+            candidate = (STATIC_DIR / full_path).resolve()
+            # Confine to the bundle: without this, a path like ../../.env walks
+            # out of the static directory and serves whatever it lands on.
+            if candidate.is_file() and candidate.is_relative_to(STATIC_DIR.resolve()):
+                return FileResponse(candidate)
+
         return FileResponse(STATIC_DIR / 'index.html')

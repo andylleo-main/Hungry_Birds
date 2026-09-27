@@ -86,10 +86,8 @@ export default function Login() {
       <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden bg-primary p-space-xl text-on-primary lg:flex">
         <div className="absolute -right-24 -top-24 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
         <div className="relative flex items-center gap-space-sm">
-          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-white/15">
-            <Icon name="lunch_dining" className="text-[22px]" />
-          </span>
-          <span className="text-headline-sm">Hunger Birds</span>
+          <img src="/logo.png" alt="" width={44} height={44} className="h-11 w-11" />
+          <span className="text-headline-sm">Hungry Birds</span>
         </div>
 
         <div className="relative flex flex-col gap-space-md">
@@ -121,10 +119,8 @@ export default function Login() {
       <div className="flex w-full items-center justify-center px-margin-mobile lg:w-1/2 lg:px-margin">
         <div className="w-full max-w-md">
           <div className="mb-space-lg flex items-center gap-space-sm lg:hidden">
-            <span className="flex h-10 w-10 items-center justify-center rounded-md bg-primary text-on-primary">
-              <Icon name="lunch_dining" className="text-[22px]" />
-            </span>
-            <span className="text-headline-sm text-on-surface">Hunger Birds</span>
+            <img src="/logo.png" alt="" width={44} height={44} className="h-11 w-11" />
+            <span className="text-headline-sm text-on-surface">Hungry Birds</span>
           </div>
 
           {step === 'email' ? (

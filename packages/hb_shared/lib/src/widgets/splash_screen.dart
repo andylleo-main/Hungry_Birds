@@ -15,7 +15,7 @@ class SplashScreen extends StatelessWidget {
             const Icon(Icons.flutter_dash, size: 72, color: Colors.white),
             const SizedBox(height: 16),
             const Text(
-              'Hunger Birds',
+              'Hungry Birds',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 32,

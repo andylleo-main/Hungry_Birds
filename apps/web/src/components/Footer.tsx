@@ -6,10 +6,8 @@ export default function Footer() {
       <div className="mx-auto grid max-w-content gap-space-xl px-margin-mobile py-space-xl md:grid-cols-2 md:px-margin lg:grid-cols-4">
         <div className="flex flex-col gap-space-sm">
           <div className="flex items-center gap-space-sm">
-            <span className="flex h-8 w-8 items-center justify-center rounded bg-primary text-on-primary">
-              <Icon name="lunch_dining" className="text-[18px]" />
-            </span>
-            <span className="text-headline-sm text-on-surface">Hunger Birds</span>
+            <img src="/logo.png" alt="" width={32} height={32} className="h-8 w-8" />
+            <span className="text-headline-sm text-on-surface">Hungry Birds</span>
           </div>
           <p className="max-w-xs text-body-sm text-on-surface-variant">
             Order ahead from the food stalls around campus, then walk up and collect. No queue, no
@@ -38,7 +36,7 @@ export default function Footer() {
         <div className="flex flex-col gap-space-sm">
           <h3 className="text-label-lg uppercase tracking-wide text-on-surface">Run a stall?</h3>
           <p className="text-body-sm text-on-surface-variant">
-            Vendors manage their menu and orders from the Hunger Birds merchant app for Android.
+            Vendors manage their menu and orders from the Hungry Birds merchant app for Android.
             Apply from the app and an admin will approve you.
           </p>
         </div>
@@ -46,7 +44,7 @@ export default function Footer() {
 
       <div className="border-t border-outline-variant">
         <div className="mx-auto flex max-w-content flex-col gap-space-xs px-margin-mobile py-space-md text-body-sm text-on-surface-variant md:flex-row md:items-center md:justify-between md:px-margin">
-          <span>© {new Date().getFullYear()} Hunger Birds · BIT Mesra</span>
+          <span>© {new Date().getFullYear()} Hungry Birds · BIT Mesra</span>
           <span className="flex items-center gap-space-xs">
             <Icon name="payments" className="text-[18px] text-primary" />
             Cash on pickup only

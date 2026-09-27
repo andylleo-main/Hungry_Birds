@@ -1,4 +1,4 @@
-# Hunger Birds
+# Hungry Birds
 
 Campus food ordering for BIT Mesra. Students browse the food stalls on campus,
 place cash-on-delivery orders, and watch the status update live; stall owners
@@ -242,7 +242,7 @@ against `users` fails with *column users.phone does not exist*.
 | `REDIS_URL` | `${{Redis.REDIS_URL}}` — likewise |
 | `JWT_SECRET` | long random string: `openssl rand -hex 32` |
 | `RESEND_API_KEY` | from the Resend dashboard |
-| `RESEND_FROM_EMAIL` | `Hunger Birds <noreply@yourdomain>` — the domain must be verified in Resend |
+| `RESEND_FROM_EMAIL` | `Hungry Birds <noreply@yourdomain>` — the domain must be verified in Resend |
 | `CLOUDINARY_CLOUD_NAME` | optional; photos are disabled until all three are set |
 | `CLOUDINARY_API_KEY` | optional |
 | `CLOUDINARY_API_SECRET` | optional |

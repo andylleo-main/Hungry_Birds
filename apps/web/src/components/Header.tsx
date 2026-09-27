@@ -20,11 +20,9 @@ export default function Header() {
       <div className="mx-auto flex h-20 max-w-content items-center justify-between gap-gutter px-margin-mobile md:px-margin">
         <div className="flex shrink-0 items-center gap-gutter">
           <Link to="/" className="flex items-center gap-space-sm">
-            <span className="flex h-10 w-10 items-center justify-center rounded-md bg-primary text-on-primary">
-              <Icon name="lunch_dining" className="text-[22px]" />
-            </span>
+            <img src="/logo.png" alt="" width={40} height={40} className="h-10 w-10" />
             <span className="flex flex-col leading-none">
-              <span className="text-headline-sm tracking-tight text-on-surface">Hunger Birds</span>
+              <span className="text-headline-sm tracking-tight text-on-surface">Hungry Birds</span>
               <span className="text-label-sm uppercase tracking-wide text-primary">
                 BIT Mesra Campus
               </span>

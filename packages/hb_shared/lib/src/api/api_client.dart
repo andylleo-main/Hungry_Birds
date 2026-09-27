@@ -46,7 +46,7 @@ class UploadSignature {
       );
 }
 
-/// Talks to the Hunger Birds FastAPI backend. Handles JSON encode/decode,
+/// Talks to the Hungry Birds FastAPI backend. Handles JSON encode/decode,
 /// bearer-token auth, and a single silent-refresh retry on a 401.
 class ApiClient {
   final String baseUrl;

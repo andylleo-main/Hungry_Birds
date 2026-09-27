@@ -29,7 +29,7 @@ class MerchantApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Hunger Birds Partner',
+      title: 'Hungry Birds Partner',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       home: const MerchantGate(),
@@ -48,7 +48,7 @@ class MerchantGate extends StatelessWidget {
       MerchantStage.loggedOut => HbLoginScreen(
           api: context.read<ApiClient>(),
           logo: Icons.storefront,
-          headline: 'Run your stall on Hunger Birds',
+          headline: 'Run your stall on Hungry Birds',
           subtitle: "Sign in with your BIT Mesra email. We'll send you a 6-digit code.",
           onVerified: merchant.onAuthenticated,
         ),

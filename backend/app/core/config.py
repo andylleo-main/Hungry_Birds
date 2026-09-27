@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     redis_url: str
 
     resend_api_key: str = ""
-    resend_from_email: str = "Hunger Birds <onboarding@resend.dev>"
+    resend_from_email: str = "Hungry Birds <onboarding@resend.dev>"
 
     jwt_secret: str
     jwt_algorithm: str = "HS256"
