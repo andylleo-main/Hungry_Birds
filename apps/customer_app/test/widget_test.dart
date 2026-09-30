@@ -19,6 +19,7 @@ VendorDetail _vendor(String id, List<MenuItem> items) => VendorDetail(
       coverImageUrl: null,
       isApproved: true,
       isOpen: true,
+      deliveryLocations: const [],
       categories: const [],
       uncategorizedItems: items,
     );

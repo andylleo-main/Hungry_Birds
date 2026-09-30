@@ -243,6 +243,13 @@ class _StatusBanner extends StatelessWidget {
           'The stall could not take this order',
         ),
       OrderStatus.cancelled => (AppTheme.textSecondary, Icons.do_not_disturb_on_outlined, 'Order cancelled'),
+      // A status this build predates. Says something true and unalarming rather
+      // than rendering nothing.
+      OrderStatus.unknown => (
+          AppTheme.textSecondary,
+          Icons.info_outline,
+          'Your order was updated',
+        ),
     };
 
     return Container(

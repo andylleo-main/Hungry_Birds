@@ -161,6 +161,37 @@ class _OrderCardState extends State<_OrderCard> {
                   ],
                 ),
               ),
+            const SizedBox(height: 8),
+            // Where this order is going. A delivery whose destination is not on
+            // the card is an order the stall cannot actually fulfil, so this sits
+            // above the note rather than beside the total.
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: (order.isDelivery ? AppTheme.primaryRed : AppTheme.textSecondary)
+                    .withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    order.isDelivery ? Icons.delivery_dining : Icons.restaurant,
+                    size: 18,
+                    color: order.isDelivery ? AppTheme.primaryRed : AppTheme.textSecondary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      order.isDelivery
+                          ? 'Deliver to ${order.deliveryLocationLabel ?? 'an unnamed place'}'
+                          : 'Dine in - collecting at the counter',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             if (order.note != null && order.note!.isNotEmpty) ...[
               const SizedBox(height: 8),
               Container(
@@ -274,6 +305,11 @@ class _StatusChip extends StatelessWidget {
       OrderStatus.placed || OrderStatus.preparing => AppTheme.warning,
       OrderStatus.rejected => AppTheme.primaryRed,
       OrderStatus.cancelled => AppTheme.textSecondary,
+      // A status from a newer server. Left deliberately exhaustive rather than
+      // given a wildcard: the analyzer then flags every switch like this one the
+      // next time a status is added, which is the whole reason the enum has an
+      // unknown member instead of throwing while decoding.
+      OrderStatus.unknown => AppTheme.textSecondary,
     };
 
     return Container(

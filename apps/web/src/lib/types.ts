@@ -15,6 +15,9 @@ export interface Vendor {
   cover_image_url: string | null;
   is_approved: boolean;
   is_open: boolean;
+  /** How this stall will hand food over. Both default to on server-side. */
+  dine_in_enabled: boolean;
+  delivery_enabled: boolean;
 }
 
 export interface MenuItem {
@@ -34,10 +37,29 @@ export interface CategoryWithItems {
   items: MenuItem[];
 }
 
+/** One campus drop-off point. */
+export interface DeliveryLocation {
+  code: string;
+  label: string;
+  enabled: boolean;
+}
+
 export interface VendorDetail extends Vendor {
   categories: CategoryWithItems[];
   uncategorized_items: MenuItem[];
+  /**
+   * Only the places this stall actually delivers to. Offering one it has
+   * switched off would invite a choice the server then rejects.
+   */
+  delivery_locations: DeliveryLocation[];
 }
+
+export type FulfilmentType = 'dine_in' | 'delivery';
+
+export const FULFILMENT_LABEL: Record<FulfilmentType, string> = {
+  dine_in: 'Dine in',
+  delivery: 'Delivery',
+};
 
 /** Mirrors the backend's OrderStatus enum. */
 export type OrderStatus =
@@ -70,6 +92,10 @@ export interface Order {
   items: OrderLineItem[];
   customer_name: string | null;
   customer_phone: string | null;
+  fulfilment_type: FulfilmentType;
+  delivery_location: string | null;
+  /** The human name of the drop-off point; the code is what the API takes. */
+  delivery_location_label: string | null;
 }
 
 export const ACTIVE_STATUSES: OrderStatus[] = ['placed', 'accepted', 'preparing', 'ready'];

@@ -24,20 +24,24 @@ packages/hb_shared/    Shared Dart: models, API client, login flow, theme
 
 **Auth.** A student enters their institute email; the backend generates a
 6-digit code, stores it in Redis with a 5-minute TTL, and emails it through
-Resend. Verifying the code issues a JWT access/refresh pair. Only
-`@bitmesra.ac.in` addresses are accepted, and `+tag` addressing is normalised
-away (`me+1@…` and `me@…` are the same account) so one person can't spin up
-unlimited accounts.
+Resend. Verifying the code issues an access token and an opaque, revocable
+refresh token. Customers must use an `@bitmesra.ac.in` address, and `+tag`
+addressing is normalised away (`me+1@…` and `me@…` are the same account) so one
+person can't spin up unlimited accounts. Stall owners sign in on their own routes
+with any address — see [Who signs in where](#who-signs-in-where).
 
-**Vendors.** Anyone can apply to run a stall, but the stall stays invisible to
-students until an admin approves it. Approved stalls also carry an
-open/closed switch the owner controls from their app.
+**Vendors.** Anyone can sign up to run a stall, but the stall stays invisible to
+students until an admin approves it. Approved stalls carry an open/closed switch
+the owner controls from their app, plus the dine-in and delivery settings in
+[How a stall serves](#how-a-stall-serves).
 
 **Orders.** A cart holds items from one stall. Placing an order snapshots each
-item's name and price, so later menu edits never rewrite order history. Status
-moves through an explicit state machine — `placed → accepted → preparing →
-ready → completed`, with `rejected`/`cancelled` as terminal branches — and
-invalid jumps are rejected by the API.
+item's name and price, so later menu edits never rewrite order history. Each
+order is either dine-in or a delivery to one campus location, checked against
+what that stall currently offers. Status moves through an explicit state machine
+— `placed → accepted → preparing → ready → completed`, with
+`rejected`/`cancelled` as terminal branches — and invalid jumps are rejected by
+the API.
 
 **Realtime.** Every status change publishes to Redis pub/sub. The customer's
 tracking screen subscribes to `order:{id}` and the merchant's queue to
@@ -291,6 +295,62 @@ flutter run --dart-define=API_BASE_URL=https://<your-service>.up.railway.app/api
 Images upload straight from the phone to Cloudinary using a short-lived
 signature minted by `GET /media/signature`, so image bytes never pass through
 the backend.
+
+## Who signs in where
+
+Three apps share one API, and each has a different rule about who may hold an
+account.
+
+| Who | Where they sign in | Address | Route |
+| --- | --- | --- | --- |
+| Customers | the web app | `@bitmesra.ac.in` only | `POST /api/auth/otp/{request,verify}` |
+| Stall owners | the Android merchant app | any email | `POST /api/auth/vendor/otp/{request,verify}` |
+| Admins | the web app | their institute address | `POST /api/auth/admin/login` |
+
+A stall's address does not have to be an institute one - a stall is a business.
+An account's role is set when it is created and nothing changes it afterwards,
+so somebody who is both a student and a stall owner needs two addresses. That is
+deliberate: role decides whether an account can spend money on campus or sell
+food to it, and a role a later request can flip is not a boundary.
+
+Access tokens carry an audience (`web`, `merchant`), so a session belonging to
+one app cannot be replayed against another's endpoints.
+
+**What that does and does not enforce**, because the difference matters:
+
+- *Enforced.* Only an institute address can place an order. It is checked both by
+  role - a vendor account is not a customer account - and by re-checking the
+  domain at the point of ordering, so it holds regardless of how accounts come
+  to exist later.
+- *Enforced.* A stall is invisible to customers and cannot receive an order until
+  an admin approves it.
+- *Not enforced, and not claimed to be.* "Stall owners only work in the Android
+  app." The API is public and there is no client attestation, so nothing stops
+  someone calling the vendor routes with curl. What is true is narrower and
+  enough: the web app contains no vendor screens at all, and a vendor account
+  cannot order. The audience check buys session separation, not proof of client.
+
+The residual worth knowing: the vendor signup route will email any address on the
+internet, which makes it a relay someone could point at a stranger. It is capped
+hard per IP (three a minute, ten an hour) and per address, not prevented. If it
+is ever abused, the fix is invite-only stalls - an admin creates the account and
+the vendor signs in to an existing row.
+
+## How a stall serves
+
+Each stall chooses, in the merchant app under **Your stall → How you serve**:
+
+- **Dine in** on or off - eat at, or collect from, the counter.
+- **Delivery** on or off, and which of the eighteen campus locations it carries
+  to: Hostels 1-13, RS Hostel, R&D Building, Biotech Department, Lecture Hall 1,
+  IC Arena.
+
+Everywhere is on by default, including for stalls that existed before delivery
+did. Only the locations a stall switches *off* are stored, which is what makes
+that true without seeding anything. Customers are offered only the places a stall
+keeps on, and an order naming any other is refused. A stall cannot switch both
+dine-in and delivery off - that would read as open while rejecting everything, and
+there is already a switch for being closed.
 
 ## Admin sign-in without an OTP
 

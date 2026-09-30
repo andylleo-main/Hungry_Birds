@@ -7,7 +7,7 @@ import '../theme/app_theme.dart';
 
 enum _LoginStep { email, otp }
 
-/// Institute-email OTP login, shared by the customer and merchant apps.
+/// Email-code login, shared by the customer and merchant apps.
 ///
 /// Both steps live in one screen (rather than a pushed route) so the caller's
 /// auth gate can swap this widget out the moment [onVerified] completes,
@@ -18,6 +18,16 @@ class HbLoginScreen extends StatefulWidget {
   final String subtitle;
   final IconData logo;
   final String allowedDomain;
+
+  /// Sign in as a stall owner rather than a customer.
+  ///
+  /// This switches two things together, and they must move together: the
+  /// endpoints (the vendor pair accepts any email address; the customer pair is
+  /// institute-only) and the on-screen rule, so the field does not promise a
+  /// restriction the server will not apply, or refuse an address the server
+  /// would have accepted. The merchant app sets it; the customer app does not.
+  final bool vendor;
+
   final Future<void> Function(AuthResult result) onVerified;
 
   const HbLoginScreen({
@@ -28,6 +38,7 @@ class HbLoginScreen extends StatefulWidget {
     required this.onVerified,
     this.logo = Icons.flutter_dash,
     this.allowedDomain = 'bitmesra.ac.in',
+    this.vendor = false,
   });
 
   @override
@@ -59,7 +70,7 @@ class _HbLoginScreenState extends State<HbLoginScreen> {
       _error = null;
     });
     try {
-      final result = await widget.api.requestOtp(_email);
+      final result = await widget.api.requestOtp(_email, vendor: widget.vendor);
       if (!mounted) return;
       setState(() {
         _step = _LoginStep.otp;
@@ -87,7 +98,7 @@ class _HbLoginScreenState extends State<HbLoginScreen> {
       _error = null;
     });
     try {
-      final result = await widget.api.verifyOtp(_email, code);
+      final result = await widget.api.verifyOtp(_email, code, vendor: widget.vendor);
       await widget.onVerified(result);
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -151,15 +162,19 @@ class _HbLoginScreenState extends State<HbLoginScreen> {
             keyboardType: TextInputType.emailAddress,
             autocorrect: false,
             decoration: InputDecoration(
-              labelText: 'Institute email',
-              hintText: 'yourname@${widget.allowedDomain}',
+              labelText: widget.vendor ? 'Email' : 'Institute email',
+              hintText: widget.vendor ? 'you@example.com' : 'yourname@${widget.allowedDomain}',
               prefixIcon: const Icon(Icons.mail_outline),
             ),
             validator: (value) {
               final email = value?.trim().toLowerCase() ?? '';
-              if (email.isEmpty) return 'Enter your institute email';
+              if (email.isEmpty) {
+                return widget.vendor ? 'Enter your email' : 'Enter your institute email';
+              }
               if (!email.contains('@')) return 'Enter a valid email address';
-              if (!email.endsWith('@${widget.allowedDomain}')) {
+              // Stall owners are deliberately exempt: a vendor signs in on the
+              // vendor routes, which take any address.
+              if (!widget.vendor && !email.endsWith('@${widget.allowedDomain}')) {
                 return 'Only @${widget.allowedDomain} emails can sign up';
               }
               return null;

@@ -48,8 +48,12 @@ class MerchantGate extends StatelessWidget {
       MerchantStage.loggedOut => HbLoginScreen(
           api: context.read<ApiClient>(),
           logo: Icons.storefront,
+          // Stall owners sign in on the vendor routes, which take any email
+          // address - a stall is a business, and its address need not be an
+          // institute one. Customers still need @bitmesra.ac.in.
+          vendor: true,
           headline: 'Run your stall on Hungry Birds',
-          subtitle: "Sign in with your BIT Mesra email. We'll send you a 6-digit code.",
+          subtitle: "Sign in with any email address. We'll send you a 6-digit code.",
           onVerified: merchant.onAuthenticated,
         ),
       MerchantStage.needsApplication => const ApplyScreen(),

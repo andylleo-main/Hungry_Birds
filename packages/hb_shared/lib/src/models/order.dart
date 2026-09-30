@@ -1,3 +1,5 @@
+import 'fulfilment.dart';
+
 enum OrderStatus {
   placed,
   accepted,
@@ -89,6 +91,12 @@ class Order {
   final String? customerName;
   final String? customerPhone;
 
+  /// How this order is being handed over, and - for a delivery - where to.
+  /// [deliveryLocationLabel] is the human name; the code is what the API takes.
+  final FulfilmentType fulfilmentType;
+  final String? deliveryLocation;
+  final String? deliveryLocationLabel;
+
   const Order({
     required this.id,
     required this.vendorId,
@@ -102,7 +110,12 @@ class Order {
     required this.items,
     required this.customerName,
     required this.customerPhone,
+    required this.fulfilmentType,
+    required this.deliveryLocation,
+    required this.deliveryLocationLabel,
   });
+
+  bool get isDelivery => fulfilmentType == FulfilmentType.delivery;
 
   factory Order.fromJson(Map<String, dynamic> json) => Order(
         id: json['id'] as String,
@@ -119,5 +132,12 @@ class Order {
             .toList(),
         customerName: json['customer_name'] as String?,
         customerPhone: json['customer_phone'] as String?,
+        // Defaulted, not required, so an order serialised by a server that
+        // predates delivery still decodes.
+        fulfilmentType: FulfilmentType.fromJson(
+          (json['fulfilment_type'] as String?) ?? 'dine_in',
+        ),
+        deliveryLocation: json['delivery_location'] as String?,
+        deliveryLocationLabel: json['delivery_location_label'] as String?,
       );
 }

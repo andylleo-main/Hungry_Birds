@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../services/cloudinary_uploader.dart';
 import '../state/merchant_state.dart';
+import 'fulfilment_screen.dart';
 
 class StallTab extends StatefulWidget {
   const StallTab({super.key});
@@ -75,6 +76,16 @@ class _StallTabState extends State<StallTab> {
       nameController.dispose();
       descriptionController.dispose();
     }
+  }
+
+  /// A one-line summary for the stall tab, so a merchant can see what they are
+  /// accepting without opening the settings screen.
+  String _servingSummary(Vendor? vendor) {
+    final modes = [
+      if (vendor?.dineInEnabled ?? true) 'Dine in',
+      if (vendor?.deliveryEnabled ?? true) 'Delivery',
+    ];
+    return modes.isEmpty ? 'Not accepting orders' : modes.join(' · ');
   }
 
   void _say(String message) {
@@ -194,6 +205,21 @@ class _StallTabState extends State<StallTab> {
               // changes and leave the stall in whichever one happens to land
               // second.
               onChanged: merchant.savingOpenState ? null : (value) => _setOpen(value),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.delivery_dining_outlined),
+              title: const Text('How you serve', style: TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text(
+                _servingSummary(vendor),
+                style: const TextStyle(fontSize: 13),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const FulfilmentScreen()),
+              ),
             ),
           ),
           const SizedBox(height: 16),

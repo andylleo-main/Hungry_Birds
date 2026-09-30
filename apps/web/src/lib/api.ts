@@ -1,4 +1,11 @@
-import type { AppUser, Order, OrderStatus, Vendor, VendorDetail } from './types';
+import type {
+  AppUser,
+  FulfilmentType,
+  Order,
+  OrderStatus,
+  Vendor,
+  VendorDetail,
+} from './types';
 
 /**
  * Empty means same-origin, which is how production runs: the backend serves
@@ -238,6 +245,9 @@ export const api = {
     vendor_id: string;
     items: { menu_item_id: string; quantity: number }[];
     note?: string;
+    fulfilment_type: FulfilmentType;
+    /** Required for a delivery, must be absent for a dine-in. */
+    delivery_location?: string;
   }) => request<Order>('POST', '/orders', { body: payload }),
 
   myOrders: () => request<Order[]>('GET', '/orders'),

@@ -37,3 +37,6 @@ apps/web/.env.local
 
 # Flutter generated
 apps/**/.gradle/
+
+# Redis snapshot, written when a local redis-server is used for the tests.
+dump.rdb

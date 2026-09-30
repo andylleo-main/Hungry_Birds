@@ -11,7 +11,7 @@ const TIMELINE: { status: OrderStatus; icon: string; blurb: string }[] = [
   { status: 'placed', icon: 'receipt_long', blurb: 'Sent to the stall' },
   { status: 'accepted', icon: 'check_circle', blurb: 'The stall confirmed your order' },
   { status: 'preparing', icon: 'skillet', blurb: 'Being cooked right now' },
-  { status: 'ready', icon: 'shopping_bag', blurb: 'Collect it from the counter' },
+  { status: 'ready', icon: 'shopping_bag', blurb: 'Ready to hand over' },
   { status: 'completed', icon: 'done_all', blurb: 'Picked up and paid' },
 ];
 
@@ -254,6 +254,25 @@ export default function OrderTracking() {
             ))}
           </ul>
 
+          {/* How this order is arriving. For a delivery the destination is the
+              thing the customer most wants confirmed back to them. */}
+          <div className="flex items-start gap-space-sm rounded bg-surface-container px-space-sm py-space-sm">
+            <Icon
+              name={order.fulfilment_type === 'delivery' ? 'delivery_dining' : 'restaurant'}
+              className="text-[20px] text-primary"
+            />
+            <div className="min-w-0">
+              <p className="text-label-sm uppercase tracking-wide text-on-surface-variant">
+                {order.fulfilment_type === 'delivery' ? 'Delivery' : 'Dine in'}
+              </p>
+              <p className="text-body-sm text-on-surface-medium">
+                {order.fulfilment_type === 'delivery'
+                  ? (order.delivery_location_label ?? 'On campus')
+                  : 'Collect from the stall counter'}
+              </p>
+            </div>
+          </div>
+
           {order.note && (
             <div className="rounded bg-surface-container px-space-sm py-space-sm">
               <p className="text-label-sm uppercase tracking-wide text-on-surface-variant">
@@ -266,7 +285,9 @@ export default function OrderTracking() {
           <div className="flex items-center justify-between border-t border-outline-variant pt-space-sm">
             <div>
               <p className="text-headline-sm text-on-surface">Total</p>
-              <p className="text-label-md text-on-surface-variant">Cash at the counter</p>
+              <p className="text-label-md text-on-surface-variant">
+                {order.fulfilment_type === 'delivery' ? 'Cash on delivery' : 'Cash at the counter'}
+              </p>
             </div>
             <span className="text-headline-md text-primary">{rupees(order.total_amount)}</span>
           </div>

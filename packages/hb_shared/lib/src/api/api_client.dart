@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/fulfilment.dart';
 import '../models/order.dart';
 import '../models/user.dart';
 import '../models/vendor.dart';
@@ -166,16 +167,27 @@ class ApiClient {
 
   // --- Auth ---
 
-  Future<OtpRequestResult> requestOtp(String email) async {
-    final data = await _request('POST', '/auth/otp/request', body: {'email': email}, auth: false)
-        as Map<String, dynamic>;
+  /// Sends a sign-in code.
+  ///
+  /// [vendor] picks the stall owners' route, which accepts any email address;
+  /// the default route is institute-only. They are separate endpoints on the
+  /// server, not one endpoint with a flag, so a client cannot accidentally
+  /// switch the campus restriction off by omitting a field.
+  Future<OtpRequestResult> requestOtp(String email, {bool vendor = false}) async {
+    final path = vendor ? '/auth/vendor/otp/request' : '/auth/otp/request';
+    final data =
+        await _request('POST', path, body: {'email': email}, auth: false) as Map<String, dynamic>;
     return OtpRequestResult(data['message'] as String, data['debug_code'] as String?);
   }
 
-  Future<AuthResult> verifyOtp(String email, String code) async {
+  /// Exchanges a code for tokens. [vendor] must match the [requestOtp] call:
+  /// the vendor route creates the account as a stall, and the token it returns
+  /// is the only kind the merchant app's endpoints accept.
+  Future<AuthResult> verifyOtp(String email, String code, {bool vendor = false}) async {
+    final path = vendor ? '/auth/vendor/otp/verify' : '/auth/otp/verify';
     final data = await _request(
       'POST',
-      '/auth/otp/verify',
+      path,
       body: {'email': email, 'code': code},
       auth: false,
     ) as Map<String, dynamic>;
@@ -224,6 +236,35 @@ class ApiClient {
       body: {'stall_name': stallName, if (description != null) 'description': description},
     ) as Map<String, dynamic>;
     return Vendor.fromJson(data);
+  }
+
+  // --- Fulfilment (vendor's own) ---
+
+  Future<FulfilmentSettings> myFulfilment() async {
+    final data = await _request('GET', '/vendors/me/fulfilment') as Map<String, dynamic>;
+    return FulfilmentSettings.fromJson(data);
+  }
+
+  /// Replaces the stall's fulfilment settings wholesale.
+  ///
+  /// A full replacement rather than a diff, so the merchant's screen is the
+  /// whole truth and two devices editing at once cannot interleave into a state
+  /// neither of them chose.
+  Future<FulfilmentSettings> updateFulfilment({
+    required bool dineInEnabled,
+    required bool deliveryEnabled,
+    required List<String> enabledLocations,
+  }) async {
+    final data = await _request(
+      'PUT',
+      '/vendors/me/fulfilment',
+      body: {
+        'dine_in_enabled': dineInEnabled,
+        'delivery_enabled': deliveryEnabled,
+        'enabled_locations': enabledLocations,
+      },
+    ) as Map<String, dynamic>;
+    return FulfilmentSettings.fromJson(data);
   }
 
   Future<Vendor> myVendor() async {
@@ -334,15 +375,28 @@ class ApiClient {
 
   // --- Orders ---
 
+  /// Places an order.
+  ///
+  /// [deliveryLocation] is a code from the stall's own enabled list and is
+  /// required for a delivery, forbidden for a dine-in - the server rejects
+  /// either mistake rather than quietly ignoring the field.
   Future<Order> placeOrder({
     required String vendorId,
     required List<Map<String, dynamic>> items,
     String? note,
+    FulfilmentType fulfilmentType = FulfilmentType.dineIn,
+    String? deliveryLocation,
   }) async {
     final data = await _request(
       'POST',
       '/orders',
-      body: {'vendor_id': vendorId, 'items': items, if (note != null) 'note': note},
+      body: {
+        'vendor_id': vendorId,
+        'items': items,
+        if (note != null) 'note': note,
+        'fulfilment_type': fulfilmentType.wire,
+        if (deliveryLocation != null) 'delivery_location': deliveryLocation,
+      },
     ) as Map<String, dynamic>;
     return Order.fromJson(data);
   }

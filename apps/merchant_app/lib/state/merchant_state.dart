@@ -40,9 +40,11 @@ class MerchantState extends ChangeNotifier {
     await refreshVendor();
   }
 
-  /// Re-reads the vendor profile and recomputes which stage to show. A vendor
-  /// row only exists once they've applied, and only counts as live once an
-  /// admin approves it.
+  /// Re-reads the vendor profile and recomputes which stage to show.
+  ///
+  /// The account is already a vendor by the time it gets here - the role is set
+  /// when it is created, on the vendor login route. What may not exist yet is
+  /// the stall itself, which is what the 404 below means.
   Future<void> refreshVendor() async {
     if (user?.role != UserRole.vendor) {
       vendor = null;
@@ -63,8 +65,10 @@ class MerchantState extends ChangeNotifier {
   }
 
   Future<void> apply({required String stallName, String? description}) async {
+    // No need to re-read the user afterwards any more: applying used to be what
+    // promoted the account to a vendor, and now it only attaches a stall to an
+    // account that already is one.
     vendor = await api.applyAsVendor(stallName: stallName, description: description);
-    user = await api.me();
     _set(vendor!.isApproved ? MerchantStage.ready : MerchantStage.awaitingApproval);
   }
 

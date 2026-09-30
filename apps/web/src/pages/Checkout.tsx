@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError, api } from '../lib/api';
 import { rupees, validateIndianMobile } from '../lib/format';
 import { EmptyState, Icon, QuantityStepper, Spinner } from '../components/ui';
 import { useAuth } from '../state/AuthContext';
 import { useCart } from '../state/CartContext';
+import type { DeliveryLocation, FulfilmentType } from '../lib/types';
 
 function Step({
   index,
@@ -44,6 +45,53 @@ export default function Checkout() {
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The stall's fulfilment settings, re-read here rather than taken from the
+  // cart. The cart survives a reload in localStorage, so by the time someone
+  // reaches checkout the stall may have stopped delivering, or switched off the
+  // hostel they were going to pick. This is the last moment before the order is
+  // sent, so it is the right moment to ask.
+  const [fulfilment, setFulfilment] = useState<FulfilmentType | null>(null);
+  const [locations, setLocations] = useState<DeliveryLocation[] | null>(null);
+  const [location, setLocation] = useState('');
+  const [dineInOk, setDineInOk] = useState(vendor?.dine_in_enabled ?? true);
+  const [deliveryOk, setDeliveryOk] = useState(vendor?.delivery_enabled ?? true);
+
+  const vendorId = vendor?.id;
+
+  useEffect(() => {
+    if (!vendorId) return;
+    let cancelled = false;
+    api
+      .vendorDetail(vendorId)
+      .then((detail) => {
+        if (cancelled) return;
+        setDineInOk(detail.dine_in_enabled);
+        setDeliveryOk(detail.delivery_enabled);
+        setLocations(detail.delivery_locations);
+        // Pick a mode the stall actually offers, so the page never opens on a
+        // choice that cannot be submitted.
+        setFulfilment((current) => current ?? (detail.dine_in_enabled ? 'dine_in' : 'delivery'));
+      })
+      .catch(() => {
+        // Leave whatever the cart knew. Placing the order will still be checked
+        // server-side, so a failed read here costs a clear error later rather
+        // than a wrong order now.
+        if (!cancelled) setLocations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorId]);
+
+  const modes = useMemo(
+    () =>
+      [
+        dineInOk ? ({ value: 'dine_in', label: 'Dine in', icon: 'restaurant', blurb: 'Eat at or collect from the stall' } as const) : null,
+        deliveryOk ? ({ value: 'delivery', label: 'Delivery', icon: 'delivery_dining', blurb: 'Brought to you on campus' } as const) : null,
+      ].filter((m): m is NonNullable<typeof m> => m !== null),
+    [dineInOk, deliveryOk],
+  );
+
   if (isEmpty || !vendor) {
     return (
       <div className="mx-auto max-w-content px-margin-mobile py-space-xl md:px-margin">
@@ -71,6 +119,14 @@ export default function Checkout() {
       setError(phoneError);
       return;
     }
+    if (!fulfilment) {
+      setError('Choose whether you want to dine in or have it delivered.');
+      return;
+    }
+    if (fulfilment === 'delivery' && !location) {
+      setError('Choose where you want your order delivered.');
+      return;
+    }
 
     setPlacing(true);
     setError(null);
@@ -85,6 +141,10 @@ export default function Checkout() {
         vendor_id: vendor!.id,
         items: lines.map((l) => ({ menu_item_id: l.item.id, quantity: l.quantity })),
         note: note.trim() || undefined,
+        fulfilment_type: fulfilment,
+        // Sent only for a delivery: the server rejects a dine-in that carries
+        // one rather than ignoring it, so a stray value is not harmless.
+        delivery_location: fulfilment === 'delivery' ? location : undefined,
       });
 
       clear();
@@ -114,17 +174,80 @@ export default function Checkout() {
 
       <div className="grid gap-space-lg lg:grid-cols-[1fr_380px]">
         <div className="flex flex-col gap-space-md">
-          <Step index={1} title="Where you'll collect">
-            <div className="flex items-start gap-space-md rounded-lg bg-primary-tint/50 p-space-md">
+          <Step index={1} title="How you'll get it">
+            <div className="mb-space-md flex items-start gap-space-md rounded-lg bg-primary-tint/50 p-space-md">
               <Icon name="storefront" className="text-[24px] text-primary" />
               <div>
                 <p className="text-label-lg text-on-surface">{vendor.stall_name}</p>
                 <p className="text-body-sm text-on-surface-variant">
-                  Collect from the stall counter once it's marked ready. You'll get live updates as
-                  it's being made.
+                  You'll get live updates as your order is being made.
                 </p>
               </div>
             </div>
+
+            {modes.length === 0 ? (
+              <p className="rounded bg-primary-tint px-space-sm py-space-sm text-body-sm text-primary">
+                This stall isn't taking orders right now. Try another stall.
+              </p>
+            ) : (
+              <div className="grid gap-space-sm sm:grid-cols-2">
+                {modes.map((mode) => {
+                  const selected = fulfilment === mode.value;
+                  return (
+                    <button
+                      key={mode.value}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setFulfilment(mode.value)}
+                      className={`flex items-start gap-space-sm rounded-lg border-[1.5px] p-space-md text-left transition-colors ${
+                        selected
+                          ? 'border-primary bg-primary-tint/40'
+                          : 'border-outline-variant bg-surface-container hover:bg-surface-container-high'
+                      }`}
+                    >
+                      <Icon
+                        name={mode.icon}
+                        className={`text-[22px] ${selected ? 'text-primary' : 'text-on-surface-variant'}`}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-label-lg text-on-surface">{mode.label}</span>
+                        <span className="block text-body-sm text-on-surface-variant">
+                          {mode.blurb}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {fulfilment === 'delivery' && (
+              <div className="mt-space-md">
+                {locations === null ? (
+                  <Spinner />
+                ) : locations.length === 0 ? (
+                  <p className="rounded bg-primary-tint px-space-sm py-space-sm text-body-sm text-primary">
+                    This stall hasn't switched on any delivery locations yet.
+                  </p>
+                ) : (
+                  <label className="flex flex-col gap-space-xs">
+                    <span className="text-label-md text-on-surface-medium">Deliver to</span>
+                    <select
+                      className="field"
+                      value={location}
+                      onChange={(e) => setLocation(e.target.value)}
+                    >
+                      <option value="">Choose a place…</option>
+                      {locations.map((loc) => (
+                        <option key={loc.code} value={loc.code}>
+                          {loc.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            )}
           </Step>
 
           <Step index={2} title="How the stall reaches you">
@@ -153,7 +276,9 @@ export default function Checkout() {
             </div>
             <p className="mt-space-sm flex items-center gap-space-xs text-body-sm text-on-surface-variant">
               <Icon name="call" className="text-[16px] text-primary" />
-              The stall calls this number when your order is ready.
+              {fulfilment === 'delivery'
+                ? 'Shared with whoever brings your order, so they can reach you.'
+                : 'The stall calls this number when your order is ready.'}
             </p>
           </Step>
 
@@ -180,9 +305,13 @@ export default function Checkout() {
             <div className="flex items-center gap-space-md rounded-lg border-[1.5px] border-primary bg-primary-tint/40 p-space-md">
               <Icon name="payments" className="text-[24px] text-primary" />
               <div className="flex-1">
-                <p className="text-label-lg text-on-surface">Cash on pickup</p>
+                <p className="text-label-lg text-on-surface">
+                  {fulfilment === 'delivery' ? 'Cash on delivery' : 'Cash on pickup'}
+                </p>
                 <p className="text-body-sm text-on-surface-variant">
-                  Pay the stall directly when you collect. No online payment.
+                  {fulfilment === 'delivery'
+                    ? 'Pay in cash when your order reaches you. No online payment.'
+                    : 'Pay the stall directly when you collect. No online payment.'}
                 </p>
               </div>
               <Icon name="check_circle" className="text-[22px] text-primary" />
@@ -224,7 +353,7 @@ export default function Checkout() {
               <span className="text-on-surface">{rupees(subtotal)}</span>
             </div>
             <div className="flex justify-between text-on-surface-variant">
-              <span>Pickup charge</span>
+              <span>{fulfilment === 'delivery' ? 'Delivery charge' : 'Pickup charge'}</span>
               <span className="text-success">Free</span>
             </div>
           </div>
