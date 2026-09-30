@@ -18,7 +18,7 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
-    namespace = "`in`.ac.bitmesra.hungerbirds.merchant_app"
+    namespace = "food.hungerbirds.merchant"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -28,8 +28,14 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "`in`.ac.bitmesra.hungerbirds.merchant_app"
+        // Reverse of hungerbirds.food, the domain this project owns.
+        //
+        // It was in.ac.bitmesra.hungerbirds.* - the reverse of the institute's
+        // domain - which Gradle rejects outright: "in" is a reserved word and
+        // not a valid Java identifier, so the namespace could never be a legal
+        // package name. The Kotlin DSL took backticks around it, which is why
+        // this survived review, but the build always failed at assembleRelease.
+        applicationId = "food.hungerbirds.merchant"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

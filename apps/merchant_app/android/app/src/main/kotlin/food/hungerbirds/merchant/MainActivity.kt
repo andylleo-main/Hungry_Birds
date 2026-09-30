@@ -1,4 +1,4 @@
-package `in`.ac.bitmesra.hungerbirds.merchant_app
+package food.hungerbirds.merchant
 
 import io.flutter.embedding.android.FlutterActivity
 
