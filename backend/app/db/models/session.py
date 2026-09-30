@@ -42,4 +42,13 @@ class UserSession(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # device they don't know and end it.
     user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # Which app signed in - one of security.TokenAudience. Carried here so that
+    # refreshing keeps a session on the app it started on, rather than silently
+    # upgrading a merchant session into one that also works against the web app.
+    #
+    # Nullable because sessions created before audiences existed have none, and
+    # backfilling them would mean guessing. Those refresh as "web"; see
+    # deps.require_audience for what that costs.
+    audience: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     user: Mapped["User"] = relationship(lazy="raise")

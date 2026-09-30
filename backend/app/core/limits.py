@@ -28,6 +28,15 @@ OTP_REQUEST_PER_IP = (Limit(5, MINUTE), Limit(30, HOUR))
 # grinding many accounts in parallel is no faster than grinding one.
 OTP_VERIFY_PER_IP = (Limit(10, MINUTE), Limit(60, HOUR))
 
+# Stall signup, and much tighter than the customer route above, because the two
+# are not the same kind of exposure. The customer route can only ever send mail
+# to an @institute address, so its blast radius is the campus. This one accepts
+# any address on the internet, which makes it a relay someone could aim at a
+# stranger's inbox using our domain's reputation. A real stall owner signs up
+# once, so there is no legitimate traffic to protect here.
+VENDOR_OTP_REQUEST_PER_IP = (Limit(3, MINUTE), Limit(10, HOUR))
+VENDOR_OTP_VERIFY_PER_IP = (Limit(10, MINUTE), Limit(40, HOUR))
+
 # Unauthenticated and it hits the database on every call, so it is both a
 # token-guessing surface and free load. No honest client refreshes this often.
 TOKEN_REFRESH_PER_IP = (Limit(20, MINUTE),)
@@ -62,6 +71,13 @@ ORDER_STATUS_UPDATE = (Limit(60, MINUTE),)
 VENDOR_APPLY = (Limit(3, HOUR),)
 VENDOR_UPDATE = (Limit(30, MINUTE),)
 MENU_WRITE = (Limit(60, MINUTE), Limit(600, HOUR))
+
+# Flipping dine-in, delivery and the delivery locations. A merchant working
+# through a screen of switches taps quickly, and each tap is one write, so this
+# sits well above human speed - the write is small and touches only their own
+# stall.
+FULFILMENT_READ = (Limit(60, MINUTE),)
+FULFILMENT_WRITE = (Limit(60, MINUTE),)
 
 # Public, unauthenticated, and the detail endpoint loads a whole menu per call -
 # the cheapest way to put load on the database, and the obvious scraping target.

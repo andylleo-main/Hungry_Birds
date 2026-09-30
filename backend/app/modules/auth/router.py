@@ -10,7 +10,7 @@ from app.core.config import Settings, get_settings
 from app.core.deps import get_current_user
 from app.core.ratelimit import limit_by_ip, limit_by_user
 from app.core.redis import get_redis
-from app.core.security import create_access_token
+from app.core.security import TokenAudience, create_access_token
 from app.db.models.user import User, UserRole
 from app.db.session import get_db
 from app.modules.auth.passwords import verify_password, waste_time_like_a_verification
@@ -103,10 +103,110 @@ async def otp_verify(
         db,
         lifetime_days=settings.refresh_token_expire_days,
         user_agent=request.headers.get("user-agent"),
+        audience=TokenAudience.WEB.value,
     )
 
     return TokenResponse(
-        access_token=create_access_token(str(user.id)),
+        access_token=create_access_token(str(user.id), TokenAudience.WEB),
+        refresh_token=refresh_token,
+        user=UserOut.model_validate(user),
+    )
+
+
+@router.post(
+    "/vendor/otp/request",
+    response_model=OTPRequestResponse,
+    dependencies=[
+        Depends(
+            limit_by_ip("vendor_otp_request", *limits.VENDOR_OTP_REQUEST_PER_IP, fail_open=False)
+        )
+    ],
+)
+async def vendor_otp_request(
+    payload: OTPRequest,
+    redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
+) -> OTPRequestResponse:
+    """Send a stall owner a sign-in code, at any email address.
+
+    A separate route rather than a flag on the customer one. A flag would need a
+    default, and for the web app to keep working the default would have to mean
+    "customer" - so the institute-domain rule would sit behind a field that a
+    new client, or a refactor, could omit and quietly switch off. Here the
+    absence of an audience is not expressible: the customer route checks the
+    domain unconditionally, and this route is the only one that does not.
+
+    It also means the two get their own rate limits, which they need: this one
+    can be pointed at any inbox on the internet and the other cannot.
+    """
+    email = normalize_email(payload.email)
+    debug_code = await request_otp(email, redis, settings)
+    return OTPRequestResponse(
+        message="OTP sent",
+        debug_code=debug_code,
+        resend_after_seconds=OTP_RATE_LIMIT_SECONDS,
+    )
+
+
+@router.post(
+    "/vendor/otp/verify",
+    response_model=TokenResponse,
+    dependencies=[
+        Depends(
+            limit_by_ip("vendor_otp_verify", *limits.VENDOR_OTP_VERIFY_PER_IP, fail_open=False)
+        )
+    ],
+)
+async def vendor_otp_verify(
+    payload: OTPVerify,
+    request: Request,
+    redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Sign a stall owner in, creating the account as a vendor if it is new.
+
+    The role is set here, at INSERT, and nothing changes it afterwards. That is
+    the point: an account's role decides whether it can spend money on campus or
+    sell food to it, so it should not be a field that a later request can flip.
+    Vendor signup used to work by creating an ordinary customer and then
+    promoting it, which meant any signed-in student could turn their own account
+    into a stall.
+
+    An address that already holds a customer or admin account is refused rather
+    than converted. Somebody who is both a student and a stall owner needs two
+    addresses; that is a real cost, and it is smaller than a mutable role.
+    """
+    email = normalize_email(payload.email)
+
+    if not await verify_otp(email, payload.code, redis):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code")
+
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if user is None:
+        user = User(email=email, role=UserRole.VENDOR)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    elif user.role != UserRole.VENDOR:
+        # Not an enumeration leak worth worrying about: the caller has already
+        # proved they control this mailbox by holding a valid code for it.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This email already has a Hungry Birds account. Use a different address for your stall.",
+        )
+
+    _, refresh_token = await create_session(
+        user.id,
+        db,
+        lifetime_days=settings.refresh_token_expire_days,
+        user_agent=request.headers.get("user-agent"),
+        audience=TokenAudience.MERCHANT.value,
+    )
+
+    return TokenResponse(
+        access_token=create_access_token(str(user.id), TokenAudience.MERCHANT),
         refresh_token=refresh_token,
         user=UserOut.model_validate(user),
     )
@@ -137,8 +237,19 @@ async def refresh_token(
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Please sign in again")
 
+    # A session stays on the app it was created on. Sessions predating audiences
+    # carry none and fall back to the web app, which is the safe direction: it
+    # cannot promote an old session into one that reaches vendor endpoints.
+    try:
+        audience = TokenAudience(session.audience) if session.audience else TokenAudience.WEB
+    except ValueError:
+        # An unrecognised stored value, e.g. after an audience is renamed. Fall
+        # back rather than 500 - refresh is the endpoint that must never be the
+        # reason somebody cannot get back in.
+        audience = TokenAudience.WEB
+
     return AccessTokenResponse(
-        access_token=create_access_token(str(user.id)),
+        access_token=create_access_token(str(user.id), audience),
         refresh_token=new_refresh,
         user=UserOut.model_validate(user),
     )
@@ -196,9 +307,10 @@ async def admin_login(
         db,
         lifetime_days=settings.refresh_token_expire_days,
         user_agent=request.headers.get("user-agent"),
+        audience=TokenAudience.WEB.value,
     )
     return TokenResponse(
-        access_token=create_access_token(str(user.id)),
+        access_token=create_access_token(str(user.id), TokenAudience.WEB),
         refresh_token=refresh_token,
         user=UserOut.model_validate(user),
     )

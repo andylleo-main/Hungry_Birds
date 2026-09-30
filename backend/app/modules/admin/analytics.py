@@ -17,10 +17,23 @@ from app.db.models.order import Order, OrderStatus
 from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
 
-# Cancelled orders are excluded from revenue everywhere below. They represent
-# money that was never taken, and counting them would flatter every figure on
-# the page.
-EARNING_STATUSES = [s for s in OrderStatus if s != OrderStatus.CANCELLED]
+# Which orders count as money taken.
+#
+# Listed explicitly rather than derived as "every status except cancelled".
+# That comprehension had two problems. It counted REJECTED orders - food the
+# stall refused to make, which is revenue nobody ever received - so every
+# figure on this page was overstated by the value of the rejections. And being
+# a comprehension over the enum, it silently swallowed any status added later:
+# a new one would have been booked as income the day it shipped, with nothing in
+# the diff to suggest it. An explicit list means adding a status is a decision
+# somebody has to make here.
+EARNING_STATUSES = [
+    OrderStatus.PLACED,
+    OrderStatus.ACCEPTED,
+    OrderStatus.PREPARING,
+    OrderStatus.READY,
+    OrderStatus.COMPLETED,
+]
 
 
 class Totals(BaseModel):

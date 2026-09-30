@@ -44,6 +44,7 @@ async def create_session(
     *,
     lifetime_days: int,
     user_agent: str | None = None,
+    audience: str | None = None,
 ) -> tuple[UserSession, str]:
     """Start a session. Returns the row and the raw token, which is the only
     time the raw value exists - afterwards only its hash is stored."""
@@ -55,6 +56,7 @@ async def create_session(
         expires_at=now + timedelta(days=lifetime_days),
         last_used_at=now,
         user_agent=(user_agent or "")[:255] or None,
+        audience=audience,
     )
     db.add(session)
     await db.commit()

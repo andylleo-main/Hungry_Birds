@@ -6,11 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core import limits
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_audience, require_role
 from app.core.ratelimit import limit_by_ip, limit_by_user
+from app.core.security import TokenAudience
 from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
+from app.core.locations import label_for
+from app.modules.fulfilment.schemas import LocationOut
+from app.modules.fulfilment.service import enabled_codes
 from app.modules.menu.schemas import CategoryWithItems, ItemOut
 from app.modules.vendors.deps import get_own_vendor
 from app.modules.vendors.schemas import VendorApply, VendorDetailOut, VendorOut, VendorUpdate
@@ -22,21 +26,30 @@ router = APIRouter(prefix="/vendors", tags=["vendors"])
     "/apply",
     response_model=VendorOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(limit_by_user("vendor_apply", *limits.VENDOR_APPLY))],
+    dependencies=[
+        Depends(limit_by_user("vendor_apply", *limits.VENDOR_APPLY)),
+        Depends(require_audience(TokenAudience.MERCHANT)),
+    ],
 )
 async def apply_as_vendor(
     payload: VendorApply,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_role(UserRole.VENDOR)),
     db: AsyncSession = Depends(get_db),
 ) -> VendorOut:
-    if user.role == UserRole.VENDOR:
-        result = await db.execute(select(Vendor).where(Vendor.user_id == user.id))
-        if result.scalar_one_or_none() is not None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Vendor application already exists")
+    """Describe the stall, for an account that already signed in as a vendor.
+
+    This used to be how an account *became* a vendor - it set user.role itself,
+    which meant any signed-in student could promote their own account and stop
+    being able to order. The role is now settled when the account is created, on
+    the vendor login route, so all this does is attach a stall to an account
+    that is already one.
+    """
+    result = await db.execute(select(Vendor).where(Vendor.user_id == user.id))
+    if result.scalar_one_or_none() is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Vendor application already exists")
 
     vendor = Vendor(user_id=user.id, stall_name=payload.stall_name, description=payload.description)
     db.add(vendor)
-    user.role = UserRole.VENDOR
     await db.commit()
     await db.refresh(vendor)
     return VendorOut.model_validate(vendor)
@@ -61,8 +74,26 @@ async def update_my_vendor(
     vendor: Vendor = Depends(get_own_vendor),
     db: AsyncSession = Depends(get_db),
 ) -> VendorOut:
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(vendor, field, value)
+    """Edit the stall's own description of itself.
+
+    Each field is assigned by name rather than by looping over the payload. The
+    loop was shorter, but it meant the set of things a vendor may write about
+    themselves was decided by whatever happened to be on VendorUpdate - so
+    adding a field there granted write access to it, silently, with no line in
+    the diff that looked like an authorization change. `is_approved` on that
+    schema by mistake would have let every stall approve itself.
+    """
+    changes = payload.model_dump(exclude_unset=True)
+
+    if "stall_name" in changes:
+        vendor.stall_name = changes["stall_name"]
+    if "description" in changes:
+        vendor.description = changes["description"]
+    if "cover_image_url" in changes:
+        vendor.cover_image_url = changes["cover_image_url"]
+    if "is_open" in changes:
+        vendor.is_open = changes["is_open"]
+
     await db.commit()
     await db.refresh(vendor)
     return VendorOut.model_validate(vendor)
@@ -120,8 +151,16 @@ async def get_vendor_detail(
         for c in vendor.categories
     ]
 
+    # `enabled` is always True here: this list is the enabled set, and the field
+    # exists so the merchant's settings screen and this one can share a type.
+    delivery_locations = [
+        LocationOut(code=code, label=label_for(code), enabled=True)
+        for code in (await enabled_codes(vendor.id, db) if vendor.delivery_enabled else [])
+    ]
+
     return VendorDetailOut(
         **VendorOut.model_validate(vendor).model_dump(),
         categories=categories,
         uncategorized_items=uncategorized,
+        delivery_locations=delivery_locations,
     )

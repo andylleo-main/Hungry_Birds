@@ -19,6 +19,7 @@ from app.modules.admin.router import analytics_router
 from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import router as auth_router
 from app.modules.media.router import router as media_router
+from app.modules.fulfilment.router import router as fulfilment_router
 from app.modules.menu.router import router as menu_router
 from app.modules.orders.router import router as orders_router
 from app.modules.orders.router import vendor_orders_router
@@ -130,6 +131,7 @@ API_PREFIX = '/api'
 app.include_router(auth_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
 app.include_router(menu_router, prefix=API_PREFIX)
+app.include_router(fulfilment_router, prefix=API_PREFIX)
 app.include_router(admin_router, prefix=API_PREFIX)
 app.include_router(analytics_router, prefix=API_PREFIX)
 app.include_router(media_router, prefix=API_PREFIX)

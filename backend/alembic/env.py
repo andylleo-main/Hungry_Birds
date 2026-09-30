@@ -32,7 +32,22 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        # One transaction per revision, not one for the whole upgrade.
+        #
+        # This is not a style preference. Postgres allows ALTER TYPE ... ADD
+        # VALUE inside a transaction but forbids *using* the new value in that
+        # same transaction, so the usual recipe - add the value in one revision,
+        # use it in the next - only works if the two revisions are separate
+        # transactions. Without this flag `alembic upgrade head` ran every
+        # pending revision in one, which meant such a pair passed when applied
+        # one at a time by hand and failed on a fresh database. That failure
+        # would have surfaced for the first time in Railway's preDeployCommand,
+        # taking the deploy down with it.
+        transaction_per_migration=True,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

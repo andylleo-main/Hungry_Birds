@@ -1,11 +1,23 @@
 import uuid
 from enum import StrEnum
 
-from sqlalchemy import Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy import CheckConstraint, Enum, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.locations import label_for
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+
+
+class FulfilmentType(StrEnum):
+    """How the customer gets the food.
+
+    DINE_IN is the original behaviour - eat at, or collect from, the stall
+    counter. DELIVERY sends it to a campus location and may involve a rider.
+    """
+
+    DINE_IN = "dine_in"
+    DELIVERY = "delivery"
 
 
 class OrderStatus(StrEnum):
@@ -36,6 +48,29 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     total_amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    fulfilment_type: Mapped[FulfilmentType] = mapped_column(
+        Enum(
+            FulfilmentType,
+            name="fulfilment_type",
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        default=FulfilmentType.DINE_IN,
+        nullable=False,
+    )
+    # A code from app.core.locations, set only on a delivery order. The check
+    # constraint below is what keeps the pair coherent; the router validates it
+    # too, but a constraint means a future code path cannot quietly write a
+    # delivery with nowhere to deliver it.
+    delivery_location: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "(fulfilment_type = 'delivery' AND delivery_location IS NOT NULL)"
+            " OR (fulfilment_type = 'dine_in' AND delivery_location IS NULL)",
+            name="ck_orders_delivery_location_matches_type",
+        ),
+    )
+
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
@@ -54,6 +89,11 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     @property
     def customer_name(self) -> str | None:
         return self.customer.full_name
+
+    @property
+    def delivery_location_label(self) -> str | None:
+        """The human name of the drop-off point, for the vendor and the rider."""
+        return label_for(self.delivery_location) if self.delivery_location else None
 
 
 class OrderItem(UUIDPrimaryKeyMixin, Base):

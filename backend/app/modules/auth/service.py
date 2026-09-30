@@ -51,15 +51,31 @@ def normalize_phone(phone: str) -> str:
     return f"+91{digits}"
 
 
-def assert_allowed_domain(email: str, settings: Settings) -> None:
+def assert_allowed_domain(email: str, settings: Settings, action: str = "sign up") -> None:
+    """Require an institute address.
+
+    Applied to the customer login routes and, separately, to placing an order.
+    Stall owners are deliberately exempt - they sign in through their own routes
+    with any address - so this is no longer a property of merely holding an
+    account, and the places that need it have to say so.
+
+    `action` only shapes the message. "Only @x addresses may sign up" is the
+    wrong sentence to show someone who is signed in and pressing Pay.
+    """
     domain = email.rsplit("@", 1)[-1].lower()
     if domain != settings.allowed_email_domain.lower():
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"Only @{settings.allowed_email_domain} email addresses may sign up.",
+            f"Only @{settings.allowed_email_domain} email addresses may {action}.",
         )
 
 
+# Both the code and the per-address throttle are keyed on the email alone, with
+# no room for which route asked. That is on purpose. Namespacing them per route
+# would let one address draw a fresh allowance of codes from each one, doubling
+# what the hourly cap is there to bound; and a code cannot be usefully redeemed
+# on the wrong route anyway, because the customer verify route checks the domain
+# before it checks the code.
 def _otp_key(email: str) -> str:
     return f"otp:code:{email}"
 

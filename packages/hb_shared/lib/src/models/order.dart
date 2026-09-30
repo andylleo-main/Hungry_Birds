@@ -5,10 +5,24 @@ enum OrderStatus {
   ready,
   completed,
   rejected,
-  cancelled;
+  cancelled,
 
-  static OrderStatus fromJson(String value) =>
-      OrderStatus.values.firstWhere((e) => e.name == value);
+  /// A status this build of the app does not know about, because the server is
+  /// newer than the app.
+  ///
+  /// Without this, [fromJson] was a bare `firstWhere` that threw StateError on
+  /// an unrecognised value, and the two places that decode an order both
+  /// swallow it badly: in a list fetch the throw abandons the whole response,
+  /// so one unfamiliar order blanks the merchant's entire queue, and inside the
+  /// socket's onData callback it is not caught by onError at all, so the update
+  /// is silently dropped. A stall losing its order list mid-rush because the
+  /// backend shipped a new status is not an acceptable way to find out.
+  unknown;
+
+  static OrderStatus fromJson(String value) => OrderStatus.values.firstWhere(
+        (e) => e.name == value,
+        orElse: () => OrderStatus.unknown,
+      );
 
   String get label => switch (this) {
         OrderStatus.placed => 'Order placed',
@@ -18,13 +32,18 @@ enum OrderStatus {
         OrderStatus.completed => 'Completed',
         OrderStatus.rejected => 'Rejected',
         OrderStatus.cancelled => 'Cancelled',
+        OrderStatus.unknown => 'Updated',
       };
 
   bool get isActive =>
       this == OrderStatus.placed ||
       this == OrderStatus.accepted ||
       this == OrderStatus.preparing ||
-      this == OrderStatus.ready;
+      this == OrderStatus.ready ||
+      // Counted as active on purpose. If a newer server sends a status this
+      // build cannot name, showing the order as something odd is far safer for
+      // a stall than filing it under "done" and hiding it.
+      this == OrderStatus.unknown;
 
   bool get isTerminal => !isActive;
 }
