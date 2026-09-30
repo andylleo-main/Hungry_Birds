@@ -25,6 +25,18 @@ class Vendor {
         isApproved: json['is_approved'] as bool,
         isOpen: json['is_open'] as bool,
       );
+
+  /// Used to move a switch before the server has answered, and to put it back
+  /// if the server refuses. Only the fields a merchant can flip locally are
+  /// here; everything else is whatever the server last said.
+  Vendor copyWith({String? stallName, String? description, bool? isOpen}) => Vendor(
+        id: id,
+        stallName: stallName ?? this.stallName,
+        description: description ?? this.description,
+        coverImageUrl: coverImageUrl,
+        isApproved: isApproved,
+        isOpen: isOpen ?? this.isOpen,
+      );
 }
 
 class VendorDetail extends Vendor {

@@ -17,8 +17,15 @@ class MenuCategory(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     vendor: Mapped["Vendor"] = relationship(back_populates="categories")
+    # NOT delete-orphan. The foreign key below says ondelete="SET NULL",
+    # meaning a deleted section leaves its dishes on the menu and merely
+    # uncategorises them - which is what a vendor reorganising their menu
+    # expects. A delete-orphan cascade here overrode that and had SQLAlchemy
+    # delete the items itself, so removing a section quietly destroyed
+    # everything in it. passive_deletes lets the database apply the SET NULL
+    # it was always configured for.
     items: Mapped[list["MenuItem"]] = relationship(
-        back_populates="category", cascade="all, delete-orphan"
+        back_populates="category", passive_deletes=True
     )
 
 

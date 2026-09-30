@@ -21,41 +21,81 @@ class _StallTabState extends State<StallTab> {
     final nameController = TextEditingController(text: merchant.vendor?.stallName ?? '');
     final descriptionController = TextEditingController(text: merchant.vendor?.description ?? '');
 
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Stall details'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Stall name'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: descriptionController,
-              maxLines: 2,
-              decoration: const InputDecoration(labelText: 'Description'),
-            ),
+    try {
+      final saved = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Stall details'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Stall name'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descriptionController,
+                maxLines: 2,
+                maxLength: 2000,
+                decoration: const InputDecoration(labelText: 'Description'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save')),
-        ],
-      ),
-    );
+      );
 
-    if (saved != true || !mounted) return;
-    try {
+      if (saved != true || !mounted) return;
+
+      final name = nameController.text.trim();
+      if (name.isEmpty) {
+        // Caught here rather than sent on: the server rejects a blank name
+        // with a 422, and "String should have at least 1 character" is not
+        // something to show a stall owner.
+        _say('Give your stall a name.');
+        return;
+      }
+
       await merchant.updateProfile(
-        stallName: nameController.text.trim(),
+        stallName: name,
         description: descriptionController.text.trim(),
       );
+      if (mounted) _say('Stall details saved.');
     } on ApiException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      if (mounted) _say(e.message);
+    } finally {
+      // Every controller made in this method is disposed here, including on
+      // the cancel and error paths.
+      nameController.dispose();
+      descriptionController.dispose();
+    }
+  }
+
+  void _say(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Opens or closes the stall, and says so if it fails.
+  ///
+  /// This is the control a vendor reaches for when they run out of food or
+  /// shut for the evening, so a failure that leaves the switch looking flipped
+  /// while the stall is still taking orders is the worst outcome available.
+  Future<void> _setOpen(bool value) async {
+    try {
+      await context.read<MerchantState>().setOpen(value);
+      if (mounted) _say(value ? "You're open - students can order now." : "You're closed.");
+    } on ApiException catch (e) {
+      if (mounted) _say(e.message);
+    } catch (_) {
+      if (mounted) _say("Couldn't reach the server. Check your connection and try again.");
     }
   }
 
@@ -71,9 +111,11 @@ class _StallTabState extends State<StallTab> {
           .upload(bytes: bytes, filename: picked.name);
       if (!mounted) return;
       await context.read<MerchantState>().updateProfile(coverImageUrl: url);
+      if (mounted) _say('Cover photo updated.');
     } on ApiException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      if (mounted) _say(e.message);
+    } catch (_) {
+      if (mounted) _say("Couldn't upload that photo. Try again.");
     } finally {
       if (mounted) setState(() => _uploadingCover = false);
     }
@@ -132,17 +174,26 @@ class _StallTabState extends State<StallTab> {
               value: vendor?.isOpen ?? false,
               activeThumbColor: AppTheme.success,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              secondary: Icon(
+                (vendor?.isOpen ?? false) ? Icons.storefront : Icons.storefront_outlined,
+                color: (vendor?.isOpen ?? false) ? AppTheme.success : AppTheme.textSecondary,
+              ),
               title: const Text(
                 'Accepting orders',
                 style: TextStyle(fontWeight: FontWeight.w700),
               ),
               subtitle: Text(
-                (vendor?.isOpen ?? false)
-                    ? 'Students can order from you right now'
-                    : 'Your stall shows as closed',
+                merchant.savingOpenState
+                    ? 'Saving…'
+                    : (vendor?.isOpen ?? false)
+                        ? 'Students can order from you right now'
+                        : 'Your stall shows as closed',
                 style: const TextStyle(fontSize: 13),
               ),
-              onChanged: (value) => context.read<MerchantState>().setOpen(value),
+              // Disabled mid-save so a double tap cannot queue two opposite
+              // changes and leave the stall in whichever one happens to land
+              // second.
+              onChanged: merchant.savingOpenState ? null : (value) => _setOpen(value),
             ),
           ),
           const SizedBox(height: 16),

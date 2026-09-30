@@ -68,9 +68,36 @@ class MerchantState extends ChangeNotifier {
     _set(vendor!.isApproved ? MerchantStage.ready : MerchantStage.awaitingApproval);
   }
 
+  /// True while an open/closed change is in flight, so the switch can show
+  /// it is working rather than looking dead on slow campus wifi.
+  bool savingOpenState = false;
+
+  /// Opens or closes the stall.
+  ///
+  /// Moves the switch immediately and puts it back if the server refuses.
+  /// Waiting for the round trip made the control feel broken, but the bigger
+  /// problem was the old version letting a failure escape as an unhandled
+  /// exception: the switch snapped back with no explanation, so a vendor could
+  /// believe they had closed when they were still taking orders.
+  ///
+  /// Rethrows so the screen can say what went wrong.
   Future<void> setOpen(bool isOpen) async {
-    vendor = await api.updateMyVendor(isOpen: isOpen);
+    final previous = vendor;
+    if (previous == null) return;
+
+    vendor = previous.copyWith(isOpen: isOpen);
+    savingOpenState = true;
     notifyListeners();
+
+    try {
+      vendor = await api.updateMyVendor(isOpen: isOpen);
+    } catch (_) {
+      vendor = previous;
+      rethrow;
+    } finally {
+      savingOpenState = false;
+      notifyListeners();
+    }
   }
 
   Future<void> updateProfile({String? stallName, String? description, String? coverImageUrl}) async {

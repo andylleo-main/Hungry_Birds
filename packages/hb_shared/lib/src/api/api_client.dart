@@ -262,6 +262,19 @@ class ApiClient {
     return MenuCategory.fromJson(data);
   }
 
+  Future<MenuCategory> updateCategory(
+    String categoryId, {
+    String? name,
+    int? sortOrder,
+  }) async {
+    final body = <String, dynamic>{};
+    if (name != null) body['name'] = name;
+    if (sortOrder != null) body['sort_order'] = sortOrder;
+    final data = await _request('PATCH', '/vendors/me/categories/$categoryId', body: body)
+        as Map<String, dynamic>;
+    return MenuCategory.fromJson(data);
+  }
+
   Future<void> deleteCategory(String categoryId) =>
       _request('DELETE', '/vendors/me/categories/$categoryId');
 
