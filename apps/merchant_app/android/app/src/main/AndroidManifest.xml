@@ -1,6 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Flutter's template declares this only in the debug and profile
+         manifests, so a release build ships with no network access at all and
+         every request fails instantly - which reads to the user as "can't
+         reach the server, check your connection" on a phone with perfect
+         signal. This app is useless offline, so it belongs here. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
-        android:label="merchant_app"
+        android:label="Hungry Birds Partner"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

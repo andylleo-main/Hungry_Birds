@@ -105,7 +105,11 @@ export default function Login() {
       <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden bg-primary p-space-xl text-on-primary lg:flex">
         <div className="absolute -right-24 -top-24 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
         <div className="relative flex items-center gap-space-sm">
-          <img src="/logo.png" alt="" width={44} height={44} className="h-11 w-11" />
+          {/* On the red panel the logo is red on red, so it gets a soft
+              backing. The header and mobile marks sit on white and need none. */}
+          <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/15">
+            <img src="/logo.png" alt="" width={40} height={40} className="h-10 w-10" />
+          </span>
           <span className="text-headline-sm">Hungry Birds</span>
         </div>
 

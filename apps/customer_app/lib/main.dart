@@ -18,13 +18,13 @@ void main() {
         ChangeNotifierProvider(create: (_) => AuthState(api)..bootstrap()),
         ChangeNotifierProvider(create: (_) => CartState()),
       ],
-      child: const HungerBirdsApp(),
+      child: const HungryBirdsApp(),
     ),
   );
 }
 
-class HungerBirdsApp extends StatelessWidget {
-  const HungerBirdsApp({super.key});
+class HungryBirdsApp extends StatelessWidget {
+  const HungryBirdsApp({super.key});
 
   @override
   Widget build(BuildContext context) {
