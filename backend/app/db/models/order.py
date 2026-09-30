@@ -1,7 +1,7 @@
 import uuid
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, CheckConstraint, Enum, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,6 +25,10 @@ class OrderStatus(StrEnum):
     ACCEPTED = "accepted"
     PREPARING = "preparing"
     READY = "ready"
+    # Only reachable on a delivery: the food has left the stall with a rider, or
+    # with the merchant themselves. A dine-in order goes from READY straight to
+    # COMPLETED when it is handed across the counter.
+    OUT_FOR_DELIVERY = "out_for_delivery"
     COMPLETED = "completed"
     REJECTED = "rejected"
     CANCELLED = "cancelled"
@@ -63,11 +67,26 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # delivery with nowhere to deliver it.
     delivery_location: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
+    # Who is carrying it. Either a rider of this stall, or the merchant
+    # themselves, or nobody yet - never both, which the constraint below makes
+    # true at the database rather than only in the handler that sets them.
+    #
+    # SET NULL rather than CASCADE: a rider leaving must not take the history of
+    # every order they delivered with them.
+    rider_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("riders.id", ondelete="SET NULL"), nullable=True
+    )
+    self_delivery: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     __table_args__ = (
         CheckConstraint(
             "(fulfilment_type = 'delivery' AND delivery_location IS NOT NULL)"
             " OR (fulfilment_type = 'dine_in' AND delivery_location IS NULL)",
             name="ck_orders_delivery_location_matches_type",
+        ),
+        CheckConstraint(
+            "NOT (rider_id IS NOT NULL AND self_delivery)",
+            name="ck_orders_one_courier",
         ),
     )
 
@@ -80,6 +99,13 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # MissingGreenlet. See _load_order_with_items in the orders router.
     customer: Mapped["User"] = relationship(lazy="raise")
 
+    # lazy="raise" for the same reason as customer above: rider_name and
+    # rider_phone are read through this during serialisation, which happens in
+    # async paths including the WebSocket broadcast, where a lazy load does not
+    # merely go slow - it raises MissingGreenlet. Failing loudly on a missing
+    # selectinload beats discovering it in production.
+    rider: Mapped["Rider | None"] = relationship(lazy="raise")
+
     # Flattened onto the order so OrderOut picks them up by attribute name,
     # keeping every existing OrderOut.model_validate(order) call site unchanged.
     @property
@@ -89,6 +115,20 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     @property
     def customer_name(self) -> str | None:
         return self.customer.full_name
+
+    @property
+    def rider_name(self) -> str | None:
+        return self.rider.display_name if self.rider else None
+
+    @property
+    def rider_phone(self) -> str | None:
+        """The number the customer's "call rider" button dials.
+
+        Only ever reaches the order's own customer, the owning vendor, or an
+        admin - every route returning an OrderOut is ownership-gated - and only
+        once the merchant has assigned this order to this rider.
+        """
+        return self.rider.phone if self.rider else None
 
     @property
     def delivery_location_label(self) -> str | None:

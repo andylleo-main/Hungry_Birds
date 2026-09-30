@@ -19,6 +19,12 @@ class TokenType(StrEnum):
     ACCESS = "access"
     REFRESH = "refresh"
 
+    # Riders are not rows in `users`, so their token must not be interchangeable
+    # with a user's. Giving it its own type means every existing endpoint
+    # rejects it for free: get_current_user already refuses anything that is not
+    # ACCESS, and get_current_rider refuses anything that is not this.
+    RIDER_ACCESS = "rider_access"
+
 
 class TokenAudience(StrEnum):
     """Which app a token was minted for.
@@ -73,6 +79,28 @@ def create_access_token(
         timedelta(minutes=settings.access_token_expire_minutes),
         audience,
         extra,
+    )
+
+
+def create_rider_access_token(rider_id: str, credential_version: int) -> str:
+    """A rider's session token.
+
+    Longer-lived than a user's access token and with no refresh flow behind it,
+    because a rider signs in at the start of a shift on a phone they keep, and
+    being logged out mid-delivery is worse than the extra hours of validity.
+
+    Revocation rides on `cv`, the credential version. Regenerating a rider's
+    password bumps the stored version, which makes every token carrying the old
+    one stop working - so "regenerate" actually signs a departed rider out
+    instead of leaving them a key that works until it expires.
+    """
+    settings = get_settings()
+    return _create_token(
+        rider_id,
+        TokenType.RIDER_ACCESS,
+        timedelta(days=settings.rider_token_expire_days),
+        TokenAudience.RIDER,
+        {"cv": credential_version},
     )
 
 

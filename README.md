@@ -352,6 +352,60 @@ keeps on, and an order naming any other is refused. A stall cannot switch both
 dine-in and delivery off - that would read as open while rejecting everything, and
 there is already a switch for being closed.
 
+## Riders
+
+Riders belong to the stall, not to the platform. A merchant hires and manages
+their own from the merchant app; there is deliberately no admin route for
+creating one.
+
+**Credentials.** The merchant adds a rider with a name and a phone number, and
+the server generates a login id and a readable password (`swift-mango-4218`).
+That password is shown once, in the response that creates it, and stored only as
+an scrypt hash. Whenever the merchant needs it again they press **Regenerate**,
+which issues a new one and shows that.
+
+This is the answer to "the merchant needs to be able to see the password" without
+a recoverable copy sitting in the database. The merchant can always produce a
+working password for any rider; nothing in a database backup yields one. It also
+makes the obvious safety property true: regenerating bumps a credential version
+carried inside the rider's token, so the moment a merchant regenerates - or
+switches a rider off - that rider's phone is signed out. Without that, a rider who
+had quit would keep a working token until it expired and the button would be
+theatre.
+
+Passwords are readable on purpose. One gets read aloud or written on a slip and
+typed into a phone one-handed; a random string of symbols gets copied down wrong,
+and the workaround for that is a whole stall sharing one password. The trade is
+that they carry about 34 bits, so rider sign-in is rate limited hard per IP (five
+a minute, thirty an hour) and fails closed if Redis is unreachable.
+
+**Riders are not a fourth user role.** They live in their own `riders` table with
+their own token type. That is partly because they sign in with an id rather than
+an email, partly because a rider belongs to exactly one stall, and mostly because
+a new `UserRole` value would fail *open*: plenty of endpoints accept any
+authenticated user, so a new role silently gains access everywhere nobody thought
+about roles. A separate table fails closed - a rider is not a `User`, so every
+existing endpoint rejects a rider token without a line of change.
+
+**Assignment.** For a delivery order the merchant either assigns a rider or
+marks it as one they will take themselves. Assigning is what exchanges phone
+numbers: the rider's app shows the customer's number, and the customer's tracking
+page gains a **Call rider** button. Neither number is visible before assignment,
+and taking an order back off a rider removes their number from the customer's view
+again. Assignment does not move the order's status - a merchant usually assigns
+while the food is still cooking, and jumping to "out for delivery" would tell the
+customer it had left before it had.
+
+The rider then marks the order picked up (`out_for_delivery`) and delivered
+(`completed`). Those two are the only statuses a rider may set; accepting,
+rejecting and cooking stay the stall's to say. `out_for_delivery` is refused on a
+dine-in order.
+
+The rider app polls its order list rather than holding a WebSocket. A rider
+carries one or two orders at a time, so a short poll of one small query costs less
+than giving a third audience its own ticket-and-socket path, and it cannot get
+wedged in a way that quietly stops delivering updates.
+
 ## Admin sign-in without an OTP
 
 Admins can sign in with a password instead of waiting for a code. That matters

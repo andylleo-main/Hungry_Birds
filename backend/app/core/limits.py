@@ -65,6 +65,29 @@ ORDER_READ = (Limit(120, MINUTE),)
 # A vendor tapping through a lunch rush is fast, but not this fast.
 ORDER_STATUS_UPDATE = (Limit(60, MINUTE),)
 
+# Handing a delivery to a rider, or taking it yourself. Same shape as a status
+# tap; a merchant reassigning a few times while working out who is free is
+# normal.
+ORDER_ASSIGN = (Limit(60, MINUTE),)
+
+# --- Riders -----------------------------------------------------------------
+# A rider's password is server-generated and readable - roughly 34 bits, which
+# is deliberately not enough to stand on its own. This limit is the other half
+# of that trade, so it is tight and it fails closed: an unreachable Redis must
+# not turn rider sign-in into an unlimited guessing surface, the same reasoning
+# as ADMIN_LOGIN_PER_IP.
+RIDER_LOGIN_PER_IP = (Limit(5, MINUTE), Limit(30, HOUR))
+
+# Creating riders, renaming them, regenerating a password. Each regenerate costs
+# an scrypt hash, so this is not free work, but a merchant onboarding their crew
+# does a handful in a sitting.
+RIDER_WRITE = (Limit(20, MINUTE), Limit(100, HOUR))
+RIDER_READ = (Limit(120, MINUTE),)
+
+# What the rider app polls while on shift. Roomy on purpose - it is one small
+# query and the app leans on it instead of holding a socket.
+RIDER_ORDERS_READ = (Limit(120, MINUTE),)
+
 # --- Vendors and menu -------------------------------------------------------
 # Applications land in the admin's queue by hand, so spam here is spam at a
 # person. Three an hour is plenty for someone fixing a typo in their stall name.

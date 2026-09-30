@@ -6,6 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenAudience, TokenType, decode_token
+from app.db.models.rider import Rider
 from app.db.models.user import User, UserRole
 from app.db.session import get_db
 
@@ -46,6 +47,38 @@ async def get_current_user(
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
     return user
+
+
+async def get_current_rider(
+    payload: dict = Depends(get_token_payload),
+    db: AsyncSession = Depends(get_db),
+) -> Rider:
+    """The rider a rider-app token belongs to.
+
+    Three things have to hold, and each closes something specific: the token is a
+    rider token (so a user's token cannot reach rider endpoints), the rider still
+    exists and is active (so a rider a merchant switched off stops working
+    immediately, not at expiry), and the credential version in the token matches
+    the stored one (so regenerating a password ends the old device's session).
+    """
+    if payload.get("type") != TokenType.RIDER_ACCESS.value:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token type")
+
+    try:
+        rider_id = uuid.UUID(payload["sub"])
+    except (KeyError, ValueError):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token payload")
+
+    rider = await db.get(Rider, rider_id)
+    if rider is None or not rider.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Please sign in again")
+
+    if payload.get("cv") != rider.credential_version:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Your password was changed. Ask your stall for the new one.",
+        )
+    return rider
 
 
 def require_role(*roles: UserRole):

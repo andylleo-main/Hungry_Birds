@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 30
+    # Riders have no refresh flow: they sign in at the start of a shift and must
+    # not be logged out mid-delivery. Regenerating their password is what revokes
+    # a token early, so a long life here is not an un-endable session.
+    rider_token_expire_days: int = 14
 
     # "development" unlocks local conveniences (permissive CORS, the OTP debug
     # echo). Anything else - including the default - is treated as production,

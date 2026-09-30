@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core import limits
 from app.core.config import Settings, get_settings
@@ -12,27 +11,31 @@ from app.core.deps import get_current_user, require_role
 from app.core.ratelimit import limit_by_user
 from app.core.redis import get_redis
 from app.db.models.menu import MenuItem
-from app.db.models.order import Order, OrderItem, OrderStatus
+from app.db.models.order import FulfilmentType, Order, OrderItem, OrderStatus
+from app.db.models.rider import Rider
 from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
-from app.modules.orders.schemas import OrderCreate, OrderOut, OrderStatusUpdate
+from app.modules.orders.schemas import OrderAssign, OrderCreate, OrderOut, OrderStatusUpdate
 from app.modules.auth.service import assert_allowed_domain
 from app.modules.fulfilment.service import assert_order_fulfilment
-from app.modules.orders.service import can_transition, publish_order_event
+from app.modules.orders.service import (
+    TERMINAL_STATUSES,
+    assert_transition,
+    load_order,
+    order_query,
+    publish_order_event,
+)
 from app.modules.vendors.deps import get_own_vendor
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 vendor_orders_router = APIRouter(prefix="/vendors/me/orders", tags=["orders"])
 
 
-async def _load_order_with_items(order_id: uuid.UUID, db: AsyncSession) -> Order | None:
-    result = await db.execute(
-        select(Order)
-        .where(Order.id == order_id)
-        .options(selectinload(Order.items), selectinload(Order.customer))
-    )
-    return result.scalar_one_or_none()
+# Kept as a local alias: every call site in this module already reads
+# _load_order_with_items, and the behaviour now lives in the service beside the
+# eager-load tuple it depends on.
+_load_order_with_items = load_order
 
 
 @router.post(
@@ -133,10 +136,7 @@ async def list_my_orders(
     user: User = Depends(require_role(UserRole.CUSTOMER)), db: AsyncSession = Depends(get_db)
 ) -> list[OrderOut]:
     result = await db.execute(
-        select(Order)
-        .where(Order.customer_id == user.id)
-        .options(selectinload(Order.items), selectinload(Order.customer))
-        .order_by(Order.created_at.desc())
+        order_query(Order.customer_id == user.id).order_by(Order.created_at.desc())
     )
     return [OrderOut.model_validate(o) for o in result.scalars().all()]
 
@@ -206,10 +206,7 @@ async def list_vendor_orders(
     vendor: Vendor = Depends(get_own_vendor), db: AsyncSession = Depends(get_db)
 ) -> list[OrderOut]:
     result = await db.execute(
-        select(Order)
-        .where(Order.vendor_id == vendor.id)
-        .options(selectinload(Order.items), selectinload(Order.customer))
-        .order_by(Order.created_at.desc())
+        order_query(Order.vendor_id == vendor.id).order_by(Order.created_at.desc())
     )
     return [OrderOut.model_validate(o) for o in result.scalars().all()]
 
@@ -230,13 +227,70 @@ async def update_order_status(
     if order is None or order.vendor_id != vendor.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
 
-    if not can_transition(order.status, payload.status):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"Cannot move an order from {order.status.value} to {payload.status.value}",
-        )
+    assert_transition(order, payload.status)
 
     order.status = payload.status
+    await db.commit()
+    order = await _load_order_with_items(order.id, db)
+    await publish_order_event(redis, order)
+    return OrderOut.model_validate(order)
+
+
+@vendor_orders_router.post(
+    "/{order_id}/assign",
+    response_model=OrderOut,
+    dependencies=[Depends(limit_by_user("order_assign", *limits.ORDER_ASSIGN))],
+)
+async def assign_order(
+    order_id: uuid.UUID,
+    payload: OrderAssign,
+    vendor: Vendor = Depends(get_own_vendor),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> OrderOut:
+    """Send a delivery out with one of your riders, or take it yourself.
+
+    Assigning is what releases the customer's phone number to the rider, and what
+    gives the customer a number to call. It does not move the order's status: a
+    merchant usually assigns while the food is still being made, and having that
+    jump the order to "out for delivery" would tell the customer it had left
+    before it had.
+    """
+    order = await _load_order_with_items(order_id, db)
+    if order is None or order.vendor_id != vendor.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+
+    if order.fulfilment_type is not FulfilmentType.DELIVERY:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Only a delivery order needs someone to carry it"
+        )
+    if order.status in TERMINAL_STATUSES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "This order is finished and cannot be reassigned"
+        )
+
+    if payload.rider_id is not None:
+        # Scoped to this stall's riders, and 404 rather than 403 - the same shape
+        # the menu routes use, so probing cannot map another stall's rider ids.
+        result = await db.execute(
+            select(Rider).where(
+                Rider.id == payload.rider_id,
+                Rider.vendor_id == vendor.id,
+            )
+        )
+        rider = result.scalar_one_or_none()
+        if rider is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Rider not found")
+        if not rider.is_active:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"{rider.display_name} is no longer active"
+            )
+        order.rider_id = rider.id
+        order.self_delivery = False
+    else:
+        order.rider_id = None
+        order.self_delivery = payload.self_delivery
+
     await db.commit()
     order = await _load_order_with_items(order.id, db)
     await publish_order_event(redis, order)

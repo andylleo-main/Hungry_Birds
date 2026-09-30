@@ -138,3 +138,46 @@ async def menu_item(db, vendor):
     await db.commit()
     await db.refresh(item)
     return item
+
+
+@pytest.fixture
+async def rider(client, vendor):
+    """A rider of the fixture stall, plus a signed-in rider-app token.
+
+    Created through the API rather than the database so the password is a real
+    generated one and the login path is the one under test.
+    """
+    v, headers = vendor
+    r = await client.post(
+        "/vendors/me/riders",
+        headers=headers,
+        json={"display_name": "Ravi Kumar", "phone": "9876500011"},
+    )
+    assert r.status_code == 201, r.text
+    created = r.json()
+
+    login = await client.post(
+        "/auth/rider/login",
+        json={"login_id": created["login_id"], "password": created["password"]},
+    )
+    assert login.status_code == 200, login.text
+    return created, {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+@pytest.fixture
+async def delivery_order(client, customer, vendor, menu_item):
+    """A delivery order at the fixture stall, ready to be assigned."""
+    user, headers = customer
+    v, _ = vendor
+    r = await client.post(
+        "/orders",
+        headers=headers,
+        json={
+            "vendor_id": str(v.id),
+            "items": [{"menu_item_id": str(menu_item.id), "quantity": 1}],
+            "fulfilment_type": "delivery",
+            "delivery_location": "hostel_5",
+        },
+    )
+    assert r.status_code == 201, r.text
+    return r.json()

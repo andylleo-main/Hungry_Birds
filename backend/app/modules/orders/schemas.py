@@ -49,6 +49,24 @@ class OrderStatusUpdate(BaseModel):
     status: OrderStatus
 
 
+class OrderAssign(BaseModel):
+    """Who is taking this delivery out.
+
+    Exactly one of the two: a rider of this stall, or the merchant themselves.
+    Passing neither un-assigns it, which is what a merchant needs when a rider
+    calls in sick after being given the order.
+    """
+
+    rider_id: uuid.UUID | None = None
+    self_delivery: bool = False
+
+    @model_validator(mode="after")
+    def only_one_courier(self) -> "OrderAssign":
+        if self.rider_id is not None and self.self_delivery:
+            raise ValueError("an order goes out with a rider or with you, not both")
+        return self
+
+
 class OrderItemOut(BaseModel):
     id: uuid.UUID
     menu_item_id: uuid.UUID | None
@@ -80,5 +98,13 @@ class OrderOut(BaseModel):
     # Read off the model as a property, so the stall and the rider get a name
     # they can act on rather than a code they have to look up.
     delivery_location_label: str | None
+
+    # Who is carrying it. rider_phone is what the customer's "call rider" button
+    # dials, and it appears only once the merchant has assigned the order - so a
+    # rider's number is never exposed to a customer they are not delivering to.
+    rider_id: uuid.UUID | None
+    rider_name: str | None
+    rider_phone: str | None
+    self_delivery: bool
 
     model_config = {"from_attributes": True}
