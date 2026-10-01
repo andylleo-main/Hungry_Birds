@@ -14,8 +14,8 @@ apps/web/node_modules/
 apps/web/dist/
 
 # Not used by the API or the web app.
-apps/customer_app/
 apps/merchant_app/
+apps/rider_app/
 packages/
 
 **/__pycache__/

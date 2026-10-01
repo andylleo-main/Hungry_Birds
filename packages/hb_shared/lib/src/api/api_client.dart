@@ -168,27 +168,30 @@ class ApiClient {
 
   // --- Auth ---
 
-  /// Sends a sign-in code.
+  /// Sends a stall owner a sign-in code, to any email address.
   ///
-  /// [vendor] picks the stall owners' route, which accepts any email address;
-  /// the default route is institute-only. They are separate endpoints on the
-  /// server, not one endpoint with a flag, so a client cannot accidentally
-  /// switch the campus restriction off by omitting a field.
-  Future<OtpRequestResult> requestOtp(String email, {bool vendor = false}) async {
-    final path = vendor ? '/auth/vendor/otp/request' : '/auth/otp/request';
-    final data =
-        await _request('POST', path, body: {'email': email}, auth: false) as Map<String, dynamic>;
+  /// Named for the audience because that is all it can do. The customer routes
+  /// are institute-only and belong to the web app, which has its own client;
+  /// nothing in Flutter signs a customer in any more. Keeping a `vendor` flag
+  /// here that was only ever passed as true would suggest otherwise.
+  Future<OtpRequestResult> requestVendorOtp(String email) async {
+    final data = await _request(
+      'POST',
+      '/auth/vendor/otp/request',
+      body: {'email': email},
+      auth: false,
+    ) as Map<String, dynamic>;
     return OtpRequestResult(data['message'] as String, data['debug_code'] as String?);
   }
 
-  /// Exchanges a code for tokens. [vendor] must match the [requestOtp] call:
-  /// the vendor route creates the account as a stall, and the token it returns
-  /// is the only kind the merchant app's endpoints accept.
-  Future<AuthResult> verifyOtp(String email, String code, {bool vendor = false}) async {
-    final path = vendor ? '/auth/vendor/otp/verify' : '/auth/otp/verify';
+  /// Exchanges a code for tokens, creating the account as a stall if it is new.
+  ///
+  /// The token this returns carries the merchant audience, which is the only
+  /// kind the vendor endpoints accept.
+  Future<AuthResult> verifyVendorOtp(String email, String code) async {
     final data = await _request(
       'POST',
-      path,
+      '/auth/vendor/otp/verify',
       body: {'email': email, 'code': code},
       auth: false,
     ) as Map<String, dynamic>;
@@ -206,29 +209,7 @@ class ApiClient {
     return AppUser.fromJson(data);
   }
 
-  /// Updates the signed-in user's own profile. Only the fields passed are
-  /// changed. The backend normalizes the phone to E.164 and rejects invalid
-  /// numbers, so the returned user is the source of truth.
-  Future<AppUser> updateMe({String? fullName, String? phone}) async {
-    final body = <String, dynamic>{};
-    if (fullName != null) body['full_name'] = fullName;
-    if (phone != null) body['phone'] = phone;
-    final data = await _request('PATCH', '/auth/me', body: body) as Map<String, dynamic>;
-    return AppUser.fromJson(data);
-  }
-
-
   // --- Vendors ---
-
-  Future<List<Vendor>> listVendors() async {
-    final data = await _request('GET', '/vendors') as List;
-    return data.map((e) => Vendor.fromJson(e as Map<String, dynamic>)).toList();
-  }
-
-  Future<VendorDetail> vendorDetail(String vendorId) async {
-    final data = await _request('GET', '/vendors/$vendorId') as Map<String, dynamic>;
-    return VendorDetail.fromJson(data);
-  }
 
   Future<Vendor> applyAsVendor({required String stallName, String? description}) async {
     final data = await _request(
@@ -374,48 +355,7 @@ class ApiClient {
     return UploadSignature.fromJson(data);
   }
 
-  // --- Orders ---
-
-  /// Places an order.
-  ///
-  /// [deliveryLocation] is a code from the stall's own enabled list and is
-  /// required for a delivery, forbidden for a dine-in - the server rejects
-  /// either mistake rather than quietly ignoring the field.
-  Future<Order> placeOrder({
-    required String vendorId,
-    required List<Map<String, dynamic>> items,
-    String? note,
-    FulfilmentType fulfilmentType = FulfilmentType.dineIn,
-    String? deliveryLocation,
-  }) async {
-    final data = await _request(
-      'POST',
-      '/orders',
-      body: {
-        'vendor_id': vendorId,
-        'items': items,
-        if (note != null) 'note': note,
-        'fulfilment_type': fulfilmentType.wire,
-        if (deliveryLocation != null) 'delivery_location': deliveryLocation,
-      },
-    ) as Map<String, dynamic>;
-    return Order.fromJson(data);
-  }
-
-  Future<List<Order>> myOrders() async {
-    final data = await _request('GET', '/orders') as List;
-    return data.map((e) => Order.fromJson(e as Map<String, dynamic>)).toList();
-  }
-
-  Future<Order> orderDetail(String orderId) async {
-    final data = await _request('GET', '/orders/$orderId') as Map<String, dynamic>;
-    return Order.fromJson(data);
-  }
-
-  Future<Order> cancelOrder(String orderId) async {
-    final data = await _request('POST', '/orders/$orderId/cancel') as Map<String, dynamic>;
-    return Order.fromJson(data);
-  }
+  // --- Orders (the stall's queue) ---
 
   Future<List<Order>> vendorOrders() async {
     final data = await _request('GET', '/vendors/me/orders') as List;
@@ -563,9 +503,6 @@ class ApiClient {
       // own, so failing the sign-out here would be worse than letting it pass.
     }
   }
-
-  /// WebSocket URL for tracking a single order (customer or owning vendor).
-  Future<Uri> orderSocketUrl(String orderId) => _wsUri('/ws/orders/$orderId');
 
   /// WebSocket URL for a vendor's live incoming-order queue.
   Future<Uri> vendorSocketUrl(String vendorId) => _wsUri('/ws/vendor/$vendorId');

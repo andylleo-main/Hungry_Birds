@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- The artwork's own backdrop, so the bird sits on what it was drawn against. -->
-    <color name="ic_launcher_background">#15130F</color>
-</resources>

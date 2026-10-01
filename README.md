@@ -15,8 +15,9 @@ only — there is no payment gateway.
 
 ```
 backend/               FastAPI service (API, auth, WebSockets)
-apps/customer_app/     Flutter app for students
+apps/web/              React app for students, with the admin panel built in
 apps/merchant_app/     Flutter app for stall owners
+apps/rider_app/        Flutter app for the people who carry deliveries
 packages/hb_shared/    Shared Dart: models, API client, login flow, theme
 ```
 
@@ -94,9 +95,6 @@ Point `API_BASE_URL` at the deployed URL to run against production — note the
 `/api` suffix. On an Android emulator, localhost on the host machine is
 `http://10.0.2.2:8000/api`.
 
-> `apps/customer_app` is the retired Flutter customer app. The customer side is
-> now the web app in `apps/web`; that directory is kept only as history.
-
 ### The customer web app
 
 ```bash
@@ -118,17 +116,17 @@ account even for TestFlight.
 
 ### One-time: create a release keystore
 
-Do this once, on your own machine. The same keystore signs **all three** apps.
+Do this once, on your own machine. The same keystore signs **both** apps.
 
 ```bash
 keytool -genkey -v -keystore ~/hungerbirds-release.jks \
   -keyalg RSA -keysize 2048 -validity 10000 -alias hungerbirds
 ```
 
-Then, in **each** app (`merchant_app`, `rider_app`, and `customer_app` if you
-still build it), copy `android/key.properties.example` to
-`android/key.properties` and fill in the password, alias, and absolute path to
-the `.jks`. Those files are gitignored and must stay that way.
+Then, in **each** app (`merchant_app` and `rider_app`), copy
+`android/key.properties.example` to `android/key.properties` and fill in the
+password, alias, and absolute path to the `.jks`. Those files are gitignored and
+must stay that way.
 
 > **Back up the `.jks` file and its passwords somewhere permanent.** Android
 > identifies an app by its signing key. If you lose the keystore, you cannot

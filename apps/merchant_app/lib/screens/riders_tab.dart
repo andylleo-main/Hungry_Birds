@@ -102,6 +102,15 @@ class _RidersTabState extends State<RidersTab> {
         _say('Give the rider a name.');
         return;
       }
+      // Caught here rather than sent on. The server re-validates and normalises
+      // either way - it stays the source of truth - but a mistyped number
+      // otherwise costs a round trip to be told so, and this is the number a
+      // customer will be dialling.
+      final phoneError = validateIndianMobile(phoneController.text);
+      if (phoneError != null) {
+        _say(phoneError);
+        return;
+      }
 
       setState(() => _busy = true);
       final created = await context.read<ApiClient>().createRider(
@@ -337,7 +346,7 @@ class _RiderCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${rider.loginId} · ${rider.phone}',
+                        '${rider.loginId} · ${formatPhoneForDisplay(rider.phone)}',
                         style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
                       ),
                     ],

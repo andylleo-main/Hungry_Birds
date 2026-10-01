@@ -41,23 +41,3 @@ class MenuItem {
         isAvailable: json['is_available'] as bool,
       );
 }
-
-class CategoryWithItems extends MenuCategory {
-  final List<MenuItem> items;
-
-  const CategoryWithItems({
-    required super.id,
-    required super.name,
-    required super.sortOrder,
-    required this.items,
-  });
-
-  factory CategoryWithItems.fromJson(Map<String, dynamic> json) => CategoryWithItems(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        sortOrder: json['sort_order'] as int,
-        items: (json['items'] as List)
-            .map((e) => MenuItem.fromJson(e as Map<String, dynamic>))
-            .toList(),
-      );
-}
