@@ -71,6 +71,16 @@ async def place_order(
     """
     assert_allowed_domain(user.email, settings, action="place an order")
 
+    # Refuse up front rather than creating something that can never complete.
+    # Payment is the only route out of awaiting_payment, so without a configured
+    # gateway an accepted order would sit forever: the customer gets a
+    # confirmation, the stall never sees it, and nothing anywhere says why.
+    if not settings.payments_enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Online payments are not set up yet, so orders can't be taken. Please try later.",
+        )
+
     vendor = await db.get(Vendor, payload.vendor_id)
     if vendor is None or not vendor.is_approved:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Vendor not found")

@@ -37,6 +37,23 @@ async def db():
     await engine.dispose()
 
 
+# The settings every test runs against: the real ones, plus a configured
+# payment gateway. Orders cannot be placed without one - that is the point of the
+# 503 in place_order - so this is the normal state of a working deployment rather
+# than a convenience. Tests that need payments switched off use `payments_off`.
+def _test_settings():
+    from app.core.config import get_settings
+
+    return get_settings().model_copy(
+        update={
+            "cashfree_app_id": "TEST_APP_ID",
+            "cashfree_secret_key": "test-secret-key",
+            "cashfree_env": "sandbox",
+            "public_base_url": "https://testserver",
+        }
+    )
+
+
 @pytest.fixture
 async def client():
     """The app, over ASGI, with the per-address rate limits cleared first.
@@ -68,11 +85,19 @@ async def client():
     if keys:
         await redis.delete(*keys)
 
+    from app.core.config import get_settings
+
+    configured = _test_settings()
+    app.dependency_overrides[get_settings] = lambda: configured
+
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver/api"
-    ) as ac:
-        yield ac
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver/api"
+        ) as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
 
 
 def _token(user_id, audience):
@@ -212,30 +237,26 @@ async def delivery_order(client, customer, vendor, menu_item, pay):
 
 
 @pytest.fixture
-def payments_on():
-    """Switch Cashfree on for the duration of a test, with a known secret.
+def payments_on(client):
+    """The configured settings the client fixture is already using.
 
-    Overrides the dependency rather than the environment, so the real settings
-    object is untouched and nothing leaks into the next test.
+    Kept as a fixture because tests need the secret to sign a webhook with.
     """
-    from app.core.config import Settings, get_settings
+    return _test_settings()
+
+
+@pytest.fixture
+def payments_off(client):
+    """Put the deployment back into its unconfigured state for one test."""
+    from app.core.config import get_settings
     from app.main import app
 
-    configured = get_settings().model_copy(
-        update={
-            "cashfree_app_id": "TEST_APP_ID",
-            "cashfree_secret_key": "test-secret-key",
-            "cashfree_env": "sandbox",
-            "public_base_url": "https://testserver",
-        }
+    bare = get_settings().model_copy(
+        update={"cashfree_app_id": "", "cashfree_secret_key": ""}
     )
-
-    def _override() -> Settings:
-        return configured
-
-    app.dependency_overrides[get_settings] = _override
-    yield configured
-    app.dependency_overrides.pop(get_settings, None)
+    app.dependency_overrides[get_settings] = lambda: bare
+    yield bare
+    app.dependency_overrides[get_settings] = lambda: _test_settings()
 
 
 @pytest.fixture

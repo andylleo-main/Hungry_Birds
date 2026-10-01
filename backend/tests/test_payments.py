@@ -266,7 +266,7 @@ async def test_a_webhook_for_an_order_we_do_not_have_is_shrugged_off(
     assert r.json()["status"] == "ignored"
 
 
-async def test_the_webhook_does_not_exist_until_cashfree_is_configured(client):
+async def test_the_webhook_does_not_exist_until_cashfree_is_configured(client, payments_off):
     """Nothing can be verified, so the route must not accept anything."""
     r = await client.post(
         "/payments/cashfree/webhook",
@@ -389,16 +389,25 @@ async def test_the_sweep_leaves_a_paid_order_alone(
 # --- configuration ----------------------------------------------------------
 
 
-async def test_checkout_says_so_when_payments_are_not_configured(
-    client, customer, vendor, menu_item
+async def test_no_orders_are_taken_until_cashfree_is_configured(
+    client, customer, vendor, menu_item, payments_off
 ):
+    """Refused up front, rather than accepted and left unfinishable.
+
+    Payment is the only route out of awaiting_payment, so an order created
+    without a gateway would sit forever - the customer holding a confirmation
+    for food no stall will ever see, and nothing anywhere explaining why.
+    """
     user, cust_headers = customer
     v, _ = vendor
-    order = await _place(client, cust_headers, v.id, menu_item)
 
-    r = await client.post(f"/orders/{order['id']}/payment-session", headers=cust_headers)
+    r = await client.post(
+        "/orders",
+        headers=cust_headers,
+        json={"vendor_id": str(v.id), "items": _lines(menu_item)},
+    )
     assert r.status_code == 503
-    assert "not configured" in r.json()["detail"]
+    assert "payments are not set up" in r.json()["detail"].lower()
 
 
 async def test_one_customer_cannot_open_anothers_checkout(

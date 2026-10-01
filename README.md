@@ -473,8 +473,13 @@ Every order is paid online before a stall ever sees it. There is no cash.
 | `PUBLIC_BASE_URL` | This deployment's public address, used to build the webhook and return URLs |
 
 Then add the webhook in Cashfree's dashboard, pointing at
-`<PUBLIC_BASE_URL>/api/payments/cashfree/webhook`. Leave the keys blank and
-payments are simply off: checkout answers 503 and the webhook 404s.
+`<PUBLIC_BASE_URL>/api/payments/cashfree/webhook`.
+
+> **Until these are set, no orders can be placed at all.** `POST /orders` answers
+> 503 with a message saying so. That is deliberate: payment is the only route out
+> of `awaiting_payment`, so an order accepted without a gateway would sit forever
+> — the customer holding a confirmation for food no stall will ever see. Failing
+> at the door is the honest version. Set the keys before announcing the site.
 
 **The flow.** The customer places the order, which is created as
 `awaiting_payment` and is invisible to the stall. The browser is handed a payment
