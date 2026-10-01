@@ -1,10 +1,12 @@
 import secrets
 
+import anyio
 import resend
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 from redis.asyncio import Redis
 
 from app.core.config import Settings
+from app.core.tasks import fire_and_log
 
 OTP_TTL_SECONDS = 5 * 60
 OTP_RATE_LIMIT_SECONDS = 60
@@ -92,9 +94,52 @@ def _hourly_key(email: str) -> str:
     return f"otp:hr:{email}"
 
 
-async def request_otp(email: str, redis: Redis, settings: Settings) -> str | None:
-    """Generates and stores an OTP, sends it via Resend. Returns the code
-    only when OTP_DEBUG_ECHO is enabled, for local-dev convenience."""
+def _send_code_email(email: str, code: str, settings: Settings) -> None:
+    """The blocking Resend call, isolated so it can be run off the event loop."""
+    resend.api_key = settings.resend_api_key
+    resend.Emails.send(
+        {
+            "from": settings.resend_from_email,
+            "to": [email],
+            "subject": "Your Hungry Birds login code",
+            "html": (
+                f"<p>Your Hungry Birds login code is:</p>"
+                f"<h2>{code}</h2>"
+                f"<p>It expires in 5 minutes. If you didn't request this, ignore this email.</p>"
+            ),
+        }
+    )
+
+
+async def send_code_email(email: str, code: str, settings: Settings) -> None:
+    """Send a login code, without holding the event loop while Resend thinks.
+
+    `resend.Emails.send` is synchronous `requests` under the hood. Called
+    directly from an async handler it blocks every other request in flight for
+    the length of the round trip, which on one container is the whole service.
+    """
+    if not settings.resend_api_key:
+        return
+    await anyio.to_thread.run_sync(_send_code_email, email, code, settings)
+
+
+async def request_otp(
+    email: str,
+    redis: Redis,
+    settings: Settings,
+    background: BackgroundTasks | None = None,
+) -> str | None:
+    """Generates and stores an OTP and arranges for it to be emailed.
+
+    Returns the code only when OTP_DEBUG_ECHO is enabled, for local-dev
+    convenience.
+
+    The email is a background task, not part of this request. It used to be an
+    unguarded synchronous call in the middle of this function, which meant a
+    Resend outage did not merely fail to deliver one code - it turned *signing
+    in* into a 500 for everybody, which is the worst possible thing to lose when
+    email is already the thing that has broken.
+    """
     remaining = await redis.ttl(_rate_limit_key(email))
     if remaining and remaining > 0:
         raise HTTPException(
@@ -120,20 +165,14 @@ async def request_otp(email: str, redis: Redis, settings: Settings) -> str | Non
     # A new code starts a fresh attempt budget.
     await redis.delete(_attempt_key(email))
 
-    if settings.resend_api_key:
-        resend.api_key = settings.resend_api_key
-        resend.Emails.send(
-            {
-                "from": settings.resend_from_email,
-                "to": [email],
-                "subject": "Your Hungry Birds login code",
-                "html": (
-                    f"<p>Your Hungry Birds login code is:</p>"
-                    f"<h2>{code}</h2>"
-                    f"<p>It expires in 5 minutes. If you didn't request this, ignore this email.</p>"
-                ),
-            }
+    if background is not None:
+        background.add_task(
+            fire_and_log, "send_code_email", lambda: send_code_email(email, code, settings)
         )
+    else:
+        # No request to hang the task off (a script, or a test). Still guarded,
+        # so a dead Resend cannot propagate out of here.
+        await fire_and_log("send_code_email", lambda: send_code_email(email, code, settings))
 
     return code if settings.debug_echo_enabled else None
 

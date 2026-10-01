@@ -414,6 +414,51 @@ carries one or two orders at a time, so a short poll of one small query costs le
 than giving a third audience its own ticket-and-socket path, and it cannot get
 wedged in a way that quietly stops delivering updates.
 
+## Push notifications
+
+When an order arrives, every phone signed into that stall's merchant app gets a
+notification. Orders already arrive over the websocket and on every queue fetch,
+so this is a convenience for a phone sitting locked on a counter - which is why
+the whole feature is built to fail silently rather than loudly.
+
+**Set-up (yours to do).** Create a Firebase project, add an Android app with the
+package name `food.hungerbirds.merchant`, and set two Railway variables:
+
+| Variable | Where it comes from |
+| --- | --- |
+| `FCM_PROJECT_ID` | Firebase console → Project settings → General → Project ID |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Project settings → Service accounts → Generate new private key, pasted as one line |
+
+Leave them blank and push is simply off. The service account key is a
+credential — Railway variables only, never the repo.
+
+**Still to wire up:** the merchant app needs `google-services.json` from that
+same Firebase project before the Flutter side can be added, because the Android
+build fails outright if the Google Services plugin is applied without it. Drop
+that file at `apps/merchant_app/android/app/google-services.json` and the app
+side is a small, contained change: the Firebase plugins, a token request on
+start, and a `POST /api/vendors/me/devices` with the result.
+
+**How it behaves.** The merchant app registers its token on every start, not
+only the first — Firebase rotates a token on reinstall, on app data being
+cleared, and sometimes on its own, and a stall whose token has quietly rotated
+would otherwise just stop getting notifications with nothing to see. A token is
+unique across the whole table rather than per stall, so a phone handed to a
+different stall moves with its new owner instead of buzzing for both.
+
+Sending is a background task that swallows its own failures, and Firebase gets a
+five-second timeout. A token Firebase reports as `UNREGISTERED` or
+`INVALID_ARGUMENT` is deleted, because uninstalled apps otherwise leave entries
+that make every future order pay for a round trip to nowhere. One unreachable
+device never stops the others being told.
+
+The same treatment was applied to the login email while building this. It was a
+synchronous Resend call sitting unguarded in the middle of `request_otp`, so a
+Resend outage did not merely fail to deliver one code — it turned signing in into
+a 500 for everybody, which is the worst thing to lose at exactly the moment email
+is already broken. It now runs in a worker thread, after the response, with its
+failures logged rather than raised.
+
 ## Admin sign-in without an OTP
 
 Admins can sign in with a password instead of waiting for a code. That matters

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,13 +56,14 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 )
 async def otp_request(
     payload: OTPRequest,
+    background: BackgroundTasks,
     redis: Redis = Depends(get_redis),
     settings: Settings = Depends(get_settings),
 ) -> OTPRequestResponse:
     email = normalize_email(payload.email)
     assert_allowed_domain(email, settings)
 
-    debug_code = await request_otp(email, redis, settings)
+    debug_code = await request_otp(email, redis, settings, background)
     return OTPRequestResponse(
         message="OTP sent",
         debug_code=debug_code,
@@ -124,6 +125,7 @@ async def otp_verify(
 )
 async def vendor_otp_request(
     payload: OTPRequest,
+    background: BackgroundTasks,
     redis: Redis = Depends(get_redis),
     settings: Settings = Depends(get_settings),
 ) -> OTPRequestResponse:
@@ -140,7 +142,7 @@ async def vendor_otp_request(
     can be pointed at any inbox on the internet and the other cannot.
     """
     email = normalize_email(payload.email)
-    debug_code = await request_otp(email, redis, settings)
+    debug_code = await request_otp(email, redis, settings, background)
     return OTPRequestResponse(
         message="OTP sent",
         debug_code=debug_code,

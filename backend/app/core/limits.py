@@ -118,6 +118,12 @@ MEDIA_SIGNATURE = (Limit(20, MINUTE), Limit(100, HOUR))
 ADMIN_READ = (Limit(120, MINUTE),)
 ADMIN_WRITE = (Limit(60, MINUTE),)
 
+# --- Push notifications -----------------------------------------------------
+# The merchant app re-registers its token on every start, and Firebase rotates
+# tokens occasionally, so this is normal traffic rather than something to
+# squeeze. The cap is about a loop in a client, not about abuse.
+DEVICE_WRITE = (Limit(30, MINUTE),)
+
 # --- Realtime ---------------------------------------------------------------
 # A ticket is what gets exchanged for a socket, so limiting tickets limits
 # sockets at the source.

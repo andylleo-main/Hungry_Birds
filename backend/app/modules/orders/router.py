@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,9 @@ from app.db.models.vendor import Vendor
 from app.db.session import get_db
 from app.modules.orders.schemas import OrderAssign, OrderCreate, OrderOut, OrderStatusUpdate
 from app.modules.auth.service import assert_allowed_domain
+from app.core.tasks import fire_and_log
 from app.modules.fulfilment.service import assert_order_fulfilment
+from app.modules.notifications.service import notify_new_order
 from app.modules.orders.service import (
     TERMINAL_STATUSES,
     assert_transition,
@@ -46,6 +48,7 @@ _load_order_with_items = load_order
 )
 async def place_order(
     payload: OrderCreate,
+    background: BackgroundTasks,
     user: User = Depends(require_role(UserRole.CUSTOMER)),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
@@ -124,6 +127,16 @@ async def place_order(
 
     order = await _load_order_with_items(order.id, db)
     await publish_order_event(redis, order)
+
+    # After the response, and swallowed if it fails. A stall that misses the
+    # push still sees the order the instant they open the app - the socket and
+    # the queue fetch both carry it - so Firebase having a bad afternoon must not
+    # be able to fail somebody's order.
+    background.add_task(
+        fire_and_log,
+        "notify_new_order",
+        lambda: notify_new_order(order.id, order.vendor_id, settings),
+    )
     return OrderOut.model_validate(order)
 
 

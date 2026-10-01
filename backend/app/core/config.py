@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     cloudinary_api_secret: str = ""
     cloudinary_upload_folder: str = "hunger_birds"
 
+    # --- Firebase Cloud Messaging -------------------------------------------
+    # Empty means "not configured", and the notification service then does
+    # nothing rather than raising - the same convention as resend_api_key and
+    # cloudinary_api_secret. A stall that gets no push still sees the order the
+    # moment it opens the app, so this failing quietly is the right default.
+    #
+    # firebase_service_account_json is the whole service-account JSON file, as
+    # one string. It is a credential: keep it in Railway's variables, never in
+    # the repo.
+    fcm_project_id: str = ""
+    firebase_service_account_json: str = ""
+
     # Empty means send no CORS headers at all, which is correct in production:
     # the backend serves the web app itself, so every call is same-origin and
     # no other site has any business calling this API. Set it to a
@@ -79,6 +91,10 @@ class Settings(BaseSettings):
         if value.startswith("postgresql://"):
             return value.replace("postgresql://", "postgresql+asyncpg://", 1)
         return value
+
+    @property
+    def push_enabled(self) -> bool:
+        return bool(self.fcm_project_id and self.firebase_service_account_json)
 
     @property
     def is_development(self) -> bool:

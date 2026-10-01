@@ -15,3 +15,11 @@ pyjwt==2.10.1
 cloudinary==1.41.0
 python-multipart==0.0.20
 websockets==14.1
+# Async HTTP, for the two outbound integrations that are not SDK-driven:
+# Firebase Cloud Messaging and Cashfree. Deliberately not `requests`, which
+# `resend` pulls in transitively - a synchronous client on the event loop blocks
+# every other request in flight for the duration of the call.
+httpx==0.28.1
+# Signs the service-account assertion that FCM's HTTP v1 API needs. Only the
+# OAuth2 part is used; there is no firebase-admin SDK here.
+google-auth==2.38.0

@@ -21,6 +21,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.media.router import router as media_router
 from app.modules.fulfilment.router import router as fulfilment_router
 from app.modules.menu.router import router as menu_router
+from app.modules.notifications.router import router as devices_router
 from app.modules.orders.router import router as orders_router
 from app.modules.orders.router import vendor_orders_router
 from app.modules.realtime.router import router as realtime_router
@@ -135,6 +136,7 @@ app.include_router(auth_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
 app.include_router(menu_router, prefix=API_PREFIX)
 app.include_router(fulfilment_router, prefix=API_PREFIX)
+app.include_router(devices_router, prefix=API_PREFIX)
 app.include_router(riders_router, prefix=API_PREFIX)
 app.include_router(rider_auth_router, prefix=API_PREFIX)
 app.include_router(rider_router, prefix=API_PREFIX)
