@@ -114,3 +114,16 @@ def require_audience(*allowed: TokenAudience):
             )
 
     return dependency
+
+# Who may place and pay for an order.
+#
+# Admins are included because an admin is a person on campus who eats, and the
+# role is exclusive and immutable by design - an address that holds an admin
+# account cannot also hold a customer one, and +tag addressing is normalised away
+# so a second account is not a workaround. Without this the operator of the
+# service is the one person who cannot use it.
+#
+# Stall owners are deliberately NOT here. A vendor ordering from the platform
+# they sell on is the conflict the exclusive roles exist to prevent, and they
+# already cannot reach these routes from the merchant app's audience.
+ORDERING_ROLES = (UserRole.CUSTOMER, UserRole.ADMIN)

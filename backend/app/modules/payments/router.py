@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import limits
 from app.core.config import Settings, get_settings
-from app.core.deps import require_role
+from app.core.deps import ORDERING_ROLES, require_role
 from app.core.ratelimit import limit_by_ip, limit_by_user
 from app.core.redis import get_redis
 from app.core.tasks import fire_and_log
@@ -40,7 +40,7 @@ order_payments_router = APIRouter(prefix="/orders", tags=["payments"])
 )
 async def create_payment_session(
     order_id: uuid.UUID,
-    user: User = Depends(require_role(UserRole.CUSTOMER)),
+    user: User = Depends(require_role(*ORDERING_ROLES)),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> PaymentSessionOut:
@@ -107,7 +107,7 @@ async def create_payment_session(
 async def confirm_mock_payment(
     order_id: uuid.UUID,
     background: BackgroundTasks,
-    user: User = Depends(require_role(UserRole.CUSTOMER)),
+    user: User = Depends(require_role(*ORDERING_ROLES)),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
     settings: Settings = Depends(get_settings),

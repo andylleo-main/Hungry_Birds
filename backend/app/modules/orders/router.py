@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import limits
 from app.core.config import Settings, get_settings
-from app.core.deps import get_current_user, require_role
+from app.core.deps import ORDERING_ROLES, get_current_user, require_role
 from app.core.ratelimit import limit_by_user
 from app.core.redis import get_redis
 from app.db.models.menu import MenuItem
@@ -58,7 +58,7 @@ _load_order_with_items = load_order
 async def place_order(
     payload: OrderCreate,
     background: BackgroundTasks,
-    user: User = Depends(require_role(UserRole.CUSTOMER)),
+    user: User = Depends(require_role(*ORDERING_ROLES)),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
     settings: Settings = Depends(get_settings),
@@ -165,7 +165,7 @@ async def place_order(
     dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
 )
 async def list_my_orders(
-    user: User = Depends(require_role(UserRole.CUSTOMER)),
+    user: User = Depends(require_role(*ORDERING_ROLES)),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> list[OrderWithCodeOut]:
