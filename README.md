@@ -143,6 +143,42 @@ That's fine for `flutter run --release` on your own device, but never hand out
 a debug-signed APK: the debug key differs per machine, so the same
 uninstall/reinstall trap applies.
 
+### When `git pull` refuses after a build
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+        apps/merchant_app/android/app/google-services.json
+```
+
+Expected, not a mistake. Building rewrites `pubspec.lock`, and the Firebase
+configs are tracked, so a local build plus an upstream change to either of those
+leaves both sides differing from the common ancestor — and git will not merge over
+an edit it cannot know is discardable.
+
+```bash
+git status                       # read-only: the full list, usually more than
+                                 # the one file the error names
+git stash push --include-untracked
+git pull
+git stash drop                   # only if nothing in it is yours
+```
+
+> **Do not reach for `git reset --hard`, `git clean -fdx`, or `git stash --all`.**
+> They are the usual answers to this error and all three delete the files here
+> that the remote cannot give back: `android/key.properties`, `backend/.env`, and
+> the keystore if you keep it inside the repo. The keystore is the unrecoverable
+> one — see the backup warning above for what losing it costs.
+
+`--include-untracked` is the load-bearing flag: `-u` takes tracked edits and
+untracked files while leaving *ignored* files alone, which is exactly the line
+between "build output and config you can regenerate" and "the three things you
+cannot".
+
+If the pull then complains about *untracked* files being in the way, those are
+files you created at a path a commit also adds — most likely an app's
+`google-services.json`. Delete your local copy and pull again; the committed one is
+correct.
+
 ### Build
 
 Same command for each app — `merchant_app` for stall owners, `rider_app` for
@@ -157,6 +193,21 @@ flutter build apk --release --split-per-abi \
 They are separate apps with separate package ids
 (`food.hungrybirds.merchant`, `food.hungrybirds.rider`), so a merchant who also
 rides can have both installed at once.
+
+> **If you sideloaded a merchant build before the rename**, it was
+> `food.hungerbirds.merchant`. Android identifies an app by that string, so the new
+> build does not update it — it installs *alongside* as a second app, leaving two
+> identical-looking icons that both work and both talk to the same backend.
+> Nothing fails, which is what makes it confusing. Uninstall the old one by hand,
+> once, on every phone that has it.
+
+The source package moved with the rename, so build from clean the first time after
+pulling it — Gradle's incremental state still holds generated sources under the old
+package name:
+
+```bash
+flutter clean && flutter pub get
+```
 
 Output lands in `build/app/outputs/flutter-apk/`. Hand out
 **`app-arm64-v8a-release.apk`** — essentially every phone from the last several
