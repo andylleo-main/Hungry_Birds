@@ -91,3 +91,22 @@ def test_an_emptied_boolean_flag_does_not_stop_the_app_booting():
     # Real values still parse the way they always did.
     assert Settings(**base, seed_demo_data="true").seed_demo_data is True
     assert Settings(**base, otp_debug_echo="1").otp_debug_echo is True
+
+
+def test_a_short_jwt_secret_refuses_to_start():
+    """HS256 with a key shorter than its hash is weaker than the hash, and nothing
+    looks wrong at runtime - tokens sign, verify and work. PyJWT only warns, and a
+    warning in a log nobody reads is not a control, so this fails at boot."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    base = {"database_url": "postgresql+asyncpg://x/y"}
+    with pytest.raises(ValidationError, match="at least 32 bytes"):
+        Settings(**base, jwt_secret="too-short")
+
+    # Exactly at the boundary is fine; one byte under is not.
+    assert Settings(**base, jwt_secret="k" * 32).jwt_secret == "k" * 32
+    with pytest.raises(ValidationError):
+        Settings(**base, jwt_secret="k" * 31)

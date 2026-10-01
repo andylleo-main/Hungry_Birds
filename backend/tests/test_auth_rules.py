@@ -9,7 +9,7 @@ def settings() -> Settings:
     return Settings(
         database_url="postgresql+asyncpg://u:p@localhost/db",
         redis_url="redis://localhost:6379/0",
-        jwt_secret="test-secret",
+        jwt_secret="test-secret-long-enough-for-hs256-x",
     )
 
 
@@ -58,7 +58,7 @@ def test_other_domains_are_rejected(email):
     ],
 )
 def test_database_url_is_upgraded_to_the_async_driver(url, expected):
-    config = Settings(database_url=url, redis_url="redis://localhost:6379/0", jwt_secret="s")
+    config = Settings(database_url=url, redis_url="redis://localhost:6379/0", jwt_secret="test-secret-long-enough-for-hs256-x")
     assert config.database_url == expected
 
 

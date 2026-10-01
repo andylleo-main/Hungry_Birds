@@ -19,7 +19,7 @@ def settings(**overrides) -> Settings:
     return Settings(
         database_url="postgresql+asyncpg://u:p@localhost/db",
         redis_url="redis://localhost:6379/0",
-        jwt_secret="test-secret",
+        jwt_secret="test-secret-long-enough-for-hs256-x",
         **overrides,
     )
 

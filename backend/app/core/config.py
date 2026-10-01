@@ -152,6 +152,25 @@ class Settings(BaseSettings):
             return False
         return value
 
+    @field_validator("jwt_secret")
+    @classmethod
+    def secret_long_enough(cls, value: str) -> str:
+        """Refuse to start on an HMAC key shorter than its own hash.
+
+        HS256 keys shorter than 32 bytes weaken the signature below the strength
+        of SHA-256 itself (RFC 7518 section 3.2), and nothing about a short one
+        looks wrong at runtime: tokens sign, verify and work. PyJWT only started
+        warning about it in 2.15, and a warning in a log nobody reads is not a
+        control. The access token is the whole authentication system, so this
+        fails at boot instead.
+        """
+        if len(value.encode()) < 32:
+            raise ValueError(
+                "JWT_SECRET must be at least 32 bytes - generate one with "
+                "`python -c 'import secrets; print(secrets.token_urlsafe(48))'`"
+            )
+        return value
+
     @field_validator("database_url")
     @classmethod
     def use_async_driver(cls, value: str) -> str:

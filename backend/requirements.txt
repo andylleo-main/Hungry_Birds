@@ -1,4 +1,9 @@
-fastapi==0.115.6
+fastapi==0.142.2
+# Pinned explicitly although FastAPI pulls it in: Starlette 0.41.x carried an
+# unauthenticated DoS in FileResponse's Range handling (PYSEC-2026-1942), and this
+# app serves the whole web bundle through FileResponse and StaticFiles. Keeping
+# the version visible here means an audit reads it without resolving the tree.
+starlette==1.7.0
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36
 # SQLAlchemy's async engine needs greenlet, which it only pulls in
@@ -11,9 +16,12 @@ pydantic-settings==2.7.0
 email-validator==2.2.0
 redis==5.2.1
 resend==2.6.0
-pyjwt==2.10.1
+pyjwt==2.15.1
 cloudinary==1.41.0
-python-multipart==0.0.20
+# Not used by any endpoint - no route parses multipart - but FastAPI depends on
+# it, so it is pinned at a version without the 2026 parser advisories rather than
+# left to resolve to whatever is oldest-compatible.
+python-multipart==0.0.32
 websockets==14.1
 # Async HTTP, for the two outbound integrations that are not SDK-driven:
 # Firebase Cloud Messaging and Cashfree. Deliberately not `requests`, which
@@ -23,3 +31,7 @@ httpx==0.28.1
 # Signs the service-account assertion that FCM's HTTP v1 API needs. Only the
 # OAuth2 part is used; there is no firebase-admin SDK here.
 google-auth==2.38.0
+
+# Transitive, via resend -> requests and google-auth. Pinned because 2.7.0 carried
+# three advisories and nothing else in this file would have moved it.
+urllib3==2.8.0

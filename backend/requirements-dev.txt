@@ -1,4 +1,10 @@
 -r requirements.txt
-pytest==8.3.4
-pytest-asyncio==0.25.0
+# pytest-asyncio 1.x, not 0.25: pytest.ini sets asyncio_default_test_loop_scope,
+# which 0.x does not honour. The pin used to say 0.25.0 while the only version
+# that actually runs this suite was 1.x, so a clean checkout following this file
+# got 78 failures - all of them "attached to a different loop", because the app's
+# engine and Redis client are singletons bound to whichever loop touched them
+# first. Local environments that had drifted upward passed, which is what hid it.
+pytest==9.1.1
+pytest-asyncio==1.4.0
 httpx==0.28.1
