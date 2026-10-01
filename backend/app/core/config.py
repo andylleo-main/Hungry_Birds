@@ -133,6 +133,25 @@ class Settings(BaseSettings):
     # comma-separated origin list only if a separate frontend host is added.
     cors_origins: str = ""
 
+    @field_validator("seed_demo_data", "otp_debug_echo", mode="before")
+    @classmethod
+    def blank_means_off(cls, value):
+        """Treat an empty environment variable as false rather than refusing to boot.
+
+        Clearing a variable in a hosting dashboard usually means emptying it, not
+        deleting the row, and pydantic rejects "" for a bool - so the obvious way to
+        turn one of these off takes the whole service down on the next deploy
+        instead. That happened here with SEED_DEMO_DATA: the app would not start,
+        and the error named a demo-data flag rather than anything to do with the
+        request that failed.
+
+        Only applied to the flags, not to the string settings. For those, empty
+        already means off and is handled where they are read.
+        """
+        if isinstance(value, str) and not value.strip():
+            return False
+        return value
+
     @field_validator("database_url")
     @classmethod
     def use_async_driver(cls, value: str) -> str:

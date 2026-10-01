@@ -71,3 +71,23 @@ def test_the_example_env_does_not_ship_a_usable_secret():
         # Credentials must never be committed, even as examples.
         if line.startswith(("RESEND_API_KEY=", "CLOUDINARY_API_SECRET=")):
             assert line.split("=", 1)[1].strip() == ""
+
+
+def test_an_emptied_boolean_flag_does_not_stop_the_app_booting():
+    """Clearing a variable in a dashboard means emptying it, not deleting it.
+
+    pydantic rejects "" for a bool, so the obvious way to switch one of these off
+    used to crash the service on its next deploy - with an error naming a
+    demo-data flag rather than anything to do with the deploy that failed. Both
+    flags are checked because the next one added will be copied from these.
+    """
+    from app.core.config import Settings
+
+    base = {"database_url": "postgresql+asyncpg://x/y", "secret_key": "k" * 32}
+    settings = Settings(**base, seed_demo_data="", otp_debug_echo="")
+    assert settings.seed_demo_data is False
+    assert settings.otp_debug_echo is False
+
+    # Real values still parse the way they always did.
+    assert Settings(**base, seed_demo_data="true").seed_demo_data is True
+    assert Settings(**base, otp_debug_echo="1").otp_debug_echo is True
