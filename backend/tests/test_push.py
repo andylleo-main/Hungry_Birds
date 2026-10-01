@@ -198,12 +198,12 @@ async def test_one_broken_device_does_not_silence_the_others(
     for token in (first, second):
         await client.post("/vendors/me/devices", headers=headers, json={"fcm_token": token})
 
-    reached: list[str] = []
+    reached: list[tuple[str, str]] = []
 
-    async def fake_send(token, **kwargs):
+    async def fake_send(token, *, channel_id, **kwargs):
         if token == first:
             raise RuntimeError("firebase said no")
-        reached.append(token)
+        reached.append((token, channel_id))
         return None
 
     monkeypatch.setattr(service, "send_to_token", fake_send)
@@ -221,7 +221,10 @@ async def test_one_broken_device_does_not_silence_the_others(
     ).json()
 
     await service.notify_new_order(uuid.UUID(order["id"]), v.id, _push_settings())
-    assert reached == [second]
+    # A stall's channel, which the merchant app creates in its MainActivity. The
+    # rider's is "deliveries"; sharing one id would have let a rider silencing
+    # assignments be the same gesture as a stall silencing orders.
+    assert reached == [(second, "orders")]
 
 
 async def test_placing_an_order_survives_firebase_being_broken(
@@ -404,10 +407,10 @@ async def test_assigning_a_delivery_notifies_the_rider(
     token = f"fcm-rider-{uuid.uuid4().hex}" + "t" * 20
     await client.post("/rider/devices", headers=rider_headers, json={"fcm_token": token})
 
-    sent: list[tuple[str, str, str]] = []
+    sent: list[tuple[str, str, str, str]] = []
 
-    async def fake_send(tok, *, title, body, data, settings, client):
-        sent.append((tok, title, data["type"]))
+    async def fake_send(tok, *, title, body, data, channel_id, settings, client):
+        sent.append((tok, title, data["type"], channel_id))
         return None
 
     monkeypatch.setattr(service, "send_to_token", fake_send)
@@ -417,11 +420,16 @@ async def test_assigning_a_delivery_notifies_the_rider(
     )
 
     assert len(sent) == 1
-    tok, title, kind = sent[0]
+    tok, title, kind, channel = sent[0]
     assert tok == token
     assert kind == "order_assigned"
     # The destination leads, because it is what decides whether a rider can take it.
     assert "Hostel 5" in title
+    # A rider's channel, not the stall's. The id has to match a channel the rider
+    # app creates in its MainActivity, and Android silently demotes a message
+    # naming one that does not exist - so this string being wrong is a phone that
+    # never rings, with no error on either side to show for it.
+    assert channel == "deliveries"
 
 
 async def test_assigning_survives_firebase_being_broken(

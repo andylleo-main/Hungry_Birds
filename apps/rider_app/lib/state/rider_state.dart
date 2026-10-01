@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:hb_shared/hb_shared.dart';
 
+import '../services/push.dart';
+
 enum RiderStage { loading, loggedOut, ready }
 
 /// The signed-in rider and the orders they are carrying.
@@ -13,9 +15,14 @@ enum RiderStage { loading, loggedOut, ready }
 /// that silently stops delivering updates, which is the failure mode that
 /// matters when somebody is waiting on food.
 class RiderState extends ChangeNotifier {
-  RiderState(this.api);
+  RiderState(this.api) : push = PushService(api);
 
   final ApiClient api;
+
+  /// Assignment notifications. Owned here because its lifetime is the signed-in
+  /// rider's: it starts once there is a rider session to attach a token to, and
+  /// stops before sign-out while that session's token still works.
+  final PushService push;
 
   static const _pollInterval = Duration(seconds: 12);
 
@@ -45,6 +52,7 @@ class RiderState extends ChangeNotifier {
       _set(RiderStage.ready);
       await refresh();
       _startPolling();
+      _startPush();
     } catch (_) {
       // Any failure to identify the stored token - expired, or revoked because
       // the stall regenerated the password - means signing in again. There is no
@@ -61,7 +69,13 @@ class RiderState extends ChangeNotifier {
     _set(RiderStage.ready);
     await refresh();
     _startPolling();
+    _startPush();
   }
+
+  /// Deliberately not awaited. Asking Firebase for a token can take a moment on
+  /// a cold start, and the delivery list should not wait on it. Failures are
+  /// swallowed inside start().
+  void _startPush() => unawaited(push.start());
 
   void _startPolling() {
     _poll?.cancel();
@@ -123,6 +137,12 @@ class RiderState extends ChangeNotifier {
   Future<void> logout() async {
     _poll?.cancel();
     _poll = null;
+    // Before the token is cleared, while it still works - unregistering needs an
+    // authenticated call, and a phone handed to the next rider on shift must stop
+    // buzzing for deliveries that are no longer theirs. Called on the 401 path in
+    // refresh() too, where the token is already dead; that fails harmlessly and
+    // the server prunes the device when Firebase next reports it gone.
+    await push.stop();
     await api.authStorage.clear();
     rider = null;
     orders = const [];

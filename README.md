@@ -445,8 +445,9 @@ notification. Orders already arrive over the websocket and on every queue fetch,
 so this is a convenience for a phone sitting locked on a counter - which is why
 the whole feature is built to fail silently rather than loudly.
 
-**Set-up (yours to do).** Create a Firebase project, add an Android app with the
-package name `food.hungrybirds.merchant`, and set two Railway variables:
+**Set-up (yours to do).** Create a Firebase project, add *two* Android apps to it
+— package names `food.hungrybirds.merchant` and `food.hungrybirds.rider` — and
+set two Railway variables:
 
 | Variable | Where it comes from |
 | --- | --- |
@@ -456,25 +457,41 @@ package name `food.hungrybirds.merchant`, and set two Railway variables:
 Leave them blank and push is simply off. The service account key is a
 credential — Railway variables only, never the repo.
 
-`apps/merchant_app/android/app/google-services.json` is committed. It is not a
-secret — it ships inside every APK — unlike the service-account key, which must
-only ever exist in Railway's variables.
-
 Riders get one too, when a stall assigns them a delivery. Their app polls every
 twelve seconds, so the notification is not how they find out — it is how they
-find out while the phone is in their pocket. It needs a second Android app in
-the same Firebase project, registered as `food.hungrybirds.rider`, and its own
-`google-services.json` at `apps/rider_app/android/app/google-services.json`.
+find out while the phone is in their pocket. That needs a *second* Android app in
+the same Firebase project, registered as `food.hungrybirds.rider`.
 
-**How it behaves.** The merchant app registers its token on every start, not
+Each app's `google-services.json` is committed, at
+`apps/<app>/android/app/google-services.json`. It is not a secret — it ships
+inside every APK — unlike the service-account key, which must only ever exist in
+Railway's variables. The console hands you one file covering every app you have
+registered, and the Gradle plugin picks the client matching the `applicationId`
+being built, so the same downloaded file can be dropped into both apps. It fails
+the build outright if no client matches, which is how the `hungerbirds`
+misspelling was caught.
+
+> `apps/merchant_app/android/app/google-services.json` is currently **stale**: it
+> was downloaded while that app was still `food.hungerbirds.merchant`. Re-register
+> the merchant app in the Firebase console under `food.hungrybirds.merchant` and
+> replace the file, or its build fails with "No matching client found".
+
+The two apps use different notification channels — `orders` for a stall,
+`deliveries` for a rider — and the backend names the channel per message. They
+are per-app namespaces, so one id would have worked, but then a rider muting
+assignments and a stall muting orders would be the same gesture in Android's
+settings.
+
+**How it behaves.** Both apps register their token on every start, not
 only the first — Firebase rotates a token on reinstall, on app data being
 cleared, and sometimes on its own, and a stall whose token has quietly rotated
 would otherwise just stop getting notifications with nothing to see. A token is
 unique across the whole table rather than per stall, so a phone handed to a
 different stall moves with its new owner instead of buzzing for both.
 
-On the phone: the `orders` notification channel is created in `MainActivity.kt`
-at high importance, because naming a channel in the manifest does not create one
+On the phone: the notification channel is created in each app's
+`MainActivity.kt` at high importance, because naming a channel in the manifest
+does not create one
 and Android would otherwise fall back to a silent low-importance default — a
 phone on the counter staying quiet through a lunch rush, with nothing to explain
 why. Android 13+ also needs the `POST_NOTIFICATIONS` runtime permission, which is

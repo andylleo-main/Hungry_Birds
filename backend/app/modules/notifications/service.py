@@ -79,6 +79,7 @@ async def notify_new_order(order_id, vendor_id, settings: Settings) -> None:
             title=title,
             body=body,
             data=data,
+            channel_id="orders",
             settings=settings,
             db=db,
             model=VendorDevice,
@@ -122,13 +123,14 @@ async def notify_rider_assigned(order_id, rider_id, settings: Settings) -> None:
                 "order_id": str(order.id),
                 "status": order.status.value,
             },
+            channel_id="deliveries",
             settings=settings,
             db=db,
             model=RiderDevice,
         )
 
 
-async def _push(devices, *, title, body, data, settings, db, model) -> None:
+async def _push(devices, *, title, body, data, channel_id, settings, db, model) -> None:
     """Send one message to every device in a list, and prune the dead ones.
 
     Shared by the stall's and the rider's notifications because the delivery
@@ -145,6 +147,7 @@ async def _push(devices, *, title, body, data, settings, db, model) -> None:
                     title=title,
                     body=body,
                     data=data,
+                    channel_id=channel_id,
                     settings=settings,
                     client=client,
                 )

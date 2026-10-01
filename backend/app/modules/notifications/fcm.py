@@ -75,6 +75,7 @@ async def send_to_token(
     title: str,
     body: str,
     data: dict[str, str],
+    channel_id: str,
     settings: Settings,
     client: httpx.AsyncClient,
 ) -> str | None:
@@ -100,7 +101,13 @@ async def send_to_token(
                     # survive Doze rather than being batched until the phone
                     # next wakes up on its own.
                     "priority": "HIGH",
-                    "notification": {"channel_id": "orders", "sound": "default"},
+                    # Named by the caller because the channel is per-app, and
+                    # the two apps mean different things by a notification. The
+                    # id has to match a channel the receiving app actually
+                    # created in its MainActivity - Android silently demotes a
+                    # message naming one that does not exist to a low-importance
+                    # default, which is a silent phone and no error anywhere.
+                    "notification": {"channel_id": channel_id, "sound": "default"},
                 },
             }
         },
