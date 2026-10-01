@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     cloudinary_cloud_name: str = ""
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
-    cloudinary_upload_folder: str = "hunger_birds"
+    cloudinary_upload_folder: str = "hungry_birds"
 
     # --- Firebase Cloud Messaging -------------------------------------------
     # Empty means "not configured", and the notification service then does

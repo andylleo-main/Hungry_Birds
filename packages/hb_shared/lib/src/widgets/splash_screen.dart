@@ -25,7 +25,7 @@ class SplashScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Campus food, delivered to your hunger',
+              'Campus food, delivered',
               style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 14),
             ),
             const SizedBox(height: 32),

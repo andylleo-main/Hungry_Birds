@@ -119,14 +119,19 @@ account even for TestFlight.
 Do this once, on your own machine. The same keystore signs **both** apps.
 
 ```bash
-keytool -genkey -v -keystore ~/hungerbirds-release.jks \
-  -keyalg RSA -keysize 2048 -validity 10000 -alias hungerbirds
+keytool -genkey -v -keystore ~/hungrybirds-release.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 -alias hungrybirds
 ```
 
 Then, in **each** app (`merchant_app` and `rider_app`), copy
 `android/key.properties.example` to `android/key.properties` and fill in the
 password, alias, and absolute path to the `.jks`. Those files are gitignored and
 must stay that way.
+
+If you already made a keystore under the old spelling, do **not** regenerate it —
+put its real alias and filename in `key.properties` and carry on. The alias has
+to match what is inside the `.jks`, and the keystore is the one thing here that
+cannot be recreated (see below).
 
 > **Back up the `.jks` file and its passwords somewhere permanent.** Android
 > identifies an app by its signing key. If you lose the keystore, you cannot
@@ -150,7 +155,7 @@ flutter build apk --release --split-per-abi \
 ```
 
 They are separate apps with separate package ids
-(`food.hungerbirds.merchant`, `food.hungerbirds.rider`), so a merchant who also
+(`food.hungrybirds.merchant`, `food.hungrybirds.rider`), so a merchant who also
 rides can have both installed at once.
 
 Output lands in `build/app/outputs/flutter-apk/`. Hand out
@@ -256,7 +261,7 @@ against `users` fails with *column users.phone does not exist*.
 | `CLOUDINARY_CLOUD_NAME` | optional; photos are disabled until all three are set |
 | `CLOUDINARY_API_KEY` | optional |
 | `CLOUDINARY_API_SECRET` | optional |
-| `CORS_ORIGINS` | your own domain, e.g. `https://hungerbirds.food`. Leave unset for none at all — correct when the backend serves the web app, which it does |
+| `CORS_ORIGINS` | your own domain, e.g. `https://hungrybirds.food`. Leave unset for none at all — correct when the backend serves the web app, which it does |
 
 Everything else defaults safely and only needs setting to change it:
 `ALLOWED_EMAIL_DOMAIN` (`bitmesra.ac.in`), `ENVIRONMENT` (`production`),
@@ -441,7 +446,7 @@ so this is a convenience for a phone sitting locked on a counter - which is why
 the whole feature is built to fail silently rather than loudly.
 
 **Set-up (yours to do).** Create a Firebase project, add an Android app with the
-package name `food.hungerbirds.merchant`, and set two Railway variables:
+package name `food.hungrybirds.merchant`, and set two Railway variables:
 
 | Variable | Where it comes from |
 | --- | --- |
@@ -458,7 +463,7 @@ only ever exist in Railway's variables.
 Riders get one too, when a stall assigns them a delivery. Their app polls every
 twelve seconds, so the notification is not how they find out — it is how they
 find out while the phone is in their pocket. It needs a second Android app in
-the same Firebase project, registered as `food.hungerbirds.rider`, and its own
+the same Firebase project, registered as `food.hungrybirds.rider`, and its own
 `google-services.json` at `apps/rider_app/android/app/google-services.json`.
 
 **How it behaves.** The merchant app registers its token on every start, not

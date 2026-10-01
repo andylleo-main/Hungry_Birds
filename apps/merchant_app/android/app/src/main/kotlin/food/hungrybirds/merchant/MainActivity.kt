@@ -1,4 +1,4 @@
-package food.hungerbirds.merchant
+package food.hungrybirds.merchant
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

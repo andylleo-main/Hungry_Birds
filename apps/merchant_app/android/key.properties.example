@@ -4,5 +4,5 @@
 # storeFile must be an absolute path, or a path relative to android/app/.
 storePassword=your-keystore-password
 keyPassword=your-key-password
-keyAlias=hungerbirds
-storeFile=/absolute/path/to/hungerbirds-release.jks
+keyAlias=hungrybirds
+storeFile=/absolute/path/to/hungrybirds-release.jks

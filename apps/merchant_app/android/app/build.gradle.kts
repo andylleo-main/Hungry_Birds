@@ -22,7 +22,7 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
-    namespace = "food.hungerbirds.merchant"
+    namespace = "food.hungrybirds.merchant"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -32,14 +32,22 @@ android {
     }
 
     defaultConfig {
-        // Reverse of hungerbirds.food, the domain this project owns.
+        // Reverse domain, matching the product's actual spelling.
         //
-        // It was in.ac.bitmesra.hungerbirds.* - the reverse of the institute's
-        // domain - which Gradle rejects outright: "in" is a reserved word and
-        // not a valid Java identifier, so the namespace could never be a legal
-        // package name. The Kotlin DSL took backticks around it, which is why
-        // this survived review, but the build always failed at assembleRelease.
-        applicationId = "food.hungerbirds.merchant"
+        // Two earlier attempts are worth remembering. It was first
+        // in.ac.bitmesra.hungerbirds.* - the reverse of the institute's domain -
+        // which Gradle rejects outright: "in" is a reserved word and not a valid
+        // Java identifier, so the namespace could never be a legal package name.
+        // The Kotlin DSL took backticks around it, which is why that survived
+        // review while the build failed at assembleRelease every time.
+        //
+        // Then it was food.hungerbirds.*, carrying the project's old name. That
+        // built fine but read as a typo next to everything else calling this
+        // Hungry Birds, so it was corrected before anybody outside the team had
+        // installed it. Changing it again would not be free: Android identifies
+        // an app by this string, so a change means existing installs cannot take
+        // an update and have to be uninstalled first.
+        applicationId = "food.hungrybirds.merchant"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

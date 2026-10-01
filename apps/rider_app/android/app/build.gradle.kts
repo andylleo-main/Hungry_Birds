@@ -18,7 +18,7 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
-    namespace = "food.hungerbirds.rider"
+    namespace = "food.hungrybirds.rider"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -28,11 +28,11 @@ android {
     }
 
     defaultConfig {
-        // Reverse of hungerbirds.food, the domain this project owns. Not
+        // Reverse domain, matching the product's actual spelling. Not
         // "rider_app" as flutter create names it: an underscore is legal in a
         // Java package but reads as a scaffolding leftover on the Play Store,
         // and this id can never be changed once an APK ships under it.
-        applicationId = "food.hungerbirds.rider"
+        applicationId = "food.hungrybirds.rider"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
