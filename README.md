@@ -257,8 +257,20 @@ Recipients need to allow "install from unknown sources" when opening the file.
 
 ## Deployment (Railway)
 
-Build, start, migrations and healthcheck all come from `railway.json` at the
-repo root.
+Build, start, migrations and healthcheck are **service settings in the Railway
+dashboard**, listed under "Service settings" below.
+
+> They used to live in a `railway.json` at the repo root. Railway has deprecated
+> Config as Code: new services cannot opt into it at all, and existing ones stop
+> reading it on **2026-12-01**. The file was deleted because a config file that
+> looks authoritative and is silently ignored is worse than none — it cost a long
+> debugging session where the deploy "had" a migration step it was never running,
+> and the database simply had no tables.
+>
+> Its replacement, Infrastructure as Code (`.railway/railway.ts`), is **not read
+> during deploys** either — it is applied by the Railway CLI with
+> `railway config apply`. So nothing in this repo can configure the service on
+> its own; the settings below have to exist on the service.
 
 **One service serves everything.** The Docker build compiles the customer web
 app and the API copies the result into `backend/static`, serving it alongside
@@ -295,9 +307,24 @@ Railway builds the image.
 4. **+ New** → **GitHub Repo** → pick this repo.
 5. On that service: **Settings** → **Root Directory** → leave it **empty**
    (the repo root). The Docker build needs both `backend/` and `apps/web/`, so
-   the context has to be the whole repo. Everything else is read from
-   `railway.json`. *If you previously set this to `backend`, clear it — with
-   it set the build can't see `apps/web` and fails.*
+   the context has to be the whole repo. *If you previously set this to
+   `backend`, clear it — with it set the build can't see `apps/web` and fails.*
+
+   Then set the rest by hand, under **Service settings**:
+
+   | Setting | Value |
+   | --- | --- |
+   | Builder | **Dockerfile** |
+   | Dockerfile Path | `backend/Dockerfile` |
+   | Pre-Deploy Command | `alembic upgrade head` |
+   | Healthcheck Path | `/health/ready` |
+   | Healthcheck Timeout | `120` |
+   | Restart Policy | On failure, 3 retries |
+
+   None of these can be committed to the repo any more — see the note above.
+   Leave the builder on its default and Railway guesses: it will build the API
+   without the web app (so the site 404s), and without the pre-deploy command it
+   starts against a database with no tables.
 
    > **How this failure looks, because it is not obvious.** The build dies in
    > about three seconds, and the step it blames is whatever happened to be
