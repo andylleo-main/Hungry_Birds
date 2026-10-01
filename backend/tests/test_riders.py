@@ -182,3 +182,66 @@ async def test_a_customer_cannot_manage_riders(client, customer):
     user, headers = customer
     r = await client.get("/vendors/me/riders", headers=headers)
     assert r.status_code == 403
+
+
+async def test_a_generated_login_id_collision_retries_instead_of_failing(
+    client, vendor, monkeypatch
+):
+    """Two stalls hiring an Amit must not depend on luck.
+
+    Generated ids carry four random digits, so a collision is rare - which is
+    exactly why this is forced rather than waited for. It surfaced as an
+    intermittent 500: db.rollback() expires every object in the session, so the
+    retry re-read vendor.id off an expired instance, and a synchronous attribute
+    load inside an async session raises MissingGreenlet instead of going to the
+    database.
+    """
+    from app.modules.riders import router as riders_router
+
+    v, headers = vendor
+    taken = f"clash{uuid.uuid4().hex[:6]}"
+    fresh = f"fresh{uuid.uuid4().hex[:6]}"
+
+    first = await client.post(
+        "/vendors/me/riders",
+        headers=headers,
+        json={"display_name": "Amit", "phone": "9876500044", "login_id": taken},
+    )
+    assert first.status_code == 201, first.text
+
+    # First generated id collides, second does not - the retry must carry it.
+    ids = iter([taken, fresh])
+    monkeypatch.setattr(riders_router, "suggest_login_id", lambda _name: next(ids))
+
+    second = await client.post(
+        "/vendors/me/riders",
+        headers=headers,
+        json={"display_name": "Amit", "phone": "9876500055"},
+    )
+    assert second.status_code == 201, second.text
+    assert second.json()["login_id"] == fresh
+    assert second.json()["password"]
+
+
+async def test_giving_up_on_login_ids_is_a_clean_refusal(client, vendor, monkeypatch):
+    """Every attempt colliding is a 503, not an unhandled exception."""
+    from app.modules.riders import router as riders_router
+
+    v, headers = vendor
+    taken = f"clash{uuid.uuid4().hex[:6]}"
+
+    first = await client.post(
+        "/vendors/me/riders",
+        headers=headers,
+        json={"display_name": "Sita", "phone": "9876500066", "login_id": taken},
+    )
+    assert first.status_code == 201, first.text
+
+    monkeypatch.setattr(riders_router, "suggest_login_id", lambda _name: taken)
+    r = await client.post(
+        "/vendors/me/riders",
+        headers=headers,
+        json={"display_name": "Sita", "phone": "9876500077"},
+    )
+    assert r.status_code == 503
+    assert "login id" in r.json()["detail"]

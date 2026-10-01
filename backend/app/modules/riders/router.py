@@ -98,13 +98,22 @@ async def create_rider(
     password = generate_password()
     password_hash = await hash_password_async(password)
 
+    # Read everything off the ORM objects BEFORE the retry loop.
+    #
+    # db.rollback() expires every object in the session, so a second pass that
+    # touched `vendor.id` would make SQLAlchemy reload it - and attribute access
+    # is synchronous, which in an async session raises MissingGreenlet rather
+    # than quietly going to the database. The effect was that a login-id
+    # collision returned 500 instead of doing the retry this loop exists for.
+    vendor_id = vendor.id
+
     # Retry on a collision rather than pre-checking: a SELECT then an INSERT is a
     # race, and the unique index is the real arbiter.
     last_error: IntegrityError | None = None
-    for attempt in range(_LOGIN_ID_ATTEMPTS):
+    for _ in range(_LOGIN_ID_ATTEMPTS):
         login_id = payload.login_id or suggest_login_id(payload.display_name)
         rider = Rider(
-            vendor_id=vendor.id,
+            vendor_id=vendor_id,
             login_id=login_id,
             display_name=payload.display_name,
             phone=phone,
