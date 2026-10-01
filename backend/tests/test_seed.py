@@ -24,20 +24,18 @@ async def test_seeding_creates_no_admin(db):
     from sqlalchemy import func, select
 
     from app.db.models.user import User, UserRole
-    from scripts.seed import seed
+    from app.core.demo_data import seed_demo_stalls
 
     admins = select(func.count()).select_from(User).where(User.role == UserRole.ADMIN)
     before = (await db.execute(admins)).scalar_one()
 
-    await seed()
+    await seed_demo_stalls(db)
 
-    # The seeder commits in its own session, so this one has to re-read rather
-    # than serve the count it already has cached.
     db.expire_all()
     after = (await db.execute(admins)).scalar_one()
 
     assert after == before, (
-        "scripts/seed.py granted the admin role. Demo data must never do that: "
+        "seeding granted the admin role. Demo data must never do that: "
         "admin login is the ordinary OTP flow, so an admin row on an address we "
         "do not control is an admin anybody who receives that mail can claim."
     )
@@ -48,7 +46,7 @@ async def test_seeding_does_create_the_demo_stalls(db):
     from sqlalchemy import select
 
     from app.db.models.vendor import Vendor
-    from scripts.seed import DEMO_STALLS, seed
+    from app.core.demo_data import DEMO_STALLS, seed_demo_stalls
 
     names = {s["stall_name"] for s in DEMO_STALLS}
 
@@ -61,7 +59,7 @@ async def test_seeding_does_create_the_demo_stalls(db):
         ).scalars().all()
     )
 
-    await seed()
+    await seed_demo_stalls(db)
 
     db.expire_all()
     found = (
@@ -84,10 +82,10 @@ async def test_seeding_twice_does_not_duplicate(db):
     from sqlalchemy import func, select
 
     from app.db.models.vendor import Vendor
-    from scripts.seed import DEMO_STALLS, seed
+    from app.core.demo_data import DEMO_STALLS, seed_demo_stalls
 
-    await seed()
-    await seed()
+    await seed_demo_stalls(db)
+    await seed_demo_stalls(db)
 
     db.expire_all()
     name = DEMO_STALLS[0]["stall_name"]

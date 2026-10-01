@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # themselves admin regardless).
     bootstrap_admin_email: str = ""
 
+    # Creates the demo stalls at startup if they are missing. A Railway service
+    # has no shell and its pre-deploy command is exec'd without one, so
+    # scripts/seed.py cannot be run against a deployment - this is the way in.
+    # Idempotent, so leaving it set only costs one query per boot, but it is still
+    # worth unsetting once the real stalls are on.
+    seed_demo_data: bool = False
+
     # Lets an admin sign in with a password instead of waiting on an OTP email,
     # which matters because the admin is the account you need when email itself
     # is the thing that is broken. Empty disables the endpoint entirely, so the

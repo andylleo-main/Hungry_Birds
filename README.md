@@ -333,20 +333,18 @@ Railway builds the image.
    > setting that plainly will not take: you change the pre-deploy command, hit
    > Redeploy, and watch the previous command run again. Push a commit instead.
 
-6. **Seed the demo stalls** (optional, once). There is no shell on a Railway
-   service, so the way in is the pre-deploy command: set it to
+6. **Seed the demo stalls** (optional, once). Set `SEED_DEMO_DATA=true`, let it
+   deploy, check the logs for `SEED_DEMO_DATA: created demo stalls`, then unset it.
+   Three approved, open stalls with menus, and no admin — use
+   `BOOTSTRAP_ADMIN_EMAIL` for that.
 
-   ```
-   alembic upgrade head && PYTHONPATH=. python scripts/seed.py
-   ```
-
-   push a commit, watch the deploy logs for `seeded Momo Point`, then **put the
-   pre-deploy command back to `alembic upgrade head`**. The seeder skips stalls
-   that already exist, so leaving it would be harmless — but a production deploy
-   step whose job is inserting fake data is a trap for whoever reads it next.
-
-   It creates three approved, open stalls with menus and no admin. For an admin,
-   use `BOOTSTRAP_ADMIN_EMAIL`.
+   > It is a startup flag and not `scripts/seed.py` because **there is no way to
+   > run a script against a Railway service.** There is no shell, the database is
+   > not reachable from outside, and the pre-deploy command is exec'd *without* a
+   > shell — so `alembic upgrade head && python scripts/seed.py` runs only the
+   > alembic half, prints nothing about the rest, and goes green. That failure
+   > looks exactly like success, which is why the mechanism changed rather than
+   > the command. `scripts/seed.py` is for a local database.
 
    > **How this failure looks, because it is not obvious.** The build dies in
    > about three seconds, and the step it blames is whatever happened to be
