@@ -1,6 +1,9 @@
 import 'fulfilment.dart';
 
 enum OrderStatus {
+  /// Created but not paid for. No stall ever sees an order in this state, so it
+  /// appears in the customer's own views only.
+  awaitingPayment,
   placed,
   accepted,
   preparing,
@@ -27,6 +30,7 @@ enum OrderStatus {
   /// "outForDelivery" and rejected - and read back as [unknown], which would
   /// look like a server problem rather than a client one.
   String get wire => switch (this) {
+        OrderStatus.awaitingPayment => 'awaiting_payment',
         OrderStatus.placed => 'placed',
         OrderStatus.accepted => 'accepted',
         OrderStatus.preparing => 'preparing',
@@ -44,6 +48,7 @@ enum OrderStatus {
       );
 
   String get label => switch (this) {
+        OrderStatus.awaitingPayment => 'Payment pending',
         OrderStatus.placed => 'Order placed',
         OrderStatus.accepted => 'Accepted',
         OrderStatus.preparing => 'Preparing',
@@ -56,6 +61,7 @@ enum OrderStatus {
       };
 
   bool get isActive =>
+      this == OrderStatus.awaitingPayment ||
       this == OrderStatus.placed ||
       this == OrderStatus.accepted ||
       this == OrderStatus.preparing ||

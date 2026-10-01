@@ -6,6 +6,7 @@ import { EmptyState, Icon, QuantityStepper, Spinner } from '../components/ui';
 import { useAuth } from '../state/AuthContext';
 import { useCart } from '../state/CartContext';
 import type { DeliveryLocation, FulfilmentType } from '../lib/types';
+import { load as loadCashfree } from '@cashfreepayments/cashfree-js';
 
 function Step({
   index,
@@ -147,10 +148,31 @@ export default function Checkout() {
         delivery_location: fulfilment === 'delivery' ? location : undefined,
       });
 
+      // The order exists but no stall has seen it yet - it is invisible until
+      // the payment webhook lands. So the cart is cleared only now, and the
+      // tracking page is where an unfinished payment can be picked back up.
+      const session = await api.paymentSession(order.id);
       clear();
+
+      const cashfree = await loadCashfree({ mode: session.mode as 'sandbox' | 'production' });
+      // Takes only the session id. No amount is passed, because the SDK does not
+      // accept one - which is what makes the figure impossible to tamper with
+      // from the browser.
+      await cashfree.checkout({
+        paymentSessionId: session.payment_session_id,
+        redirectTarget: '_modal',
+      });
+
+      // The modal has closed. That tells us nothing reliable about whether the
+      // payment succeeded - only Cashfree's webhook does - so this just sends
+      // them somewhere that shows the live answer.
       navigate(`/orders/${order.id}`, { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not place the order. Try again.');
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : 'Could not start the payment. Nothing was charged - please try again.',
+      );
       setPlacing(false);
     }
   }
@@ -298,20 +320,17 @@ export default function Checkout() {
             aside={
               <span className="badge">
                 <Icon name="lock" className="text-[12px]" />
-                COD only
+                Secured by Cashfree
               </span>
             }
           >
             <div className="flex items-center gap-space-md rounded-lg border-[1.5px] border-primary bg-primary-tint/40 p-space-md">
-              <Icon name="payments" className="text-[24px] text-primary" />
+              <Icon name="credit_card" className="text-[24px] text-primary" />
               <div className="flex-1">
-                <p className="text-label-lg text-on-surface">
-                  {fulfilment === 'delivery' ? 'Cash on delivery' : 'Cash on pickup'}
-                </p>
+                <p className="text-label-lg text-on-surface">Pay online to confirm</p>
                 <p className="text-body-sm text-on-surface-variant">
-                  {fulfilment === 'delivery'
-                    ? 'Pay in cash when your order reaches you. No online payment.'
-                    : 'Pay the stall directly when you collect. No online payment.'}
+                  UPI, cards or net banking. The stall only sees your order once the
+                  payment goes through, so nothing is cooked until you've paid.
                 </p>
               </div>
               <Icon name="check_circle" className="text-[22px] text-primary" />
@@ -361,7 +380,7 @@ export default function Checkout() {
           <div className="flex items-end justify-between border-t border-outline-variant pt-space-sm">
             <div>
               <p className="text-headline-sm text-on-surface">Total due</p>
-              <p className="text-label-md text-on-surface-variant">Payable at the counter</p>
+              <p className="text-label-md text-on-surface-variant">Paid now, online</p>
             </div>
             <span className="text-headline-lg text-primary">{rupees(subtotal)}</span>
           </div>
@@ -377,14 +396,14 @@ export default function Checkout() {
               <Spinner />
             ) : (
               <>
-                Place order ({rupees(subtotal)})
+                Pay {rupees(subtotal)}
                 <Icon name="arrow_forward" className="text-[18px]" />
               </>
             )}
           </button>
 
           <p className="text-center text-label-md text-on-surface-variant">
-            The stall can still decline if they've run out.
+            If the stall has run out and declines, you're refunded automatically.
           </p>
         </aside>
       </div>

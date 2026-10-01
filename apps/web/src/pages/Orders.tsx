@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import type { Order } from '../lib/types';
-import { STATUS_LABEL, isActive } from '../lib/types';
+import { PAYMENT_LABEL, STATUS_LABEL, isActive } from '../lib/types';
 import { dayAndTime, rupees } from '../lib/format';
 import { EmptyState, ErrorRetry, Icon, PageLoader } from '../components/ui';
 
@@ -40,7 +40,13 @@ function OrderRow({ order }: { order: Order }) {
 
       <div className="shrink-0 text-right">
         <p className="text-label-lg text-on-surface">{rupees(order.total_amount)}</p>
-        <p className="text-label-md text-on-surface-variant">Cash</p>
+        <p
+          className={`text-label-md ${
+            order.payment_status === 'paid' ? 'text-success' : 'text-on-surface-variant'
+          }`}
+        >
+          {PAYMENT_LABEL[order.payment_status]}
+        </p>
       </div>
       <Icon name="chevron_right" className="text-[20px] text-on-surface-variant" />
     </Link>

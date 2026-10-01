@@ -228,11 +228,12 @@ class _StallTabState extends State<StallTab> {
               padding: EdgeInsets.all(16),
               child: Row(
                 children: [
-                  Icon(Icons.payments_outlined, color: AppTheme.textSecondary),
+                  Icon(Icons.lock_outline, color: AppTheme.textSecondary),
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'All orders are cash on delivery. Collect payment when the student picks up.',
+                      'Students pay online before you see the order, so there is no cash to collect. '
+                      'Rejecting an order refunds it automatically.',
                       style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
                     ),
                   ),

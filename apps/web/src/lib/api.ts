@@ -3,6 +3,7 @@ import type {
   FulfilmentType,
   Order,
   OrderStatus,
+  PaymentSession,
   Vendor,
   VendorDetail,
 } from './types';
@@ -249,6 +250,16 @@ export const api = {
     /** Required for a delivery, must be absent for a dine-in. */
     delivery_location?: string;
   }) => request<Order>('POST', '/orders', { body: payload }),
+
+  /**
+   * Opens Cashfree checkout for an order the caller owns.
+   *
+   * Returns only a session id and the environment to open it against - no
+   * amount, because the SDK does not take one and there is therefore nothing
+   * client-side for anybody to tamper with.
+   */
+  paymentSession: (orderId: string) =>
+    request<PaymentSession>('POST', `/orders/${orderId}/payment-session`),
 
   myOrders: () => request<Order[]>('GET', '/orders'),
   order: (id: string) => request<Order>('GET', `/orders/${id}`),

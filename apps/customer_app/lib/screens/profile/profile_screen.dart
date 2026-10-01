@@ -90,7 +90,8 @@ class ProfileScreen extends StatelessWidget {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'All orders are cash on delivery. Pay the stall when you pick up.',
+                      'Orders are paid online before the stall sees them. If a stall cannot '
+                      'make your order, you are refunded automatically.',
                       style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
                     ),
                   ),

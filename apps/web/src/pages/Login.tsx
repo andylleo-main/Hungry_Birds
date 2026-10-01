@@ -129,7 +129,7 @@ export default function Login() {
           {[
             ['school', 'Only @bitmesra.ac.in accounts'],
             ['bolt', 'Live order updates from the stall'],
-            ['payments', 'Cash when you pick up'],
+            ['lock', 'Pay online, refunded if declined'],
           ].map(([icon, label]) => (
             <li key={label} className="flex items-center gap-space-sm">
               <Icon name={icon} className="text-[20px]" />

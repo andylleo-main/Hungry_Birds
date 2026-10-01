@@ -161,8 +161,8 @@ function CartRail({ vendor }: { vendor: VendorDetail }) {
           </button>
 
           <p className="flex items-center justify-center gap-space-xs text-label-md text-on-surface-variant">
-            <Icon name="payments" className="text-[16px] text-primary" />
-            Pay cash when you collect
+            <Icon name="lock" className="text-[16px] text-primary" />
+            Pay online to confirm
           </p>
         </>
       )}
@@ -273,8 +273,14 @@ export default function Stall() {
           carrying what's actually true for campus pickup. */}
       <div className="mb-space-lg grid grid-cols-3 divide-x divide-outline-variant overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest">
         {[
-          ['storefront', 'Collect at', 'The stall'],
-          ['payments', 'Payment', 'Cash on pickup'],
+          [
+            'storefront',
+            'Serves',
+            [vendor.dine_in_enabled && 'Dine in', vendor.delivery_enabled && 'Delivery']
+              .filter(Boolean)
+              .join(' · ') || 'Not taking orders',
+          ],
+          ['credit_card', 'Payment', 'Online'],
           ['restaurant_menu', 'On the menu', `${itemCount} items`],
         ].map(([icon, label, value]) => (
           <div key={label} className="flex flex-col items-center gap-space-xs px-space-sm py-space-md">

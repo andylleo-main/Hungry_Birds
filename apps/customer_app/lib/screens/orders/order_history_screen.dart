@@ -136,6 +136,7 @@ class _StatusChip extends StatelessWidget {
       OrderStatus.completed || OrderStatus.ready || OrderStatus.accepted => AppTheme.success,
       OrderStatus.outForDelivery => AppTheme.success,
       OrderStatus.placed || OrderStatus.preparing => AppTheme.warning,
+      OrderStatus.awaitingPayment => AppTheme.warning,
       OrderStatus.rejected => AppTheme.primaryRed,
       OrderStatus.cancelled => AppTheme.textSecondary,
       OrderStatus.unknown => AppTheme.textSecondary,

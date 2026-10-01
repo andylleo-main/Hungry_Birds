@@ -20,8 +20,8 @@ export default function Footer() {
           <ul className="flex flex-col gap-space-xs text-body-sm text-on-surface-variant">
             <li>1. Sign in with your institute email</li>
             <li>2. Pick a stall and add what you want</li>
-            <li>3. Track it live until it's ready</li>
-            <li>4. Collect and pay cash at the counter</li>
+            <li>3. Pay online to confirm it</li>
+            <li>4. Track it live, then eat in or have it delivered</li>
           </ul>
         </div>
 
@@ -46,8 +46,8 @@ export default function Footer() {
         <div className="mx-auto flex max-w-content flex-col gap-space-xs px-margin-mobile py-space-md text-body-sm text-on-surface-variant md:flex-row md:items-center md:justify-between md:px-margin">
           <span>© {new Date().getFullYear()} Hungry Birds · BIT Mesra</span>
           <span className="flex items-center gap-space-xs">
-            <Icon name="payments" className="text-[18px] text-primary" />
-            Cash on pickup only
+            <Icon name="lock" className="text-[18px] text-primary" />
+            Payments secured by Cashfree
           </span>
         </div>
       </div>

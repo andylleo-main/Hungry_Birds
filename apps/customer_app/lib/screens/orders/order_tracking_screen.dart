@@ -228,6 +228,11 @@ class _StatusBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (color, icon, message) = switch (status) {
+      OrderStatus.awaitingPayment => (
+          AppTheme.warning,
+          Icons.credit_card,
+          'Waiting for your payment',
+        ),
       OrderStatus.placed => (
           AppTheme.warning,
           Icons.hourglass_top,

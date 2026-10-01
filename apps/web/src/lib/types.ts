@@ -56,6 +56,34 @@ export interface VendorDetail extends Vendor {
 
 export type FulfilmentType = 'dine_in' | 'delivery';
 
+/** Where the money is, which is a separate question from where the food is. */
+export type PaymentStatus =
+  | 'pending'
+  | 'paid'
+  | 'failed'
+  | 'expired'
+  | 'refund_pending'
+  | 'refunded'
+  | 'refund_failed';
+
+export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
+  pending: 'Not paid yet',
+  paid: 'Paid',
+  failed: 'Payment failed',
+  expired: 'Payment window closed',
+  refund_pending: 'Refund on its way',
+  refunded: 'Refunded',
+  refund_failed: 'Refund needs attention',
+};
+
+/** What the browser needs to open Cashfree's sheet. Deliberately no amount. */
+export interface PaymentSession {
+  payment_session_id: string;
+  cf_order_id: string;
+  mode: string;
+  order_id: string;
+}
+
 export const FULFILMENT_LABEL: Record<FulfilmentType, string> = {
   dine_in: 'Dine in',
   delivery: 'Delivery',
@@ -63,6 +91,7 @@ export const FULFILMENT_LABEL: Record<FulfilmentType, string> = {
 
 /** Mirrors the backend's OrderStatus enum. */
 export type OrderStatus =
+  | 'awaiting_payment'
   | 'placed'
   | 'accepted'
   | 'preparing'
@@ -86,6 +115,7 @@ export interface Order {
   customer_id: string;
   status: OrderStatus;
   payment_method: string;
+  payment_status: PaymentStatus;
   total_amount: string;
   note: string | null;
   created_at: string;
@@ -108,7 +138,15 @@ export interface Order {
   self_delivery: boolean;
 }
 
+/**
+ * Statuses that mean "this is still happening".
+ *
+ * `awaiting_payment` counts, because the customer needs to find it to finish
+ * paying - filing it under past orders would hide the one thing they still have
+ * to do.
+ */
 export const ACTIVE_STATUSES: OrderStatus[] = [
+  'awaiting_payment',
   'placed',
   'accepted',
   'preparing',
@@ -121,6 +159,7 @@ export function isActive(status: OrderStatus): boolean {
 }
 
 export const STATUS_LABEL: Record<OrderStatus, string> = {
+  awaiting_payment: 'Payment pending',
   placed: 'Order placed',
   accepted: 'Accepted',
   preparing: 'Preparing',

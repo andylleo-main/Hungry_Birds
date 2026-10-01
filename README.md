@@ -459,6 +459,68 @@ a 500 for everybody, which is the worst thing to lose at exactly the moment emai
 is already broken. It now runs in a worker thread, after the response, with its
 failures logged rather than raised.
 
+## Payments
+
+Every order is paid online before a stall ever sees it. There is no cash.
+
+**Set-up (yours to do).** From the Cashfree dashboard, set:
+
+| Variable | Notes |
+| --- | --- |
+| `CASHFREE_APP_ID` | Dashboard → Developers → API keys |
+| `CASHFREE_SECRET_KEY` | The same key signs webhooks, so it is backend-only — never in the web bundle |
+| `CASHFREE_ENV` | `sandbox` to test, `production` once Cashfree has passed your KYC |
+| `PUBLIC_BASE_URL` | This deployment's public address, used to build the webhook and return URLs |
+
+Then add the webhook in Cashfree's dashboard, pointing at
+`<PUBLIC_BASE_URL>/api/payments/cashfree/webhook`. Leave the keys blank and
+payments are simply off: checkout answers 503 and the webhook 404s.
+
+**The flow.** The customer places the order, which is created as
+`awaiting_payment` and is invisible to the stall. The browser is handed a payment
+session id — and nothing else, no amount, because the Cashfree SDK does not take
+one and so there is nothing client-side to tamper with. Cashfree's webhook is
+what moves the order to `placed`, and that is the moment the stall sees it, hears
+about it, and can start cooking.
+
+Money state is its own field, `payment_status`, separate from the order's status.
+They are genuinely independent: paid-and-cooking, paid-and-rejected and
+paid-and-refunded all exist.
+
+**Refunds are automatic.** A stall rejecting an order, or a customer cancelling
+before it is accepted, refunds in full. The state change commits inside the
+request and the call to Cashfree happens after the response, so a gateway outage
+can never leave a stall unable to refuse an order it cannot make. The refund id is
+derived from the order id and reused on every attempt, because Cashfree treats it
+as an idempotency key — a fresh id per retry is exactly how somebody gets refunded
+twice.
+
+**The webhook is the part worth reading twice.** It is unauthenticated by
+necessity, so everything it may change is gated four ways: an HMAC-SHA256
+signature over the timestamp and the raw bytes, a five-minute staleness window, an
+amount checked against what we told Cashfree to collect, and a transition the
+state table allows. Replays are caught by a unique row in `payment_events`
+written in the same transaction as the change it authorises — so a rollback
+releases the guard too, rather than swallowing Cashfree's retry with the money
+unbooked.
+
+Anything durably recorded answers 200, including events we decline to act on. A
+non-2xx tells Cashfree to retry, and a retry cannot fix a wrong amount.
+
+**Abandoned checkouts.** Cashfree's own order expiry (15 minutes) closes the
+payment window. A sweep then writes those orders off locally, running
+opportunistically on the reads that would otherwise display them, since this
+project has no scheduler. The local window is deliberately longer than the
+gateway's, so an order Cashfree would still accept money for is never cancelled
+underneath it.
+
+**Accepted risk, stated plainly.** An item can sell out between an order being
+created and the payment landing. The order is priced from a snapshot taken at
+creation, so the figure never changes — and if the stall cannot make it, they
+reject and the customer is refunded. Re-validating at webhook time would mean a
+webhook that can fail for a business reason, which is the one thing a webhook
+must not be.
+
 ## Admin sign-in without an OTP
 
 Admins can sign in with a password instead of waiting for a code. That matters

@@ -214,9 +214,10 @@ export default function Profile() {
       </form>
 
       <div className="card mt-space-md flex items-center gap-space-md p-space-md">
-        <Icon name="payments" className="text-[24px] text-primary" />
+        <Icon name="lock" className="text-[24px] text-primary" />
         <p className="text-body-sm text-on-surface-variant">
-          Every order is cash on pickup. Nothing is charged online, ever.
+          Orders are paid online through Cashfree. We never see or store your card
+          details, and a stall that declines your order refunds it automatically.
         </p>
       </div>
 

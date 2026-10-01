@@ -229,7 +229,9 @@ class _OrderCardState extends State<_OrderCard> {
               children: [
                 Expanded(
                   child: Text(
-                    'Collect ₹${order.totalAmount.toStringAsFixed(0)} in cash',
+                    // Already paid online before this order reached the queue -
+                    // a stall asking for cash as well would be charging twice.
+                    '₹${order.totalAmount.toStringAsFixed(0)} paid online',
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -498,6 +500,10 @@ class _StatusChip extends StatelessWidget {
       OrderStatus.completed || OrderStatus.ready || OrderStatus.accepted => AppTheme.success,
       OrderStatus.outForDelivery => AppTheme.success,
       OrderStatus.placed || OrderStatus.preparing => AppTheme.warning,
+      // Never reaches a stall's queue - an unpaid order is filtered out server
+      // side - but the enum is matched exhaustively on purpose, so the next
+      // status added shows up here as a compile error rather than at runtime.
+      OrderStatus.awaitingPayment => AppTheme.textSecondary,
       OrderStatus.rejected => AppTheme.primaryRed,
       OrderStatus.cancelled => AppTheme.textSecondary,
       // A status from a newer server. Left deliberately exhaustive rather than

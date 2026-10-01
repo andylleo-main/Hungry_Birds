@@ -63,8 +63,8 @@ export default function Discover() {
           </h1>
 
           <p className="max-w-xl text-body-md text-on-surface-variant md:text-body-lg">
-            Campus stalls start cooking the moment they accept. You'll see it go from accepted to
-            ready, then collect and pay at the counter.
+            Pay online and the stall starts cooking the moment they accept. You'll see it go
+            from accepted to ready, then eat in or have it brought to you.
           </p>
 
           <div className="mt-space-xs flex max-w-xl items-center gap-space-xs rounded-full bg-surface-container p-space-xs">

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, orderSocketUrl } from '../lib/api';
+import { load as loadCashfree } from '@cashfreepayments/cashfree-js';
+import { ApiError, api, orderSocketUrl } from '../lib/api';
 import type { FulfilmentType, Order, OrderStatus } from '../lib/types';
-import { STATUS_LABEL, isActive } from '../lib/types';
+import { PAYMENT_LABEL, STATUS_LABEL, isActive } from '../lib/types';
 import { dayAndTime, rupees, timeOfDay } from '../lib/format';
-import { ErrorRetry, Icon, PageLoader } from '../components/ui';
+import { ErrorRetry, Icon, PageLoader, Spinner } from '../components/ui';
 
 type Step = { status: OrderStatus; icon: string; blurb: string };
 
@@ -17,6 +18,7 @@ type Step = { status: OrderStatus; icon: string; blurb: string };
  */
 function timelineFor(fulfilment: FulfilmentType): Step[] {
   const start: Step[] = [
+    { status: 'awaiting_payment', icon: 'credit_card', blurb: 'Waiting for your payment' },
     { status: 'placed', icon: 'receipt_long', blurb: 'Sent to the stall' },
     { status: 'accepted', icon: 'check_circle', blurb: 'The stall confirmed your order' },
     { status: 'preparing', icon: 'skillet', blurb: 'Being cooked right now' },
@@ -41,6 +43,8 @@ export default function OrderTracking() {
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
   async function load() {
@@ -49,6 +53,37 @@ export default function OrderTracking() {
       setOrder(await api.order(orderId));
     } catch {
       setError("Couldn't load this order.");
+    }
+  }
+
+  /**
+   * Re-open Cashfree for an order whose payment was never finished.
+   *
+   * The same Cashfree order is reused rather than a new one being created, so a
+   * customer who closed the sheet, lost signal or came back tomorrow cannot end
+   * up with two payments against one plate of food.
+   */
+  async function resumePayment() {
+    setPaying(true);
+    setPayError(null);
+    try {
+      const session = await api.paymentSession(orderId);
+      const cashfree = await loadCashfree({ mode: session.mode as 'sandbox' | 'production' });
+      await cashfree.checkout({
+        paymentSessionId: session.payment_session_id,
+        redirectTarget: '_modal',
+      });
+      // The modal closing says nothing trustworthy about the outcome - only the
+      // webhook does - so re-read rather than assume.
+      await load();
+    } catch (err) {
+      setPayError(
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't reopen the payment. Nothing was charged.",
+      );
+    } finally {
+      setPaying(false);
     }
   }
 
@@ -142,6 +177,37 @@ export default function OrderTracking() {
         <Icon name="arrow_back" className="text-[18px]" />
         All orders
       </Link>
+
+      {order.status === 'awaiting_payment' && (
+        <div className="card mb-space-lg flex flex-wrap items-center gap-space-md border-[1.5px] border-primary bg-primary-tint/40 p-space-md">
+          <Icon name="credit_card" className="text-[26px] text-primary" />
+          <div className="min-w-0 flex-1">
+            <p className="text-label-lg text-on-surface">This order isn't paid for yet</p>
+            <p className="text-body-sm text-on-surface-variant">
+              The stall hasn't seen it and won't start cooking until the payment goes
+              through. Nothing has been charged so far.
+            </p>
+            {payError && (
+              <p className="mt-space-xs text-body-sm text-primary">{payError}</p>
+            )}
+          </div>
+          <button
+            type="button"
+            className="btn-primary shrink-0"
+            disabled={paying}
+            onClick={resumePayment}
+          >
+            {paying ? <Spinner /> : <>Finish paying {rupees(order.total_amount)}</>}
+          </button>
+        </div>
+      )}
+
+      {order.payment_status === 'refund_pending' && (
+        <p className="card mb-space-lg p-space-md text-body-sm text-on-surface-variant">
+          Your refund is on its way back to the account you paid from. Banks usually
+          take a few working days.
+        </p>
+      )}
 
       {/* Header strip */}
       <div className="card mb-space-lg flex flex-wrap items-center justify-between gap-space-md p-space-md">
@@ -340,7 +406,7 @@ export default function OrderTracking() {
             <div>
               <p className="text-headline-sm text-on-surface">Total</p>
               <p className="text-label-md text-on-surface-variant">
-                {order.fulfilment_type === 'delivery' ? 'Cash on delivery' : 'Cash at the counter'}
+                {PAYMENT_LABEL[order.payment_status]}
               </p>
             </div>
             <span className="text-headline-md text-primary">{rupees(order.total_amount)}</span>

@@ -49,8 +49,8 @@ export default function StallCard({ vendor }: { vendor: Vendor }) {
             Pickup
           </span>
           <span className="flex items-center gap-space-xs">
-            <Icon name="payments" className="text-[16px] text-primary" />
-            Cash
+            <Icon name="credit_card" className="text-[16px] text-primary" />
+            Pay online
           </span>
         </div>
       </div>
