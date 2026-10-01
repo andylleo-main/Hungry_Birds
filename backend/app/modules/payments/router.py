@@ -21,7 +21,7 @@ from app.db.models.vendor import Vendor
 from app.db.session import get_db
 from app.modules.notifications.service import notify_new_order
 from app.modules.orders.service import load_order, publish_order_event
-from app.modules.payments import cashfree, service
+from app.modules.payments import cashfree, mock, service
 from app.modules.payments.schemas import PaymentSessionOut, WebhookAck
 
 logger = logging.getLogger(__name__)
@@ -90,9 +90,87 @@ async def create_payment_session(
     return PaymentSessionOut(
         payment_session_id=payment.payment_session_id,
         cf_order_id=payment.cf_order_id,
-        mode=settings.cashfree_env,
+        # "mock" is how the browser knows to skip the Cashfree SDK and call the
+        # confirm route below instead. It doubles as the flag the checkout page
+        # shows a banner for, so a tester is never left guessing whether a
+        # payment was real.
+        mode="mock" if settings.payments_mock else settings.cashfree_env,
         order_id=order.id,
     )
+
+
+@order_payments_router.post(
+    "/{order_id}/mock-payment",
+    response_model=WebhookAck,
+    dependencies=[Depends(limit_by_user("payment_session", *limits.PAYMENT_SESSION))],
+)
+async def confirm_mock_payment(
+    order_id: uuid.UUID,
+    background: BackgroundTasks,
+    user: User = Depends(require_role(UserRole.CUSTOMER)),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
+) -> WebhookAck:
+    """Stand in for the customer paying, when PAYMENTS_MODE=mock.
+
+    Exists so the whole flow after a payment can be walked through without
+    gateway credentials. It does not short-circuit anything: it builds the
+    payload Cashfree would have posted, runs it through the same
+    apply_payment_success - amount check included - and the same side effects the
+    webhook triggers.
+
+    Unlike that webhook this route is authenticated and ownership-checked, which
+    is the strongest thing available here. A route that marks an order paid for
+    free cannot be made safe by its own checks, so what keeps it harmless is that
+    it 404s unless somebody has deliberately set PAYMENTS_MODE=mock.
+    """
+    if not settings.payments_mock:
+        # Not a 403: in real-payment mode this endpoint should not appear to
+        # exist at all. Advertising a disabled "mark as paid" route is an
+        # invitation to go looking for a way to turn it on.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+
+    order = await load_order(order_id, db)
+    if order is None or order.customer_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+
+    result = await db.execute(
+        select(Payment).where(Payment.order_id == order_id).with_for_update()
+    )
+    payment = result.scalar_one_or_none()
+    if payment is None:
+        # No payment-session call came first, so there is nothing to confirm.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This order has no payment to confirm")
+
+    body = mock.success_payload(cf_order_id=payment.cf_order_id, amount=payment.amount)
+    event_id = service.event_id_for(body, "", b"")
+
+    # The same ledger the real webhook writes, for the same reason - and it is
+    # what makes an order that was never really paid for identifiable later,
+    # however long after the fact.
+    event = PaymentEvent(
+        event_id=event_id,
+        event_type=mock.EVENT_TYPE,
+        raw=_jsonable(body),
+        received_at=datetime.now(timezone.utc),
+        payment_id=payment.id,
+    )
+    db.add(event)
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        return WebhookAck(status="duplicate")
+
+    outcome = await service.apply_payment_success(order, payment, body, db)
+    event.outcome = outcome
+    await db.commit()
+
+    if outcome == "applied":
+        await _after_payment_success(order_id, db, redis, background, settings)
+
+    return WebhookAck(status=outcome)
 
 
 @router.post(
@@ -126,9 +204,13 @@ async def cashfree_webhook(
     returning 500 for a business disagreement produces a retry storm that cannot
     possibly succeed.
     """
-    if not settings.payments_enabled:
-        # Nothing can be verified, so behave as though the route does not exist
-        # rather than advertising an endpoint that accepts unchecked payloads.
+    if not settings.cashfree_configured:
+        # Gated on the Cashfree credentials specifically, NOT on payments being
+        # enabled. The secret key is the HMAC key signatures are verified
+        # against, and in mock mode payments are enabled while that key is empty
+        # - so gating this on payments_enabled would open an unauthenticated
+        # route that checks every forged signature against an empty key and
+        # marks orders paid. Behave as though the route does not exist.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
 
     raw = await request.body()
@@ -197,27 +279,44 @@ async def cashfree_webhook(
     await db.commit()
 
     if outcome == "applied" and event_type.startswith("PAYMENT_SUCCESS"):
-        order = await load_order(order_id, db)
-        await publish_order_event(redis, order)
-
-        if order.status == OrderStatus.PLACED:
-            # The moment the stall first learns of it.
-            background.add_task(
-                fire_and_log,
-                "notify_new_order",
-                lambda: notify_new_order(order.id, order.vendor_id, settings),
-            )
-        elif order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED):
-            # Money arriving for an order we already gave up on. A designed path,
-            # not an error: the sheet was open when the sweep ran. Give it back.
-            await service.start_refund(order.id, "order already closed", db)
-            background.add_task(
-                fire_and_log,
-                "refund_late_payment",
-                lambda: service.attempt_refund(order.id, "order already closed", settings),
-            )
+        await _after_payment_success(order_id, db, redis, background, settings)
 
     return WebhookAck(status=outcome)
+
+
+async def _after_payment_success(
+    order_id: uuid.UUID,
+    db: AsyncSession,
+    redis: Redis,
+    background: BackgroundTasks,
+    settings: Settings,
+) -> None:
+    """Everything that happens once an order is actually paid for.
+
+    Shared by the Cashfree webhook and the mock confirmation, so the two cannot
+    drift. That matters more than the duplication it saves: the whole reason mock
+    mode exists is to exercise this path, and a mock that ran its own cut-down
+    version of it would test nothing worth testing.
+    """
+    order = await load_order(order_id, db)
+    await publish_order_event(redis, order)
+
+    if order.status == OrderStatus.PLACED:
+        # The moment the stall first learns of it.
+        background.add_task(
+            fire_and_log,
+            "notify_new_order",
+            lambda: notify_new_order(order.id, order.vendor_id, settings),
+        )
+    elif order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED):
+        # Money arriving for an order we already gave up on. A designed path,
+        # not an error: the sheet was open when the sweep ran. Give it back.
+        await service.start_refund(order.id, "order already closed", db)
+        background.add_task(
+            fire_and_log,
+            "refund_late_payment",
+            lambda: service.attempt_refund(order.id, "order already closed", settings),
+        )
 
 
 def _jsonable(value):

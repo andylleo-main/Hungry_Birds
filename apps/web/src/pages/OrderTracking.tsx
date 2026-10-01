@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { load as loadCashfree } from '@cashfreepayments/cashfree-js';
 import { ApiError, api, orderSocketUrl } from '../lib/api';
 import type { FulfilmentType, Order, OrderStatus } from '../lib/types';
-import { PAYMENT_LABEL, STATUS_LABEL, isActive } from '../lib/types';
+import { PAYMENT_LABEL, STATUS_LABEL, isActive, isMockPayment } from '../lib/types';
 import { dayAndTime, rupees, timeOfDay } from '../lib/format';
 import { ErrorRetry, Icon, PageLoader, Spinner } from '../components/ui';
 
@@ -68,11 +68,15 @@ export default function OrderTracking() {
     setPayError(null);
     try {
       const session = await api.paymentSession(orderId);
-      const cashfree = await loadCashfree({ mode: session.mode as 'sandbox' | 'production' });
-      await cashfree.checkout({
-        paymentSessionId: session.payment_session_id,
-        redirectTarget: '_modal',
-      });
+      if (isMockPayment(session)) {
+        await api.confirmMockPayment(orderId);
+      } else {
+        const cashfree = await loadCashfree({ mode: session.mode as 'sandbox' | 'production' });
+        await cashfree.checkout({
+          paymentSessionId: session.payment_session_id,
+          redirectTarget: '_modal',
+        });
+      }
       // The modal closing says nothing trustworthy about the outcome - only the
       // webhook does - so re-read rather than assume.
       await load();

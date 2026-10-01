@@ -5,6 +5,7 @@ import { rupees, validateIndianMobile } from '../lib/format';
 import { EmptyState, Icon, QuantityStepper, Spinner } from '../components/ui';
 import { useAuth } from '../state/AuthContext';
 import { useCart } from '../state/CartContext';
+import { isMockPayment } from '../lib/types';
 import type { DeliveryLocation, FulfilmentType } from '../lib/types';
 import { load as loadCashfree } from '@cashfreepayments/cashfree-js';
 
@@ -56,6 +57,28 @@ export default function Checkout() {
   const [location, setLocation] = useState('');
   const [dineInOk, setDineInOk] = useState(vendor?.dine_in_enabled ?? true);
   const [deliveryOk, setDeliveryOk] = useState(vendor?.delivery_enabled ?? true);
+
+  // Whether this deployment is charging anybody. Read from the server rather
+  // than the bundle: it is a property of the backend that is running, and a
+  // hardcoded answer would go stale the moment PAYMENTS_MODE changed without a
+  // rebuild - which is the one circumstance where being wrong matters.
+  const [mockPayments, setMockPayments] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .config()
+      .then((c) => {
+        if (!cancelled) setMockPayments(c.payments_mode === 'mock');
+      })
+      // A failed read shows no banner. Understating is the safe direction: the
+      // alternative is warning about test payments on a deployment taking real
+      // money.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const vendorId = vendor?.id;
 
@@ -154,14 +177,20 @@ export default function Checkout() {
       const session = await api.paymentSession(order.id);
       clear();
 
-      const cashfree = await loadCashfree({ mode: session.mode as 'sandbox' | 'production' });
-      // Takes only the session id. No amount is passed, because the SDK does not
-      // accept one - which is what makes the figure impossible to tamper with
-      // from the browser.
-      await cashfree.checkout({
-        paymentSessionId: session.payment_session_id,
-        redirectTarget: '_modal',
-      });
+      if (isMockPayment(session)) {
+        // The backend is running without a gateway. Confirm against our own API
+        // instead of opening a sheet that would have nothing behind it.
+        await api.confirmMockPayment(order.id);
+      } else {
+        const cashfree = await loadCashfree({ mode: session.mode as 'sandbox' | 'production' });
+        // Takes only the session id. No amount is passed, because the SDK does
+        // not accept one - which is what makes the figure impossible to tamper
+        // with from the browser.
+        await cashfree.checkout({
+          paymentSessionId: session.payment_session_id,
+          redirectTarget: '_modal',
+        });
+      }
 
       // The modal has closed. That tells us nothing reliable about whether the
       // payment succeeded - only Cashfree's webhook does - so this just sends
@@ -193,6 +222,22 @@ export default function Checkout() {
           <h1 className="text-headline-lg text-on-surface">Review &amp; confirm</h1>
         </div>
       </div>
+
+      {mockPayments && (
+        <div
+          role="status"
+          className="mb-space-lg flex items-start gap-space-sm rounded-lg border border-warning bg-warning-tint p-space-md"
+        >
+          <Icon name="science" className="mt-0.5 text-[20px] text-warning" aria-hidden="true" />
+          <div className="text-body-sm text-on-surface">
+            <p className="text-label-lg">Test payments are on</p>
+            <p>
+              This order will be marked as paid without charging anything. The stall
+              will see it and can cook it, so don&apos;t place one you don&apos;t want made.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-space-lg lg:grid-cols-[1fr_380px]">
         <div className="flex flex-col gap-space-md">

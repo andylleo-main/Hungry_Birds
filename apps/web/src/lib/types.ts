@@ -80,8 +80,20 @@ export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
 export interface PaymentSession {
   payment_session_id: string;
   cf_order_id: string;
+  /**
+   * 'sandbox' | 'production' | 'mock'. The first two are Cashfree environments
+   * and pick which one the SDK loads against; 'mock' means the backend is
+   * running without a gateway and the payment is confirmed by a call to our own
+   * API instead. Read from the session rather than the bundle so the two cannot
+   * disagree after a deploy.
+   */
   mode: string;
   order_id: string;
+}
+
+/** True when the backend is confirming payments without charging anything. */
+export function isMockPayment(session: PaymentSession): boolean {
+  return session.mode === 'mock';
 }
 
 export const FULFILMENT_LABEL: Record<FulfilmentType, string> = {

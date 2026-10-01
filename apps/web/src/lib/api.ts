@@ -261,6 +261,24 @@ export const api = {
   paymentSession: (orderId: string) =>
     request<PaymentSession>('POST', `/orders/${orderId}/payment-session`),
 
+  /**
+   * Server facts the bundle must not hardcode. Unauthenticated, and safe to
+   * call before sign-in.
+   */
+  config: () => request<{ payments_mode: string }>('GET', '/config'),
+
+  /**
+   * Stands in for paying, when the server reports mode "mock".
+   *
+   * Only reachable while the backend runs with PAYMENTS_MODE=mock; it 404s
+   * otherwise, so there is no need to guard the call site beyond checking the
+   * mode the session came back with. Nothing is charged and the order is marked
+   * paid, which is the entire point: it exists to exercise everything
+   * downstream of a payment before the gateway credentials do.
+   */
+  confirmMockPayment: (orderId: string) =>
+    request<{ status: string }>('POST', `/orders/${orderId}/mock-payment`),
+
   myOrders: () => request<Order[]>('GET', '/orders'),
   order: (id: string) => request<Order>('GET', `/orders/${id}`),
   cancelOrder: (id: string) => request<Order>('POST', `/orders/${id}/cancel`),

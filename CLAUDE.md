@@ -38,6 +38,10 @@ Dart packages `hb_shared`, Firebase project `hungrybirds-7779f`.
   scoped, never force-push a shared branch.
 - Merchants cannot do their work in the web app. Android only.
 - No cash on delivery. Every order is paid up front through Cashfree.
+  `PAYMENTS_MODE=mock` confirms payments without charging, for testing before the
+  gateway credentials exist. It is not COD and not a fallback: on a deployment
+  students can reach it is free food, so it stays off unless somebody has
+  deliberately set it.
 
 ## Secrets
 

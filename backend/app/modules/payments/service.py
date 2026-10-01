@@ -19,7 +19,7 @@ from app.core.config import Settings
 from app.db.models.order import Order, OrderStatus
 from app.db.models.payment import Payment, PaymentStatus
 from app.db.session import async_session_factory
-from app.modules.payments import cashfree
+from app.modules.payments import cashfree, mock
 
 logger = logging.getLogger(__name__)
 
@@ -77,21 +77,33 @@ async def ensure_payment(order: Order, db: AsyncSession, settings: Settings) -> 
     """
     result = await db.execute(select(Payment).where(Payment.order_id == order.id))
     payment = result.scalar_one_or_none()
-    if payment is not None and payment.payment_session_id:
-        return payment
 
-    cf_order_id = cf_order_id_for(order.id)
-    response = await cashfree.create_order(
-        cf_order_id=cf_order_id,
-        # The authoritative figure, priced server-side when the order was
-        # placed. OrderCreate has no amount field and must never gain one.
-        amount=order.total_amount,
-        customer_id=str(order.customer_id),
-        customer_name=order.customer_name,
-        customer_email=order.customer.email,
-        customer_phone=order.customer_phone or "",
-        settings=settings,
-    )
+    # A row left over from a session in the other payment mode has a session id
+    # the current gateway knows nothing about, so it has to be re-minted. Without
+    # this, switching PAYMENTS_MODE would hand the browser a dead session - and,
+    # worse, leave cf_order_id pointing at a gateway that never heard of it.
+    if payment is not None and payment.payment_session_id:
+        if mock.is_mock(payment.payment_session_id) == settings.payments_mock:
+            return payment
+        payment.payment_session_id = None
+
+    if settings.payments_mock:
+        cf_order_id = mock.cf_order_id_for(order.id)
+        session_id = mock.payment_session_id_for(order.id)
+    else:
+        cf_order_id = cf_order_id_for(order.id)
+        response = await cashfree.create_order(
+            cf_order_id=cf_order_id,
+            # The authoritative figure, priced server-side when the order was
+            # placed. OrderCreate has no amount field and must never gain one.
+            amount=order.total_amount,
+            customer_id=str(order.customer_id),
+            customer_name=order.customer_name,
+            customer_email=order.customer.email,
+            customer_phone=order.customer_phone or "",
+            settings=settings,
+        )
+        session_id = response.get("payment_session_id")
 
     if payment is None:
         payment = Payment(
@@ -101,7 +113,12 @@ async def ensure_payment(order: Order, db: AsyncSession, settings: Settings) -> 
             refund_id=refund_id_for(order.id),
         )
         db.add(payment)
-    payment.payment_session_id = response.get("payment_session_id")
+    else:
+        # Kept in step with the session: cf_order_id is what a webhook is matched
+        # on, so a row holding one mode's order id and the other's session is a
+        # payment that can never be settled by anybody.
+        payment.cf_order_id = cf_order_id
+    payment.payment_session_id = session_id
     await db.commit()
     await db.refresh(payment)
     return payment
@@ -233,6 +250,14 @@ async def attempt_refund(order_id: uuid.UUID, reason: str, settings: Settings) -
     if not settings.payments_enabled:
         return
 
+    if settings.payments_mock:
+        # No money moved, so there is nothing to ask for back. Still recorded as
+        # refunded rather than left pending, because the refund states exist to
+        # tell somebody money is owed - and a mock order that sits in
+        # refund_pending forever is a false alarm in every admin view.
+        await _mark_mock_refunded(order_id, reason)
+        return
+
     async with async_session_factory() as db:
         result = await db.execute(select(Payment).where(Payment.order_id == order_id))
         payment = result.scalar_one_or_none()
@@ -262,6 +287,21 @@ async def attempt_refund(order_id: uuid.UUID, reason: str, settings: Settings) -
             raise
 
         logger.info("refund requested for order %s (%s)", order_id, reason)
+
+
+async def _mark_mock_refunded(order_id: uuid.UUID, reason: str) -> None:
+    """Close out a mock refund locally, with the same transition rules."""
+    from app.modules.orders.service import can_transition_payment
+
+    async with async_session_factory() as db:
+        order = await db.get(Order, order_id)
+        if order is None:
+            return
+        if not can_transition_payment(order.payment_status, PaymentStatus.REFUNDED):
+            return
+        order.payment_status = PaymentStatus.REFUNDED
+        await db.commit()
+    logger.info("mock refund for order %s (%s) - no money moved", order_id, reason)
 
 
 async def sweep_abandoned(

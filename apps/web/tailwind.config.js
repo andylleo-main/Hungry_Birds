@@ -38,6 +38,10 @@ export default {
 
         success: '#16A34A',
         warning: '#D97706',
+        // Amber 50. For a notice that has to be unmissable without reading as a
+        // failure - the test-payments banner is a statement about the
+        // deployment, not an error in the order.
+        'warning-tint': '#FFFBEB',
         error: '#BA1A1A',
       },
       fontFamily: {

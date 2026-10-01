@@ -532,6 +532,48 @@ Then add the webhook in Cashfree's dashboard, pointing at
 > — the customer holding a confirmation for food no stall will ever see. Failing
 > at the door is the honest version. Set the keys before announcing the site.
 
+### Testing without a gateway: `PAYMENTS_MODE=mock`
+
+Set `PAYMENTS_MODE=mock` and every payment confirms instantly, charging nothing.
+It exists so the long tail after a payment — the stall's queue, the push, rider
+assignment, the handover code — can be walked end to end before the Cashfree
+credentials arrive. `PAYMENTS_MODE=cashfree` is the default and has to be
+overridden by hand; nobody arrives here by omission.
+
+It is not a short-circuit. The mock builds the same webhook payload Cashfree
+would post and runs it through the same `apply_payment_success`, amount check
+included, and the same side effects. What gets exercised is the real settlement
+path with a synthetic trigger — a mock that set `paid` directly would test
+nothing worth testing.
+
+Three things stop it becoming free food in production:
+
+- **The route only exists in mock mode.** `POST /orders/{id}/mock-payment` 404s
+  otherwise — not 403, because a disabled "mark as paid" endpoint that announces
+  itself is an invitation to go looking for the switch.
+- **The Cashfree webhook closes.** Gated on `cashfree_configured`, not on
+  payments being enabled, and that distinction is the whole reason both
+  properties exist. In mock mode payments are on while the Cashfree secret is
+  empty — and that secret is the HMAC key signatures are verified against, so a
+  webhook gated the other way would check every forgery against an empty key and
+  mark orders paid for anyone who posted one.
+- **Mock payments stay identifiable.** Every id is prefixed `mock_`, and each
+  confirmation writes a `payment_events` row of type `MOCK_PAYMENT_SUCCESS`. Once
+  real payments are live, orders that were never actually paid for can still be
+  found — otherwise reconciling the books is guesswork. `order_id_from_cf` strips
+  only `hb_`, so a real Cashfree webhook can never resolve to a mock payment row,
+  and vice versa.
+
+While it is on, the checkout page shows a banner saying nothing is being charged
+(read from `GET /api/config`, so it cannot go stale against the bundle) and the
+server logs a warning on every boot. Rejecting a mock-paid order marks it
+`refunded` rather than leaving it `refund_pending` — no money moved, and a false
+"money is owed" in an admin view is worse than no entry.
+
+Switching back is just the variable. An order mid-checkout when the mode changes
+gets its session re-minted on the next attempt, because a session from the other
+mode is one the current gateway has never heard of.
+
 **The flow.** The customer places the order, which is created as
 `awaiting_payment` and is invisible to the stall. The browser is handed a payment
 session id — and nothing else, no amount, because the Cashfree SDK does not take

@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import limits
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.logging import install_log_redaction
 from app.core.ratelimit import Limit, client_ip, consume, limit_by_ip
 from app.core.redis import get_redis
@@ -48,6 +48,20 @@ elif settings.otp_debug_echo:
     _startup_log.info(
         'OTP_DEBUG_ECHO is set but ignored because ENVIRONMENT is not '
         'development. Login codes will not be echoed.'
+    )
+
+if settings.payments_mock:
+    _startup_log.warning(
+        'PAYMENTS_MODE=mock: every order is marked paid without any money '
+        'changing hands, and the Cashfree webhook is disabled. Fine for testing '
+        'the flow; on a deployment students can reach, it is free food. Set '
+        'PAYMENTS_MODE=cashfree once the gateway credentials are in place.'
+    )
+elif not settings.cashfree_configured:
+    _startup_log.warning(
+        'Cashfree is not configured, so nothing can be ordered: placing an '
+        'order answers 503. Set CASHFREE_APP_ID and CASHFREE_SECRET_KEY, or '
+        'PAYMENTS_MODE=mock to test without a gateway.'
     )
 
 if settings.cors_origin_list == ['*']:
@@ -162,6 +176,20 @@ app.include_router(order_payments_router, prefix=API_PREFIX)
 app.include_router(payments_router, prefix=API_PREFIX)
 app.include_router(vendor_orders_router, prefix=API_PREFIX)
 app.include_router(realtime_router, prefix=API_PREFIX)
+
+
+@app.get(API_PREFIX + "/config")
+async def public_config(config: Settings = Depends(get_settings)) -> dict[str, str]:
+    """The handful of server facts the web app cannot hardcode without drifting.
+
+    Public and unauthenticated, which is fine: the payment mode is already
+    returned to any signed-in customer with their payment session, and it is a
+    statement about this deployment rather than about anybody using it. The web
+    app reads it to warn, on the checkout page, that nothing is really being
+    charged - a banner nobody can miss being the difference between a test
+    deployment and a misunderstanding.
+    """
+    return {"payments_mode": config.payments_mode}
 
 
 @app.get("/health")

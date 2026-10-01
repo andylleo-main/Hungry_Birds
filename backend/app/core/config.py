@@ -72,8 +72,19 @@ class Settings(BaseSettings):
     fcm_project_id: str = ""
     firebase_service_account_json: str = ""
 
+    # --- Payments ------------------------------------------------------------
+    # "cashfree" takes real money. "mock" confirms every payment instantly
+    # without contacting anybody, so the rest of the system - the stall's queue,
+    # the push, assignment, the handover code - can be exercised before the
+    # gateway credentials exist.
+    #
+    # There is no safe default but the real one, so this is not inferred from
+    # anything. Mock mode is on only when somebody has typed it into an
+    # environment variable, and the app logs a warning on every boot while it is.
+    payments_mode: str = "cashfree"
+
     # --- Cashfree (payments) -------------------------------------------------
-    # Empty secret means payments are not configured: the checkout endpoint
+    # Empty secret means Cashfree is not configured: the checkout endpoint
     # answers 503 and the webhook 404s rather than advertising a door it cannot
     # verify anybody through.
     #
@@ -117,9 +128,39 @@ class Settings(BaseSettings):
             return value.replace("postgresql://", "postgresql+asyncpg://", 1)
         return value
 
+    @field_validator("payments_mode")
+    @classmethod
+    def known_payments_mode(cls, value: str) -> str:
+        """A typo here must not fall back to taking real money, nor to giving food
+        away. Refusing to boot is the only outcome that is wrong in neither
+        direction."""
+        mode = value.strip().lower()
+        if mode not in ("cashfree", "mock"):
+            raise ValueError('PAYMENTS_MODE must be "cashfree" or "mock"')
+        return mode
+
+    @property
+    def payments_mock(self) -> bool:
+        """Every payment confirms instantly and no money moves."""
+        return self.payments_mode == "mock"
+
+    @property
+    def cashfree_configured(self) -> bool:
+        """Whether we hold credentials to talk to Cashfree and to verify what it
+        sends us.
+
+        Separate from payments_enabled below, and the distinction is load-bearing:
+        the webhook is gated on *this* one. The secret key is the HMAC key
+        webhook signatures are checked against, so a route that accepts webhooks
+        without it would verify every forgery against an empty key - and in mock
+        mode there is no secret, which is exactly when payments_enabled is true.
+        """
+        return bool(self.cashfree_app_id and self.cashfree_secret_key)
+
     @property
     def payments_enabled(self) -> bool:
-        return bool(self.cashfree_app_id and self.cashfree_secret_key)
+        """Whether an order can be paid for at all, by any means."""
+        return self.payments_mock or self.cashfree_configured
 
     @property
     def cashfree_base_url(self) -> str:

@@ -260,6 +260,30 @@ def payments_off(client):
 
 
 @pytest.fixture
+def mock_payments(client):
+    """Run one test with PAYMENTS_MODE=mock and no Cashfree credentials.
+
+    Both halves matter. Mock mode is meant to work *without* a gateway, so a
+    fixture that left the test keys in place would never catch a path that still
+    reaches for them - and the webhook's gate is the Cashfree secret
+    specifically, which only an empty one exercises.
+    """
+    from app.core.config import get_settings
+    from app.main import app
+
+    mocked = get_settings().model_copy(
+        update={
+            "payments_mode": "mock",
+            "cashfree_app_id": "",
+            "cashfree_secret_key": "",
+        }
+    )
+    app.dependency_overrides[get_settings] = lambda: mocked
+    yield mocked
+    app.dependency_overrides[get_settings] = lambda: _test_settings()
+
+
+@pytest.fixture
 def signed_webhook(client, payments_on):
     """POST a Cashfree webhook with a real signature over the exact bytes sent.
 
