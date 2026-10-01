@@ -327,6 +327,27 @@ Railway builds the image.
    without the web app (so the site 404s), and without the pre-deploy command it
    starts against a database with no tables.
 
+   > **Changing a service setting needs a new deployment, not a redeploy.** The
+   > Redeploy button reuses the previous deployment's config snapshot, so it runs
+   > the *old* settings no matter what the dashboard now shows. The symptom is a
+   > setting that plainly will not take: you change the pre-deploy command, hit
+   > Redeploy, and watch the previous command run again. Push a commit instead.
+
+6. **Seed the demo stalls** (optional, once). There is no shell on a Railway
+   service, so the way in is the pre-deploy command: set it to
+
+   ```
+   alembic upgrade head && PYTHONPATH=. python scripts/seed.py
+   ```
+
+   push a commit, watch the deploy logs for `seeded Momo Point`, then **put the
+   pre-deploy command back to `alembic upgrade head`**. The seeder skips stalls
+   that already exist, so leaving it would be harmless — but a production deploy
+   step whose job is inserting fake data is a trap for whoever reads it next.
+
+   It creates three approved, open stalls with menus and no admin. For an admin,
+   use `BOOTSTRAP_ADMIN_EMAIL`.
+
    > **How this failure looks, because it is not obvious.** The build dies in
    > about three seconds, and the step it blames is whatever happened to be
    > running in the *other* stage — an `apt-get`, a `pip install` — not the
