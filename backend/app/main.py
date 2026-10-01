@@ -23,6 +23,8 @@ from app.modules.fulfilment.router import router as fulfilment_router
 from app.modules.menu.router import router as menu_router
 from app.modules.notifications.router import router as devices_router
 from app.modules.orders.router import router as orders_router
+from app.modules.payments.router import order_payments_router
+from app.modules.payments.router import router as payments_router
 from app.modules.orders.router import vendor_orders_router
 from app.modules.realtime.router import router as realtime_router
 from app.modules.riders.router import auth_router as rider_auth_router
@@ -72,6 +74,15 @@ _GLOBAL_LIMIT = (Limit(settings.global_rate_limit_requests, settings.global_rate
 _UNMETERED_PREFIXES = ('/assets/', '/favicon')
 _UNMETERED_PATHS = ('/health',)
 
+# Exempt from the per-IP ceiling only - the body-size guard below still applies.
+#
+# Every Cashfree delivery arrives from their infrastructure, so they all land in
+# one address bucket and a busy lunchtime would throttle them collectively. A
+# throttled webhook is a 429, which Cashfree retries, which builds a backlog that
+# cannot drain - and the thing being lost is notification that somebody has
+# already been charged. The route has its own generous, signature-gated limit.
+_UNTHROTTLED_PATHS = ('/api/payments/cashfree/webhook',)
+
 
 @app.middleware('http')
 async def enforce_request_limits(request: Request, call_next):
@@ -93,6 +104,9 @@ async def enforce_request_limits(request: Request, call_next):
                 {'detail': 'Invalid Content-Length'},
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+
+    if path in _UNTHROTTLED_PATHS:
+        return await call_next(request)
 
     try:
         await consume(
@@ -144,6 +158,8 @@ app.include_router(admin_router, prefix=API_PREFIX)
 app.include_router(analytics_router, prefix=API_PREFIX)
 app.include_router(media_router, prefix=API_PREFIX)
 app.include_router(orders_router, prefix=API_PREFIX)
+app.include_router(order_payments_router, prefix=API_PREFIX)
+app.include_router(payments_router, prefix=API_PREFIX)
 app.include_router(vendor_orders_router, prefix=API_PREFIX)
 app.include_router(realtime_router, prefix=API_PREFIX)
 

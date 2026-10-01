@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models.order import FulfilmentType, Order, OrderStatus
+from app.db.models.payment import PaymentStatus
 from app.modules.orders.schemas import OrderOut
 
 # What an order must carry before it can be serialised.
@@ -48,6 +49,9 @@ async def load_order(order_id: uuid.UUID, db: AsyncSession) -> Order | None:
 # Which statuses an order may move to from its current status. Anything not
 # listed as a key (COMPLETED, REJECTED, CANCELLED) is terminal.
 ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
+    # Nothing but a confirmed payment moves an order out of here, and a stall
+    # never sees it until it does. CANCELLED is the abandoned-checkout path.
+    OrderStatus.AWAITING_PAYMENT: {OrderStatus.PLACED, OrderStatus.CANCELLED},
     OrderStatus.PLACED: {OrderStatus.ACCEPTED, OrderStatus.REJECTED, OrderStatus.CANCELLED},
     OrderStatus.ACCEPTED: {OrderStatus.PREPARING, OrderStatus.CANCELLED},
     OrderStatus.PREPARING: {OrderStatus.READY},
@@ -64,6 +68,35 @@ TERMINAL_STATUSES = frozenset(set(OrderStatus) - set(ALLOWED_TRANSITIONS))
 # Statuses that only make sense for a delivery. The transition table above says
 # what order things happen in; this says which orders they apply to at all.
 DELIVERY_ONLY_STATUSES = frozenset({OrderStatus.OUT_FOR_DELIVERY})
+
+# Which payment states may follow which. Separate from the fulfilment table
+# above because they describe different things, and conflating them would need a
+# value for every combination of the two.
+ALLOWED_PAYMENT_TRANSITIONS: dict[PaymentStatus, set[PaymentStatus]] = {
+    PaymentStatus.PENDING: {PaymentStatus.PAID, PaymentStatus.FAILED, PaymentStatus.EXPIRED},
+    # A customer whose card was declined can try again on the same Cashfree
+    # order, so a failure is not the end.
+    PaymentStatus.FAILED: {PaymentStatus.PAID},
+    # And a late success after we gave up is real money arriving: it has to be
+    # accepted, and then refunded, rather than asserted away. Sheet opened at
+    # 12:15, swept at 12:30, paid at 12:31 happens.
+    PaymentStatus.EXPIRED: {PaymentStatus.PAID},
+    PaymentStatus.PAID: {PaymentStatus.REFUND_PENDING},
+    PaymentStatus.REFUND_PENDING: {PaymentStatus.REFUNDED, PaymentStatus.REFUND_FAILED},
+    PaymentStatus.REFUND_FAILED: {PaymentStatus.REFUND_PENDING},
+}
+
+
+def can_transition_payment(current: PaymentStatus, target: PaymentStatus) -> bool:
+    """Whether a money state may follow another.
+
+    This is what makes webhooks arriving out of order safe. Cashfree does not
+    promise an order, and a PAYMENT_FAILED landing after a PAYMENT_SUCCESS must
+    not un-pay an order - so the table refuses it and the event is recorded
+    rather than applied.
+    """
+    return target in ALLOWED_PAYMENT_TRANSITIONS.get(current, set())
+
 
 # What a rider may do to an order assigned to them: pick it up, and deliver it.
 # The transition table has no notion of who is asking, and until riders existed
@@ -99,6 +132,21 @@ def vendor_channel(vendor_id) -> str:
 
 
 async def publish_order_event(redis: Redis, order: Order) -> None:
+    """Broadcast an order to whoever is entitled to hear about it.
+
+    The asymmetry is the design. The order channel is "your order" and has no
+    admission rule - a customer watching their own checkout should see it move
+    to awaiting-payment and then to placed. The vendor channel is "your queue",
+    and an order nobody has paid for does not belong in it.
+
+    Putting that rule here rather than at the call sites means it cannot be
+    forgotten by the next thing that publishes. It also gives a nice property for
+    free: when the webhook flips an order to paid and republishes, the merchant
+    app's existing update handler does not recognise the id and prepends it, so a
+    newly paid order simply appears at the top of the queue with no client
+    change at all.
+    """
     payload = OrderOut.model_validate(order).model_dump_json()
     await redis.publish(order_channel(order.id), payload)
-    await redis.publish(vendor_channel(order.vendor_id), payload)
+    if order.payment_status == PaymentStatus.PAID:
+        await redis.publish(vendor_channel(order.vendor_id), payload)

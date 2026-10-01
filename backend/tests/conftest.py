@@ -141,6 +141,31 @@ async def menu_item(db, vendor):
 
 
 @pytest.fixture
+def pay(db):
+    """Mark an order paid, the way the Cashfree webhook would.
+
+    Orders now start in awaiting_payment and no stall can see them until money
+    arrives, so most tests about what a stall or rider does need the order to be
+    paid for first. This does exactly what apply_payment_success does, and
+    nothing more, so a test that uses it is not quietly skipping a rule.
+    """
+    import uuid as _uuid
+
+    from app.db.models.order import Order, OrderStatus
+    from app.db.models.payment import PaymentStatus
+
+    async def _pay(order_id):
+        order = await db.get(Order, _uuid.UUID(str(order_id)))
+        order.payment_status = PaymentStatus.PAID
+        if order.status == OrderStatus.AWAITING_PAYMENT:
+            order.status = OrderStatus.PLACED
+        await db.commit()
+        return order
+
+    return _pay
+
+
+@pytest.fixture
 async def rider(client, vendor):
     """A rider of the fixture stall, plus a signed-in rider-app token.
 
@@ -165,8 +190,8 @@ async def rider(client, vendor):
 
 
 @pytest.fixture
-async def delivery_order(client, customer, vendor, menu_item):
-    """A delivery order at the fixture stall, ready to be assigned."""
+async def delivery_order(client, customer, vendor, menu_item, pay):
+    """A paid delivery order at the fixture stall, ready to be assigned."""
     user, headers = customer
     v, _ = vendor
     r = await client.post(
@@ -180,4 +205,101 @@ async def delivery_order(client, customer, vendor, menu_item):
         },
     )
     assert r.status_code == 201, r.text
-    return r.json()
+    await pay(r.json()["id"])
+    # Re-read, so the caller sees the order as the stall does.
+    fresh = await client.get(f"/orders/{r.json()['id']}", headers=headers)
+    return fresh.json()
+
+
+@pytest.fixture
+def payments_on():
+    """Switch Cashfree on for the duration of a test, with a known secret.
+
+    Overrides the dependency rather than the environment, so the real settings
+    object is untouched and nothing leaks into the next test.
+    """
+    from app.core.config import Settings, get_settings
+    from app.main import app
+
+    configured = get_settings().model_copy(
+        update={
+            "cashfree_app_id": "TEST_APP_ID",
+            "cashfree_secret_key": "test-secret-key",
+            "cashfree_env": "sandbox",
+            "public_base_url": "https://testserver",
+        }
+    )
+
+    def _override() -> Settings:
+        return configured
+
+    app.dependency_overrides[get_settings] = _override
+    yield configured
+    app.dependency_overrides.pop(get_settings, None)
+
+
+@pytest.fixture
+def signed_webhook(client, payments_on):
+    """POST a Cashfree webhook with a real signature over the exact bytes sent.
+
+    Signing the serialised bytes - rather than letting httpx re-encode a dict -
+    is the point: the signature covers what Cashfree actually sent, and a test
+    that lets the client re-serialise would pass while the production path
+    failed.
+    """
+    import base64
+    import hashlib
+    import hmac
+    import json
+    import time
+
+    async def _post(body: dict, *, timestamp: str | None = None, signature: str | None = None):
+        raw = json.dumps(body, separators=(",", ":")).encode()
+        ts = timestamp if timestamp is not None else str(int(time.time()))
+        if signature is None:
+            digest = hmac.new(
+                payments_on.cashfree_secret_key.encode(), ts.encode() + raw, hashlib.sha256
+            ).digest()
+            signature = base64.b64encode(digest).decode()
+        return await client.post(
+            "/payments/cashfree/webhook",
+            content=raw,
+            headers={
+                "content-type": "application/json",
+                "x-webhook-timestamp": ts,
+                "x-webhook-signature": signature,
+            },
+        )
+
+    return _post
+
+
+@pytest.fixture
+def stub_cashfree(monkeypatch):
+    """Answer Cashfree's create-order call without leaving the machine.
+
+    Patching the client rather than inserting a payments row directly means the
+    tests still go through the real /payment-session endpoint - its ownership
+    check, its stall-still-open check, and the row it writes.
+
+    Returns the list of refund calls made, so a test can assert one was
+    attempted without reaching the network.
+    """
+    from app.modules.payments import cashfree
+
+    refunds: list[dict] = []
+
+    async def fake_create_order(*, cf_order_id, amount, **kwargs):
+        return {
+            "cf_order_id": cf_order_id,
+            "order_status": "ACTIVE",
+            "payment_session_id": f"session_{cf_order_id}",
+        }
+
+    async def fake_refund(**kwargs):
+        refunds.append(kwargs)
+        return {"refund_status": "PENDING"}
+
+    monkeypatch.setattr(cashfree, "create_order", fake_create_order)
+    monkeypatch.setattr(cashfree, "refund", fake_refund)
+    return refunds

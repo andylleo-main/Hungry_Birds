@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.locations import label_for
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.models.payment import PaymentStatus, PaymentStatusType
 
 
 class FulfilmentType(StrEnum):
@@ -21,6 +22,9 @@ class FulfilmentType(StrEnum):
 
 
 class OrderStatus(StrEnum):
+    # Created, but not yet paid for, so no stall has seen it. Orders begin here
+    # now that payment happens before a stall is asked to cook.
+    AWAITING_PAYMENT = "awaiting_payment"
     PLACED = "placed"
     ACCEPTED = "accepted"
     PREPARING = "preparing"
@@ -45,10 +49,21 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     status: Mapped[OrderStatus] = mapped_column(
         Enum(OrderStatus, name="order_status", values_callable=lambda e: [m.value for m in e]),
-        default=OrderStatus.PLACED,
+        default=OrderStatus.AWAITING_PAYMENT,
         nullable=False,
     )
-    payment_method: Mapped[str] = mapped_column(String(20), default="cod", nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(20), default="cashfree", nullable=False)
+
+    # The money state, and the only copy of it. See db/models/payment.py.
+    #
+    # Typed through PaymentStatusType rather than a bare String so a read gives
+    # back a PaymentStatus. With a plain String it comes back as `str`, and every
+    # `payment_status is PaymentStatus.PAID` in the codebase is then silently
+    # False forever - which is exactly what happened, and what the refund tests
+    # caught.
+    payment_status: Mapped[PaymentStatus] = mapped_column(
+        PaymentStatusType, default=PaymentStatus.PENDING, nullable=False
+    )
     total_amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 

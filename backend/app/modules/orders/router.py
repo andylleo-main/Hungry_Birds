@@ -12,6 +12,7 @@ from app.core.ratelimit import limit_by_user
 from app.core.redis import get_redis
 from app.db.models.menu import MenuItem
 from app.db.models.order import FulfilmentType, Order, OrderItem, OrderStatus
+from app.db.models.payment import PaymentStatus
 from app.db.models.rider import Rider
 from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
@@ -21,6 +22,7 @@ from app.modules.auth.service import assert_allowed_domain
 from app.core.tasks import fire_and_log
 from app.modules.fulfilment.service import assert_order_fulfilment
 from app.modules.notifications.service import notify_new_order
+from app.modules.payments import service as payments
 from app.modules.orders.service import (
     TERMINAL_STATUSES,
     assert_transition,
@@ -126,17 +128,10 @@ async def place_order(
     await db.commit()
 
     order = await _load_order_with_items(order.id, db)
+    # Published to the customer's own channel only - publish_order_event will not
+    # touch the stall's queue for an unpaid order, and nobody is notified yet.
+    # The stall first hears about this when the payment webhook lands.
     await publish_order_event(redis, order)
-
-    # After the response, and swallowed if it fails. A stall that misses the
-    # push still sees the order the instant they open the app - the socket and
-    # the queue fetch both carry it - so Firebase having a bad afternoon must not
-    # be able to fail somebody's order.
-    background.add_task(
-        fire_and_log,
-        "notify_new_order",
-        lambda: notify_new_order(order.id, order.vendor_id, settings),
-    )
     return OrderOut.model_validate(order)
 
 
@@ -146,8 +141,15 @@ async def place_order(
     dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
 )
 async def list_my_orders(
-    user: User = Depends(require_role(UserRole.CUSTOMER)), db: AsyncSession = Depends(get_db)
+    user: User = Depends(require_role(UserRole.CUSTOMER)),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> list[OrderOut]:
+    # No scheduler exists in this project, so the sweep rides on the read that
+    # would otherwise display these rows. Cheap: it touches only this customer's
+    # abandoned checkouts, and only ones older than the gateway's own expiry.
+    await payments.sweep_abandoned(db, settings, customer_id=user.id)
+
     result = await db.execute(
         order_query(Order.customer_id == user.id).order_by(Order.created_at.desc())
     )
@@ -164,7 +166,14 @@ async def _get_order_for_user(order_id: uuid.UUID, user: User, db: AsyncSession)
     if user.role == UserRole.VENDOR:
         result = await db.execute(select(Vendor).where(Vendor.user_id == user.id))
         vendor = result.scalar_one_or_none()
-        is_owner_vendor = vendor is not None and vendor.id == order.vendor_id
+        # The vendor branch only - and only for a paid order. The customer must
+        # keep seeing their own unpaid order so the tracking page can tell them
+        # to finish paying; the stall has no business with it until it is paid.
+        is_owner_vendor = (
+            vendor is not None
+            and vendor.id == order.vendor_id
+            and order.status != OrderStatus.AWAITING_PAYMENT
+        )
 
     if not (is_owner_customer or is_owner_vendor or user.role == UserRole.ADMIN):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
@@ -192,9 +201,11 @@ async def get_order(
 )
 async def cancel_order(
     order_id: uuid.UUID,
+    background: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> OrderOut:
     order = await _get_order_for_user(order_id, user, db)
     if order.customer_id != user.id:
@@ -205,6 +216,17 @@ async def cancel_order(
         )
     order.status = OrderStatus.CANCELLED
     await db.commit()
+
+    # Cancelling before the stall accepted means the money comes straight back.
+    # Same shape as a rejection: commit the state, call Cashfree afterwards.
+    if order.payment_status is PaymentStatus.PAID:
+        await payments.start_refund(order.id, "cancelled by the customer", db)
+        background.add_task(
+            fire_and_log,
+            "refund_cancelled_order",
+            lambda: payments.attempt_refund(order.id, "cancelled by the customer", settings),
+        )
+
     order = await _load_order_with_items(order.id, db)
     await publish_order_event(redis, order)
     return OrderOut.model_validate(order)
@@ -216,10 +238,24 @@ async def cancel_order(
     dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
 )
 async def list_vendor_orders(
-    vendor: Vendor = Depends(get_own_vendor), db: AsyncSession = Depends(get_db)
+    vendor: Vendor = Depends(get_own_vendor),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> list[OrderOut]:
+    """The stall's queue - which contains only orders somebody has paid for.
+
+    The socket filter alone is not enough: it covers what happens while the app
+    is open, and the merchant app re-fetches this on every start and every
+    reconnect. Without the same rule here, an abandoned checkout would reappear
+    in the queue every time the connection blinked.
+    """
+    await payments.sweep_abandoned(db, settings, vendor_id=vendor.id)
+
     result = await db.execute(
-        order_query(Order.vendor_id == vendor.id).order_by(Order.created_at.desc())
+        order_query(
+            Order.vendor_id == vendor.id,
+            Order.status != OrderStatus.AWAITING_PAYMENT,
+        ).order_by(Order.created_at.desc())
     )
     return [OrderOut.model_validate(o) for o in result.scalars().all()]
 
@@ -232,9 +268,11 @@ async def list_vendor_orders(
 async def update_order_status(
     order_id: uuid.UUID,
     payload: OrderStatusUpdate,
+    background: BackgroundTasks,
     vendor: Vendor = Depends(get_own_vendor),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> OrderOut:
     order = await _load_order_with_items(order_id, db)
     if order is None or order.vendor_id != vendor.id:
@@ -244,6 +282,20 @@ async def update_order_status(
 
     order.status = payload.status
     await db.commit()
+
+    # A stall rejecting an order is the customer's money coming back. The state
+    # change commits here and the call to Cashfree happens after the response,
+    # so a gateway outage cannot make rejecting an order fail - the stall must
+    # never be stuck with an order they cannot refuse because somebody else's
+    # server is down.
+    if payload.status is OrderStatus.REJECTED and order.payment_status is PaymentStatus.PAID:
+        await payments.start_refund(order.id, "stall could not make this order", db)
+        background.add_task(
+            fire_and_log,
+            "refund_rejected_order",
+            lambda: payments.attempt_refund(order.id, "stall could not make this order", settings),
+        )
+
     order = await _load_order_with_items(order.id, db)
     await publish_order_event(redis, order)
     return OrderOut.model_validate(order)

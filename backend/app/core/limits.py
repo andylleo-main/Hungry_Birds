@@ -118,6 +118,23 @@ MEDIA_SIGNATURE = (Limit(20, MINUTE), Limit(100, HOUR))
 ADMIN_READ = (Limit(120, MINUTE),)
 ADMIN_WRITE = (Limit(60, MINUTE),)
 
+# --- Payments ---------------------------------------------------------------
+# Opening a checkout costs a round trip to Cashfree, so this is tight enough to
+# stop a loop in a client burning their rate limit while leaving room for the
+# genuine case: a customer who closed the sheet and wants to try again.
+PAYMENT_SESSION = (Limit(10, MINUTE), Limit(40, HOUR))
+
+# The webhook, and the one limit in this file that fails OPEN.
+#
+# Everywhere else, failing open is the hole; on /auth/admin/login a limiter that
+# stops working silently turns a password into an unlimited guessing surface. Here
+# the inverse is true. Every delivery shares one source address, the body is
+# signature-verified so an unsigned flood is rejected before it costs anything,
+# and refusing a delivery means losing track of money a customer has already
+# handed over. Cashfree retries a non-2xx, so a throttled webhook also builds a
+# backlog that cannot drain.
+PAYMENT_WEBHOOK_PER_IP = (Limit(600, MINUTE),)
+
 # --- Push notifications -----------------------------------------------------
 # The merchant app re-registers its token on every start, and Firebase rotates
 # tokens occasionally, so this is normal traffic rather than something to

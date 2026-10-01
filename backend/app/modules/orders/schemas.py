@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.fields import MAX_ORDER_LINES, Note
 from app.core.locations import MAX_LOCATION_CODE_LENGTH
 from app.db.models.order import FulfilmentType, OrderStatus
+from app.db.models.payment import PaymentStatus
 
 
 class OrderItemIn(BaseModel):
@@ -83,6 +84,7 @@ class OrderOut(BaseModel):
     customer_id: uuid.UUID
     status: OrderStatus
     payment_method: str
+    payment_status: PaymentStatus
     total_amount: Decimal
     note: str | None
     created_at: datetime

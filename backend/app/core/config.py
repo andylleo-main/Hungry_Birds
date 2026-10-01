@@ -72,6 +72,31 @@ class Settings(BaseSettings):
     fcm_project_id: str = ""
     firebase_service_account_json: str = ""
 
+    # --- Cashfree (payments) -------------------------------------------------
+    # Empty secret means payments are not configured: the checkout endpoint
+    # answers 503 and the webhook 404s rather than advertising a door it cannot
+    # verify anybody through.
+    #
+    # The secret key is both the API credential and the key Cashfree signs
+    # webhooks with, so it never belongs anywhere near the browser bundle.
+    cashfree_app_id: str = ""
+    cashfree_secret_key: str = ""
+    cashfree_api_version: str = "2025-01-01"
+    # "sandbox" or "production". Sent to the browser with the payment session so
+    # the SDK opens against the same environment the session was minted in -
+    # hardcoding it into the bundle is how those two drift apart.
+    cashfree_env: str = "sandbox"
+    # How long a customer has to finish paying. Must stay comfortably below the
+    # local sweep window, so we never give up on an order Cashfree would still
+    # accept money for.
+    cashfree_order_expiry_minutes: int = 15
+    # Rejects a replayed webhook whose signature is still valid but whose
+    # timestamp is old.
+    cashfree_webhook_tolerance_seconds: int = 300
+    # Where the browser is sent back to after the hosted flow, and where Cashfree
+    # posts webhooks. Both must be the public URL of this deployment.
+    public_base_url: str = ""
+
     # Empty means send no CORS headers at all, which is correct in production:
     # the backend serves the web app itself, so every call is same-origin and
     # no other site has any business calling this API. Set it to a
@@ -91,6 +116,18 @@ class Settings(BaseSettings):
         if value.startswith("postgresql://"):
             return value.replace("postgresql://", "postgresql+asyncpg://", 1)
         return value
+
+    @property
+    def payments_enabled(self) -> bool:
+        return bool(self.cashfree_app_id and self.cashfree_secret_key)
+
+    @property
+    def cashfree_base_url(self) -> str:
+        return (
+            "https://api.cashfree.com/pg"
+            if self.cashfree_env == "production"
+            else "https://sandbox.cashfree.com/pg"
+        )
 
     @property
     def push_enabled(self) -> bool:

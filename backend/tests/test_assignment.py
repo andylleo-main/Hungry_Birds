@@ -110,7 +110,7 @@ async def test_a_rider_and_self_delivery_are_mutually_exclusive(
 
 
 async def test_a_dine_in_order_has_nobody_to_assign(
-    client, customer, vendor, rider, menu_item
+    client, customer, vendor, rider, menu_item, pay
 ):
     cust_user, cust_headers = customer
     v, vendor_headers = vendor
@@ -126,6 +126,7 @@ async def test_a_dine_in_order_has_nobody_to_assign(
         },
     )
     order = r.json()
+    await pay(order["id"])
 
     r = await client.post(
         f"/vendors/me/orders/{order['id']}/assign",
@@ -241,7 +242,7 @@ async def test_a_rider_cannot_accept_or_reject_an_order(
 
 
 async def test_out_for_delivery_is_refused_on_a_dine_in_order(
-    client, customer, vendor, menu_item
+    client, customer, vendor, menu_item, pay
 ):
     cust_user, cust_headers = customer
     v, vendor_headers = vendor
@@ -256,6 +257,7 @@ async def test_out_for_delivery_is_refused_on_a_dine_in_order(
         },
     )
     order = r.json()
+    await pay(order["id"])
     await _advance(client, vendor_headers, order["id"], "accepted", "preparing", "ready")
 
     r = await client.patch(

@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.order import Order, OrderStatus
+from app.db.models.payment import PaymentStatus
 from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
 
@@ -77,7 +78,12 @@ async def build_analytics(days: int, db: AsyncSession) -> AnalyticsOut:
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=days)
 
-    earning = Order.status.in_(EARNING_STATUSES)
+    # Paid *and* not rejected. Once money moves online, "an order exists" and
+    # "we were paid" stop being the same statement: an unpaid checkout is not
+    # revenue, and a refunded one is revenue that went back.
+    earning = Order.status.in_(EARNING_STATUSES) & (
+        Order.payment_status == PaymentStatus.PAID.value
+    )
 
     # --- headline totals ----------------------------------------------------
     orders_total = await db.scalar(
