@@ -132,6 +132,13 @@ class Order {
   /// The merchant is taking this one themselves.
   final bool selfDelivery;
 
+  /// The four digits the customer reads out when their food arrives.
+  ///
+  /// Null in the rider app, always - the endpoints riders call return a payload
+  /// without this field at all, which is the whole point. A rider who could read
+  /// it could close an order without ever reaching the customer.
+  final String? deliveryCode;
+
   const Order({
     required this.id,
     required this.vendorId,
@@ -152,6 +159,7 @@ class Order {
     this.riderName,
     this.riderPhone,
     this.selfDelivery = false,
+    this.deliveryCode,
   });
 
   /// True once somebody is carrying it, whether a rider or the merchant.
@@ -185,5 +193,6 @@ class Order {
         riderName: json['rider_name'] as String?,
         riderPhone: json['rider_phone'] as String?,
         selfDelivery: (json['self_delivery'] as bool?) ?? false,
+        deliveryCode: json['delivery_code'] as String?,
       );
 }

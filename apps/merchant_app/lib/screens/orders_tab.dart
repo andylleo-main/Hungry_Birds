@@ -245,6 +245,31 @@ class _OrderCardState extends State<_OrderCard> {
               const SizedBox(height: 10),
               _courierRow(order),
             ],
+            // The customer has this too. It is here so the stall can read it
+            // back to somebody whose phone has died at the gate - without that,
+            // a lost code means an order nobody can close.
+            if (order.isDelivery && order.deliveryCode != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  const Icon(Icons.pin_outlined, size: 18, color: AppTheme.textSecondary),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Handover code',
+                    style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                  ),
+                  const Spacer(),
+                  SelectableText(
+                    order.deliveryCode!,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 3,
+                    ),
+                  ),
+                ],
+              ),
+            ],
             if (widget.live) ...[
               const SizedBox(height: 12),
               _actions(order),

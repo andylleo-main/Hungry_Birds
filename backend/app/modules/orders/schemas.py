@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Annotated
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.core.fields import MAX_ORDER_LINES, Note
 from app.core.locations import MAX_LOCATION_CODE_LENGTH
@@ -48,6 +49,18 @@ class OrderCreate(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: OrderStatus
+
+
+class RiderStatusUpdate(OrderStatusUpdate):
+    """What a rider sends when moving an order along.
+
+    `delivery_code` is required to complete a delivery and ignored otherwise - a
+    rider marking an order picked up has nothing to prove yet.
+    """
+
+    delivery_code: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8)
+    ] | None = None
 
 
 class OrderAssign(BaseModel):
@@ -110,3 +123,20 @@ class OrderOut(BaseModel):
     self_delivery: bool
 
     model_config = {"from_attributes": True}
+
+
+class OrderWithCodeOut(OrderOut):
+    """An order, plus the handover code - for everybody except the rider.
+
+    The split is the whole point of the code. A rider who could read it could
+    close an order without ever reaching the customer, which is exactly what it
+    exists to prevent. So the base OrderOut above carries no code and is what the
+    rider endpoints return; this subclass is what the customer, the stall and the
+    admin get.
+
+    Safe for the WebSocket broadcast too: the order and vendor channels reach the
+    customer, the owning stall and an admin, and riders have no channel - they
+    poll the rider endpoints, which return the base model.
+    """
+
+    delivery_code: str | None

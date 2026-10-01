@@ -349,3 +349,103 @@ async def test_the_login_email_is_not_sent_on_the_event_loop(monkeypatch):
 
     assert ran_on, "the email was never sent"
     assert ran_on[0] != loop_thread, "Resend was called on the event loop thread"
+
+
+# --- riders -----------------------------------------------------------------
+
+
+async def test_a_rider_registers_their_phone(client, rider):
+    created, rider_headers = rider
+    token = f"fcm-rider-{uuid.uuid4().hex}" + "r" * 20
+    r = await client.post("/rider/devices", headers=rider_headers, json={"fcm_token": token})
+    assert r.status_code == 201, r.text
+    assert r.json()["fcm_token"] == token
+
+
+async def test_a_rider_cannot_silence_another_riders_phone(client, db, vendor, rider):
+    """Unregistering is scoped to the caller's own rows."""
+    from sqlalchemy import select
+
+    from app.db.models.device import RiderDevice
+
+    v, vendor_headers = vendor
+    first_created, first_headers = rider
+    token = f"fcm-rider-{uuid.uuid4().hex}" + "s" * 20
+    await client.post("/rider/devices", headers=first_headers, json={"fcm_token": token})
+
+    second = await client.post(
+        "/vendors/me/riders",
+        headers=vendor_headers,
+        json={"display_name": "Other", "phone": "9876500099"},
+    )
+    login = await client.post(
+        "/auth/rider/login",
+        json={
+            "login_id": second.json()["login_id"],
+            "password": second.json()["password"],
+        },
+    )
+    other_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    r = await client.delete(f"/rider/devices/{token}", headers=other_headers)
+    assert r.status_code == 204  # idempotent, but it must not have deleted anything
+
+    rows = await db.execute(select(RiderDevice).where(RiderDevice.fcm_token == token))
+    assert rows.scalar_one_or_none() is not None
+
+
+async def test_assigning_a_delivery_notifies_the_rider(
+    client, vendor, rider, delivery_order, monkeypatch
+):
+    from app.modules.notifications import service
+
+    v, vendor_headers = vendor
+    created, rider_headers = rider
+    token = f"fcm-rider-{uuid.uuid4().hex}" + "t" * 20
+    await client.post("/rider/devices", headers=rider_headers, json={"fcm_token": token})
+
+    sent: list[tuple[str, str, str]] = []
+
+    async def fake_send(tok, *, title, body, data, settings, client):
+        sent.append((tok, title, data["type"]))
+        return None
+
+    monkeypatch.setattr(service, "send_to_token", fake_send)
+
+    await service.notify_rider_assigned(
+        uuid.UUID(delivery_order["id"]), uuid.UUID(created["id"]), _push_settings()
+    )
+
+    assert len(sent) == 1
+    tok, title, kind = sent[0]
+    assert tok == token
+    assert kind == "order_assigned"
+    # The destination leads, because it is what decides whether a rider can take it.
+    assert "Hostel 5" in title
+
+
+async def test_assigning_survives_firebase_being_broken(
+    client, vendor, rider, delivery_order, monkeypatch
+):
+    """A merchant must be able to hand out work whatever Firebase is doing."""
+    from app.modules.notifications import service
+
+    v, vendor_headers = vendor
+    created, rider_headers = rider
+    await client.post(
+        "/rider/devices",
+        headers=rider_headers,
+        json={"fcm_token": f"fcm-rider-{uuid.uuid4().hex}uuuu"},
+    )
+
+    async def explode(*a, **k):
+        raise RuntimeError("firebase is on fire")
+
+    monkeypatch.setattr(service, "send_to_token", explode)
+
+    r = await client.post(
+        f"/vendors/me/orders/{delivery_order['id']}/assign",
+        headers=vendor_headers,
+        json={"rider_id": created["id"]},
+    )
+    assert r.status_code == 200, r.text

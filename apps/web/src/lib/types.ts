@@ -136,6 +136,13 @@ export interface Order {
   rider_phone: string | null;
   /** The stall is delivering this one themselves. */
   self_delivery: boolean;
+  /**
+   * The four digits to read out when the food arrives. Delivery orders only.
+   *
+   * The rider's own app never receives this - their endpoints return a payload
+   * without the field - which is what makes saying it aloud proof of handover.
+   */
+  delivery_code: string | null;
 }
 
 /**

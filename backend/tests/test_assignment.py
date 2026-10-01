@@ -213,7 +213,7 @@ async def test_a_rider_marks_an_order_picked_up_then_delivered(
     r = await client.patch(
         f"/rider/orders/{delivery_order['id']}/status",
         headers=rider_headers,
-        json={"status": "completed"},
+        json={"status": "completed", "delivery_code": delivery_order["delivery_code"]},
     )
     assert r.status_code == 200
     assert r.json()["status"] == "completed"

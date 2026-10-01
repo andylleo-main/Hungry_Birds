@@ -1,3 +1,4 @@
+import secrets
 import uuid
 
 from fastapi import HTTPException, status as http_status
@@ -8,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models.order import FulfilmentType, Order, OrderStatus
 from app.db.models.payment import PaymentStatus
-from app.modules.orders.schemas import OrderOut
+from app.modules.orders.schemas import OrderWithCodeOut
 
 # What an order must carry before it can be serialised.
 #
@@ -123,6 +124,23 @@ def assert_transition(order: Order, target: OrderStatus) -> None:
         )
 
 
+# How many wrong handover codes a rider may try on one order before it stops
+# accepting any. Four digits is ten thousand combinations, so this is what makes
+# guessing hopeless rather than the length. Past the limit the stall completes
+# the order themselves, which is an escape hatch that already existed.
+MAX_DELIVERY_CODE_ATTEMPTS = 5
+DELIVERY_CODE_ATTEMPT_WINDOW_SECONDS = 30 * 60
+
+
+def generate_delivery_code() -> str:
+    """A four-digit handover code.
+
+    secrets rather than random: it is short, and a predictable sequence would let
+    a rider close orders they never delivered.
+    """
+    return f"{secrets.randbelow(10_000):04d}"
+
+
 def order_channel(order_id) -> str:
     return f"order:{order_id}"
 
@@ -139,6 +157,10 @@ async def publish_order_event(redis: Redis, order: Order) -> None:
     to awaiting-payment and then to placed. The vendor channel is "your queue",
     and an order nobody has paid for does not belong in it.
 
+    The payload carries the handover code, which is safe here precisely because
+    riders have no channel - they poll endpoints that return the code-less
+    model. If a rider channel is ever added, this must not be what feeds it.
+
     Putting that rule here rather than at the call sites means it cannot be
     forgotten by the next thing that publishes. It also gives a nice property for
     free: when the webhook flips an order to paid and republishes, the merchant
@@ -146,7 +168,7 @@ async def publish_order_event(redis: Redis, order: Order) -> None:
     newly paid order simply appears at the top of the queue with no client
     change at all.
     """
-    payload = OrderOut.model_validate(order).model_dump_json()
+    payload = OrderWithCodeOut.model_validate(order).model_dump_json()
     await redis.publish(order_channel(order.id), payload)
     if order.payment_status == PaymentStatus.PAID:
         await redis.publish(vendor_channel(order.vendor_id), payload)

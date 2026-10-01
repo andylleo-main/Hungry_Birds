@@ -40,3 +40,31 @@ class VendorDevice(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     vendor: Mapped["Vendor"] = relationship(lazy="raise")
+
+
+class RiderDevice(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A rider's phone, for "you have a delivery" notifications.
+
+    Its own table rather than a nullable owner column on VendorDevice above.
+    Riders are already their own table for the same reason - a rider is not a
+    user - and a shared table would need a check constraint and a branch at every
+    read to express a relationship two foreign keys already state plainly.
+
+    Everything else matches VendorDevice: the token is unique across the table
+    because Firebase issues one per app install, so a phone passed between riders
+    has to move with it rather than buzz for both.
+    """
+
+    __tablename__ = "rider_devices"
+
+    rider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("riders.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    fcm_token: Mapped[str] = mapped_column(String(512), unique=True, nullable=False)
+    platform: Mapped[str] = mapped_column(String(16), default="android", nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    rider: Mapped["Rider"] = relationship(lazy="raise")

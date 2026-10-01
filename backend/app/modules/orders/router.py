@@ -17,15 +17,21 @@ from app.db.models.rider import Rider
 from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
-from app.modules.orders.schemas import OrderAssign, OrderCreate, OrderOut, OrderStatusUpdate
+from app.modules.orders.schemas import (
+    OrderAssign,
+    OrderCreate,
+    OrderStatusUpdate,
+    OrderWithCodeOut,
+)
 from app.modules.auth.service import assert_allowed_domain
 from app.core.tasks import fire_and_log
 from app.modules.fulfilment.service import assert_order_fulfilment
-from app.modules.notifications.service import notify_new_order
+from app.modules.notifications.service import notify_new_order, notify_rider_assigned
 from app.modules.payments import service as payments
 from app.modules.orders.service import (
     TERMINAL_STATUSES,
     assert_transition,
+    generate_delivery_code,
     load_order,
     order_query,
     publish_order_event,
@@ -44,7 +50,7 @@ _load_order_with_items = load_order
 
 @router.post(
     "",
-    response_model=OrderOut,
+    response_model=OrderWithCodeOut,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(limit_by_user("place_order", *limits.PLACE_ORDER))],
 )
@@ -55,7 +61,7 @@ async def place_order(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
     settings: Settings = Depends(get_settings),
-) -> OrderOut:
+) -> OrderWithCodeOut:
     """Place an order.
 
     Customers only. That gate is new, and it is the rule that keeps ordering
@@ -106,6 +112,13 @@ async def place_order(
         total_amount=0,
         fulfilment_type=payload.fulfilment_type,
         delivery_location=payload.delivery_location,
+        # Only a delivery changes hands away from the counter, so only a
+        # delivery needs proof that it did.
+        delivery_code=(
+            generate_delivery_code()
+            if payload.fulfilment_type is FulfilmentType.DELIVERY
+            else None
+        ),
     )
     total = 0
     for line in payload.items:
@@ -142,19 +155,19 @@ async def place_order(
     # touch the stall's queue for an unpaid order, and nobody is notified yet.
     # The stall first hears about this when the payment webhook lands.
     await publish_order_event(redis, order)
-    return OrderOut.model_validate(order)
+    return OrderWithCodeOut.model_validate(order)
 
 
 @router.get(
     "",
-    response_model=list[OrderOut],
+    response_model=list[OrderWithCodeOut],
     dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
 )
 async def list_my_orders(
     user: User = Depends(require_role(UserRole.CUSTOMER)),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> list[OrderOut]:
+) -> list[OrderWithCodeOut]:
     # No scheduler exists in this project, so the sweep rides on the read that
     # would otherwise display these rows. Cheap: it touches only this customer's
     # abandoned checkouts, and only ones older than the gateway's own expiry.
@@ -163,7 +176,7 @@ async def list_my_orders(
     result = await db.execute(
         order_query(Order.customer_id == user.id).order_by(Order.created_at.desc())
     )
-    return [OrderOut.model_validate(o) for o in result.scalars().all()]
+    return [OrderWithCodeOut.model_validate(o) for o in result.scalars().all()]
 
 
 async def _get_order_for_user(order_id: uuid.UUID, user: User, db: AsyncSession) -> Order:
@@ -192,21 +205,21 @@ async def _get_order_for_user(order_id: uuid.UUID, user: User, db: AsyncSession)
 
 @router.get(
     "/{order_id}",
-    response_model=OrderOut,
+    response_model=OrderWithCodeOut,
     dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
 )
 async def get_order(
     order_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> OrderOut:
+) -> OrderWithCodeOut:
     order = await _get_order_for_user(order_id, user, db)
-    return OrderOut.model_validate(order)
+    return OrderWithCodeOut.model_validate(order)
 
 
 @router.post(
     "/{order_id}/cancel",
-    response_model=OrderOut,
+    response_model=OrderWithCodeOut,
     dependencies=[Depends(limit_by_user("cancel_order", *limits.CANCEL_ORDER))],
 )
 async def cancel_order(
@@ -216,7 +229,7 @@ async def cancel_order(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
     settings: Settings = Depends(get_settings),
-) -> OrderOut:
+) -> OrderWithCodeOut:
     order = await _get_order_for_user(order_id, user, db)
     if order.customer_id != user.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the customer can cancel this order")
@@ -239,19 +252,19 @@ async def cancel_order(
 
     order = await _load_order_with_items(order.id, db)
     await publish_order_event(redis, order)
-    return OrderOut.model_validate(order)
+    return OrderWithCodeOut.model_validate(order)
 
 
 @vendor_orders_router.get(
     "",
-    response_model=list[OrderOut],
+    response_model=list[OrderWithCodeOut],
     dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
 )
 async def list_vendor_orders(
     vendor: Vendor = Depends(get_own_vendor),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> list[OrderOut]:
+) -> list[OrderWithCodeOut]:
     """The stall's queue - which contains only orders somebody has paid for.
 
     The socket filter alone is not enough: it covers what happens while the app
@@ -267,12 +280,12 @@ async def list_vendor_orders(
             Order.status != OrderStatus.AWAITING_PAYMENT,
         ).order_by(Order.created_at.desc())
     )
-    return [OrderOut.model_validate(o) for o in result.scalars().all()]
+    return [OrderWithCodeOut.model_validate(o) for o in result.scalars().all()]
 
 
 @vendor_orders_router.patch(
     "/{order_id}/status",
-    response_model=OrderOut,
+    response_model=OrderWithCodeOut,
     dependencies=[Depends(limit_by_user("order_status", *limits.ORDER_STATUS_UPDATE))],
 )
 async def update_order_status(
@@ -283,7 +296,7 @@ async def update_order_status(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
     settings: Settings = Depends(get_settings),
-) -> OrderOut:
+) -> OrderWithCodeOut:
     order = await _load_order_with_items(order_id, db)
     if order is None or order.vendor_id != vendor.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
@@ -308,21 +321,23 @@ async def update_order_status(
 
     order = await _load_order_with_items(order.id, db)
     await publish_order_event(redis, order)
-    return OrderOut.model_validate(order)
+    return OrderWithCodeOut.model_validate(order)
 
 
 @vendor_orders_router.post(
     "/{order_id}/assign",
-    response_model=OrderOut,
+    response_model=OrderWithCodeOut,
     dependencies=[Depends(limit_by_user("order_assign", *limits.ORDER_ASSIGN))],
 )
 async def assign_order(
     order_id: uuid.UUID,
     payload: OrderAssign,
+    background: BackgroundTasks,
     vendor: Vendor = Depends(get_own_vendor),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
-) -> OrderOut:
+    settings: Settings = Depends(get_settings),
+) -> OrderWithCodeOut:
     """Send a delivery out with one of your riders, or take it yourself.
 
     Assigning is what releases the customer's phone number to the rider, and what
@@ -369,4 +384,16 @@ async def assign_order(
     await db.commit()
     order = await _load_order_with_items(order.id, db)
     await publish_order_event(redis, order)
-    return OrderOut.model_validate(order)
+
+    # The rider app polls, so this is not how they learn about it - it is how
+    # they learn while the phone is in their pocket. Best-effort, after the
+    # response: a merchant assigning an order must not wait on Firebase, or fail
+    # because of it.
+    if order.rider_id is not None:
+        assigned_to = order.rider_id
+        background.add_task(
+            fire_and_log,
+            "notify_rider_assigned",
+            lambda: notify_rider_assigned(order.id, assigned_to, settings),
+        )
+    return OrderWithCodeOut.model_validate(order)

@@ -402,6 +402,27 @@ again. Assignment does not move the order's status - a merchant usually assigns
 while the food is still cooking, and jumping to "out for delivery" would tell the
 customer it had left before it had.
 
+### The handover code
+
+Every delivery order gets a four-digit code. The customer sees it on their
+tracking page from the moment the order is placed; the stall can read it back to
+somebody whose phone has died. **The rider never sees it** — the endpoints the
+rider app calls return a payload with no such field at all — and must type in
+what the customer says to close the order.
+
+That is the whole point: without it, "delivered" is a button a rider can press
+from the stall doorway, and the customer's only recourse is arguing about it
+afterwards.
+
+Four digits rather than six, because it gets said aloud at a hostel gate.
+Guessing is bounded by an attempt limit per order, not by length: five wrong
+tries and the order stops accepting codes entirely, after which the stall
+completes it themselves — so a human decides whether the food actually arrived.
+That same override is what a lost code falls back to.
+
+The code is stored in the clear. It is not a credential for reaching anything,
+the customer already has it, and the stall needs to be able to read it out.
+
 The rider then marks the order picked up (`out_for_delivery`) and delivered
 (`completed`). Those two are the only statuses a rider may set; accepting,
 rejecting and cooking stay the stall's to say. `out_for_delivery` is refused on a
@@ -434,8 +455,11 @@ credential — Railway variables only, never the repo.
 secret — it ships inside every APK — unlike the service-account key, which must
 only ever exist in Railway's variables.
 
-Only the merchant app has Firebase. Riders poll their order list, so the rider
-app needs none of this.
+Riders get one too, when a stall assigns them a delivery. Their app polls every
+twelve seconds, so the notification is not how they find out — it is how they
+find out while the phone is in their pocket. It needs a second Android app in
+the same Firebase project, registered as `food.hungerbirds.rider`, and its own
+`google-services.json` at `apps/rider_app/android/app/google-services.json`.
 
 **How it behaves.** The merchant app registers its token on every start, not
 only the first — Firebase rotates a token on reinstall, on app data being

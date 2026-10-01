@@ -488,13 +488,37 @@ class ApiClient {
   }
 
   /// A rider marking an order picked up or delivered. Nothing else is accepted.
-  Future<Order> riderUpdateOrderStatus(String orderId, OrderStatus status) async {
+  ///
+  /// [deliveryCode] is the four digits the customer reads out, and is required
+  /// to complete a delivery. The rider app never receives it - it is typed in
+  /// from what the customer says, which is what makes it proof of handover.
+  Future<Order> riderUpdateOrderStatus(
+    String orderId,
+    OrderStatus status, {
+    String? deliveryCode,
+  }) async {
     final data = await _request(
       'PATCH',
       '/rider/orders/$orderId/status',
-      body: {'status': status.wire},
+      body: {
+        'status': status.wire,
+        if (deliveryCode != null) 'delivery_code': deliveryCode,
+      },
     ) as Map<String, dynamic>;
     return Order.fromJson(data);
+  }
+
+  /// Tells the server where to notify this rider about new deliveries.
+  Future<void> registerRiderDevice(String fcmToken, {String platform = 'android'}) async {
+    await _request(
+      'POST',
+      '/rider/devices',
+      body: {'fcm_token': fcmToken, 'platform': platform},
+    );
+  }
+
+  Future<void> unregisterRiderDevice(String fcmToken) async {
+    await _request('DELETE', '/rider/devices/$fcmToken');
   }
 
   Future<Order> updateOrderStatus(String orderId, OrderStatus status) async {

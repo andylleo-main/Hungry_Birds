@@ -1,4 +1,4 @@
-from app.db.models.device import VendorDevice
+from app.db.models.device import RiderDevice, VendorDevice
 from app.db.models.menu import MenuCategory, MenuItem
 from app.db.models.order import FulfilmentType, Order, OrderItem, OrderStatus
 from app.db.models.payment import Payment, PaymentEvent, PaymentStatus
@@ -15,6 +15,7 @@ __all__ = [
     "Vendor",
     "VendorDisabledLocation",
     "VendorDevice",
+    "RiderDevice",
     "MenuCategory",
     "MenuItem",
     "Order",

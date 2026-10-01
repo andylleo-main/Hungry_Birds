@@ -93,6 +93,17 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     self_delivery: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # The four digits a customer reads out when their food arrives, and the
+    # rider types in to close the order. Proof that a handover actually
+    # happened, rather than a rider tapping "delivered" from the stall.
+    #
+    # Set on delivery orders only, and stored in the clear on purpose: it is not
+    # a credential for reaching anything, the customer sees it anyway, and the
+    # stall needs to be able to read it back to somebody whose phone has died.
+    # Four digits rather than six because it gets said aloud at a hostel gate -
+    # guessing is bounded by the attempt limit, not by length.
+    delivery_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
     __table_args__ = (
         CheckConstraint(
             "(fulfilment_type = 'delivery' AND delivery_location IS NOT NULL)"

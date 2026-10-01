@@ -106,10 +106,98 @@ class _DeliveryCard extends StatefulWidget {
 class _DeliveryCardState extends State<_DeliveryCard> {
   bool _busy = false;
 
-  Future<void> _move(OrderStatus status) async {
+  /// Asks for the customer's code, then completes the delivery.
+  ///
+  /// Separate from [_move] because this is the one action with something to
+  /// collect first, and because a wrong code has to leave the sheet open with
+  /// the message - sending the rider back to the list to try again would be
+  /// miserable at somebody's door.
+  Future<void> _complete() async {
+    final controller = TextEditingController();
+    String? error;
+    var busy = false;
+
+    try {
+      final code = await showModalBottomSheet<String>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) => Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 20,
+          ),
+          child: StatefulBuilder(
+            builder: (sheetContext, setSheetState) => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Ask for their code',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'The customer has a 4-digit code on their order. Enter it to '
+                  'confirm you handed the food over.',
+                  style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  maxLength: 4,
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 10,
+                  ),
+                  decoration: InputDecoration(
+                    counterText: '',
+                    hintText: '0000',
+                    errorText: error,
+                  ),
+                  onChanged: (_) {
+                    if (error != null) setSheetState(() => error = null);
+                  },
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: busy
+                      ? null
+                      : () {
+                          final entered = controller.text.trim();
+                          if (entered.length != 4) {
+                            setSheetState(() => error = 'Enter the 4 digits');
+                            return;
+                          }
+                          setSheetState(() => busy = true);
+                          Navigator.pop(sheetContext, entered);
+                        },
+                  child: const Text('Confirm delivery'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      if (code == null || !mounted) return;
+      await _move(OrderStatus.completed, deliveryCode: code);
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _move(OrderStatus status, {String? deliveryCode}) async {
     setState(() => _busy = true);
     try {
-      await context.read<RiderState>().setStatus(widget.order, status);
+      await context
+          .read<RiderState>()
+          .setStatus(widget.order, status, deliveryCode: deliveryCode);
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -246,7 +334,7 @@ class _DeliveryCardState extends State<_DeliveryCard> {
       OrderStatus.outForDelivery => SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: () => _move(OrderStatus.completed),
+            onPressed: _complete,
             icon: const Icon(Icons.check, size: 18),
             label: const Text('Delivered'),
           ),

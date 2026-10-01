@@ -1,25 +1,31 @@
+import secrets
 import uuid
 
 import anyio
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import limits
 from app.core.deps import get_current_rider
-from app.core.ratelimit import limit_by_ip, limit_by_user
+from app.core.ratelimit import Limit, consume, limit_by_ip, limit_by_user
 from app.core.redis import get_redis
 from app.core.security import create_rider_access_token
-from app.db.models.order import Order
+from app.db.models.order import Order, OrderStatus
+from app.db.models.device import RiderDevice
 from app.db.models.rider import Rider
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
 from app.modules.auth.passwords import waste_time_like_a_verification
 from app.modules.auth.service import normalize_phone
-from app.modules.orders.schemas import OrderOut, OrderStatusUpdate
+from app.modules.notifications.schemas import DeviceOut, DeviceRegister
+from app.modules.notifications.service import register_rider_device
+from app.modules.orders.schemas import OrderOut, RiderStatusUpdate
 from app.modules.orders.service import (
+    DELIVERY_CODE_ATTEMPT_WINDOW_SECONDS,
+    MAX_DELIVERY_CODE_ATTEMPTS,
     RIDER_ALLOWED_TARGETS,
     assert_transition,
     load_order,
@@ -254,9 +260,85 @@ async def rider_login(
     )
 
 
+async def _check_delivery_code(order: Order, supplied: str | None, redis: Redis) -> None:
+    """Refuse to close a delivery without the code the customer holds.
+
+    Attempt-limited per order rather than per rider or per IP: four digits is ten
+    thousand combinations, which is only hopeless if guessing is bounded. Past
+    the limit the order stops accepting codes entirely and the stall completes it
+    instead - an escape hatch that already existed and is the right one, because
+    somebody then has to decide the food actually arrived.
+    """
+    if not supplied:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Ask the customer for their 4-digit code to complete this delivery.",
+        )
+
+    # Counted before the comparison, so a wrong guess costs an attempt whether or
+    # not the limiter and the check agree about anything else.
+    await consume(
+        redis,
+        "delivery_code",
+        f"order:{order.id}",
+        (Limit(MAX_DELIVERY_CODE_ATTEMPTS, DELIVERY_CODE_ATTEMPT_WINDOW_SECONDS),),
+        fail_open=False,
+    )
+
+    # compare_digest rather than ==, so a wrong code takes the same time to
+    # reject whichever digit is wrong.
+    if not secrets.compare_digest(supplied, order.delivery_code or ""):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "That code does not match. Check it with the customer.",
+        )
+
+
 async def _waste_time() -> None:
     """Spend a real check's worth of work on a miss, off the event loop."""
     await anyio.to_thread.run_sync(waste_time_like_a_verification)
+
+
+@rider_router.post(
+    "/devices",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_by_ip("rider_write", *limits.RIDER_WRITE))],
+)
+async def register_rider_push_device(
+    payload: DeviceRegister,
+    rider: Rider = Depends(get_current_rider),
+    db: AsyncSession = Depends(get_db),
+) -> DeviceOut:
+    """Where to notify this rider about a delivery they have been given.
+
+    Called on every app start, like the merchant app's equivalent: Firebase
+    rotates tokens, and a rider whose token has rotated would quietly stop being
+    told about work.
+    """
+    device = await register_rider_device(rider.id, payload.fcm_token, payload.platform, db)
+    return DeviceOut.model_validate(device)
+
+
+@rider_router.delete(
+    "/devices/{fcm_token}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(limit_by_ip("rider_write", *limits.RIDER_WRITE))],
+)
+async def unregister_rider_push_device(
+    fcm_token: str,
+    rider: Rider = Depends(get_current_rider),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Stop notifying this phone. Scoped to the caller's own rows, so holding
+    somebody else's token is not a way to silence them."""
+    await db.execute(
+        delete(RiderDevice).where(
+            RiderDevice.fcm_token == fcm_token,
+            RiderDevice.rider_id == rider.id,
+        )
+    )
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @rider_router.get(
@@ -301,7 +383,7 @@ async def rider_orders(
 )
 async def rider_update_status(
     order_id: uuid.UUID,
-    payload: OrderStatusUpdate,
+    payload: RiderStatusUpdate,
     rider: Rider = Depends(get_current_rider),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
@@ -312,6 +394,10 @@ async def rider_update_status(
     two statuses that describe their own leg of it. Everything else - accepting,
     rejecting, cooking - stays the stall's to say, which is why the allowed set
     is a named constant rather than the same transition table the merchant uses.
+
+    Completing a delivery also needs the handover code the customer was given.
+    Without it a rider could close an order from the stall doorway, and the
+    customer's only recourse would be arguing about it afterwards.
     """
     result = await db.execute(
         order_query(Order.id == order_id, Order.rider_id == rider.id)
@@ -326,6 +412,9 @@ async def rider_update_status(
             "A rider can only mark an order picked up or delivered",
         )
     assert_transition(order, payload.status)
+
+    if payload.status is OrderStatus.COMPLETED and order.delivery_code:
+        await _check_delivery_code(order, payload.delivery_code, redis)
 
     order.status = payload.status
     await db.commit()

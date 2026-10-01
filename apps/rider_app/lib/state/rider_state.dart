@@ -98,8 +98,15 @@ class RiderState extends ChangeNotifier {
   }
 
   /// Marks an order picked up or delivered. Nothing else is accepted server-side.
-  Future<void> setStatus(Order order, OrderStatus status) async {
-    final updated = await api.riderUpdateOrderStatus(order.id, status);
+  ///
+  /// [deliveryCode] is what the customer reads out, and the server refuses to
+  /// complete a delivery without it.
+  Future<void> setStatus(Order order, OrderStatus status, {String? deliveryCode}) async {
+    final updated = await api.riderUpdateOrderStatus(
+      order.id,
+      status,
+      deliveryCode: deliveryCode,
+    );
     orders = [
       for (final o in orders)
         if (o.id == updated.id) updated else o,

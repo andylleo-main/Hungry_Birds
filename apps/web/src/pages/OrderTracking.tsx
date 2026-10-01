@@ -342,6 +342,27 @@ export default function OrderTracking() {
             ))}
           </ul>
 
+          {/* The handover code. Shown from the moment the order is placed rather
+              than only when a rider is on the way, so it is already on screen
+              when somebody knocks - hunting for it one-handed at a door with
+              food going cold is the thing to avoid. */}
+          {order.fulfilment_type === 'delivery' &&
+            order.delivery_code &&
+            isActive(order.status) && (
+              <div className="rounded-lg border-[1.5px] border-primary bg-primary-tint/40 p-space-md text-center">
+                <p className="text-label-sm uppercase tracking-wide text-on-surface-variant">
+                  Give this to whoever delivers
+                </p>
+                <p className="py-space-xs text-[32px] font-bold leading-none tracking-[0.3em] text-primary">
+                  {order.delivery_code}
+                </p>
+                <p className="text-body-sm text-on-surface-variant">
+                  They need it to close the order, so don't share it until your food
+                  is in your hands.
+                </p>
+              </div>
+            )}
+
           {/* Who is bringing it, once the stall has said. This is the whole point
               of assignment from the customer's side: somebody to ring when they
               are outside the wrong hostel gate. */}
