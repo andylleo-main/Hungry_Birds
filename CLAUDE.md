@@ -43,6 +43,26 @@ Dart packages `hb_shared`, Firebase project `hungrybirds-7779f`.
   students can reach it is free food, so it stays off unless somebody has
   deliberately set it.
 
+## Deployment
+
+Railway project **hungry-birds** (`cbdc33ca-e1a2-4293-aee3-9933a77a1f38`), env
+`production` (`2255069b-a701-4524-bd95-cd87ec4e2cd9`), services `api`, `Postgres`,
+`Redis`. Public at `www.hungrybirds.food`, with
+`api-production-e250.up.railway.app` as the generated fallback.
+
+One service serves everything: the Docker build compiles the web app and the API
+serves it from `backend/static`, with the API under `/api`. So the site follows
+whatever domain points at Railway, and no hostname is baked into the web bundle.
+
+**There is no deploy config in this repo.** `railway.json` was deleted: Railway
+deprecated Config as Code, new services cannot use it, and it was being silently
+ignored while appearing to set the builder, the migration step and the
+healthcheck. Its replacement (`.railway/railway.ts`) is applied by the CLI and is
+*not* read at deploy time either. The settings live on the service, and the README
+lists them. If a deploy ever comes up with no tables, or serves the API but 404s
+the site, check the builder is Dockerfile and the pre-deploy command is still
+`alembic upgrade head`.
+
 ## Secrets
 
 Never paste a credential into a transcript, and never commit one. Firebase
