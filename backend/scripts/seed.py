@@ -1,11 +1,24 @@
-"""Seeds a few demo stalls, menus and an admin user so the apps have
-something to show before real vendors onboard.
+"""Seeds a few demo stalls and menus so the apps have something to show before
+real vendors onboard.
 
 Usage (from backend/, venv active, .env pointing at the target database):
 
     PYTHONPATH=. python scripts/seed.py
 
 Safe to re-run: stalls are matched by name and skipped if they already exist.
+
+Deliberately creates no admin. It used to make admin@bitmesra.ac.in, which was
+inert only because the admin password door was the sole way into that account.
+The moment admin login became the ordinary OTP flow - which is the point - that
+row turned into "whoever receives mail at that address on the institute's domain
+is an admin", on a domain we do not control. Seeding and un-gating admin login
+were each harmless alone and an escalation together.
+
+The demo stall owners below are the same kind of address and stay, because they
+are vendor-role: a stall nobody can receive mail for is a stall nobody can sign
+into, which is exactly what a demo stall should be.
+
+To make a real admin, set BOOTSTRAP_ADMIN_EMAIL - see backend/.env.example.
 """
 
 import asyncio
@@ -18,8 +31,6 @@ from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import async_session_factory
 from app.modules.auth.service import normalize_email
-
-ADMIN_EMAIL = "admin@bitmesra.ac.in"
 
 DEMO_STALLS = [
     {
@@ -88,8 +99,6 @@ async def get_or_create_user(db, email: str, role: UserRole) -> User:
 
 async def seed() -> None:
     async with async_session_factory() as db:
-        await get_or_create_user(db, ADMIN_EMAIL, UserRole.ADMIN)
-
         for stall in DEMO_STALLS:
             existing = await db.execute(
                 select(Vendor).where(Vendor.stall_name == stall["stall_name"])
@@ -127,8 +136,9 @@ async def seed() -> None:
 
         await db.commit()
 
-    print(f"\nDone. Admin account: {ADMIN_EMAIL}")
-    print("Log in with that email in either app to get admin access.")
+    print("\nDone. These stalls are approved and open, so they are visible to")
+    print("students straight away. For an admin account, set BOOTSTRAP_ADMIN_EMAIL")
+    print("to an address you control - this script deliberately creates none.")
 
 
 if __name__ == "__main__":

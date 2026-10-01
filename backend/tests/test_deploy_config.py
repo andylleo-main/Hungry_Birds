@@ -1,14 +1,14 @@
 """Guards on deployment configuration that code review alone would miss."""
 
-import json
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
+# railway.json used to be here. Railway deprecated Config as Code and stopped
+# reading it, so it was deleted; see the deployment section of README.md.
 START_COMMAND_FILES = [
-    REPO / "railway.json",
     REPO / "backend" / "Dockerfile",
     REPO / "backend" / "Procfile",
 ]
@@ -33,16 +33,33 @@ def test_uvicorn_is_started_without_proxy_header_handling(path):
             assert "--no-proxy-headers" in line, f"{path.name}: {line.strip()}"
 
 
-def test_healthcheck_targets_the_readiness_probe():
-    """/health/ready checks Postgres and Redis; /health only proves the process
-    is up, so a deploy that cannot reach its databases would still go live."""
-    config = json.loads((REPO / "railway.json").read_text())
-    assert config["deploy"]["healthcheckPath"] == "/health/ready"
+def test_the_required_service_settings_are_still_written_down():
+    """The deploy settings live on the Railway service now, not in this repo.
 
+    They used to be asserted directly against railway.json. Railway deprecated
+    Config as Code and silently ignored that file, which is how a deployment came
+    up with a migration step it was never running and a database with no tables.
+    Deleting the file removed the lie; it also removed the only thing a test could
+    check, because nothing in a repository can reach a service's settings.
 
-def test_migrations_run_before_a_release_takes_traffic():
-    config = json.loads((REPO / "railway.json").read_text())
-    assert "alembic upgrade head" in config["deploy"]["preDeployCommand"]
+    So this guards the replacement: the README is now the sole record of what has
+    to be set by hand, and losing it would mean the next person rebuilding this
+    service has nothing to go on. Each string below is a setting whose absence
+    breaks the deploy in a way that does not announce itself - no tables, a
+    healthcheck that passes while the database is unreachable, or an API that
+    serves while the web app 404s.
+    """
+    readme = (REPO / "README.md").read_text()
+    for required in (
+        "alembic upgrade head",
+        "/health/ready",
+        "backend/Dockerfile",
+    ):
+        assert required in readme, (
+            f"README.md no longer documents {required!r}. It is the only place "
+            "this is recorded - the Railway service cannot be configured from "
+            "this repository."
+        )
 
 
 def test_the_example_env_does_not_ship_a_usable_secret():
