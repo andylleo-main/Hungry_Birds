@@ -29,6 +29,18 @@ class Settings(BaseSettings):
 
     allowed_email_domain: str = "bitmesra.ac.in"
 
+    # Makes this address an admin at startup, creating the account if it does not
+    # exist yet. It breaks a deadlock that otherwise makes a fresh deployment
+    # impossible to administer: promote_admin.py needs a user who has already
+    # logged in, logging in needs an OTP email, and configuring email is itself
+    # an admin task. Someone has to be let in first.
+    #
+    # Only the role is granted - no password, no session. It is idempotent, so
+    # leaving it set is harmless, and it grants nothing to anybody who cannot
+    # already set environment variables on this deployment (who could grant
+    # themselves admin regardless).
+    bootstrap_admin_email: str = ""
+
     # Lets an admin sign in with a password instead of waiting on an OTP email,
     # which matters because the admin is the account you need when email itself
     # is the thing that is broken. Empty disables the endpoint entirely, so the

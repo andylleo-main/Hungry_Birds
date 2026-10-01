@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -10,11 +11,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import limits
+from app.core.bootstrap import ensure_bootstrap_admin
 from app.core.config import Settings, get_settings
 from app.core.logging import install_log_redaction
 from app.core.ratelimit import Limit, client_ip, consume, limit_by_ip
 from app.core.redis import get_redis
-from app.db.session import get_db
+from app.db.session import async_session_factory, get_db
 from app.modules.admin.router import analytics_router
 from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import router as auth_router
@@ -71,7 +73,23 @@ if settings.cors_origin_list == ['*']:
         '- or empty, which disables cross-origin access entirely.'
     )
 
-app = FastAPI(title="Hungry Birds API")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Startup work that has to happen against a live database.
+
+    Only the admin bootstrap, which does nothing unless BOOTSTRAP_ADMIN_EMAIL is
+    set and never raises - the API must come up even if it fails, since an
+    instance nobody can administer still serves students and stalls.
+
+    Migrations are deliberately not here: they run as Railway's preDeployCommand,
+    once per deploy, rather than racing between replicas on boot.
+    """
+    async with async_session_factory() as db:
+        await ensure_bootstrap_admin(settings, db)
+    yield
+
+
+app = FastAPI(title="Hungry Birds API", lifespan=lifespan)
 
 # A blanket ceiling per address, underneath the per-endpoint limits in
 # app/core/limits.py. Those are sized for each endpoint's specific abuse; this
