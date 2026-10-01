@@ -8,15 +8,19 @@ stall owners work the queue in an Android app, their riders deliver with a third
 The product is **Hungry Birds** — "hungry", never "hunger". There is no such
 thing as "Hunger Birds".
 
-Two places still carry the old misspelling on purpose, and only these two:
+The old misspelling survives on purpose in exactly these places, and nowhere
+else. A `grep -i hunger` turning up anything beyond this list is a bug:
 
-- The `applicationId` history comment in
-  `apps/merchant_app/android/app/build.gradle.kts`, which records
-  `food.hungerbirds.merchant` as a real identifier that really shipped in a
-  build. Rewriting a changelog to pretend the mistake never happened makes the
-  warning it carries incomprehensible.
-- `apps/merchant_app/android/app/google-services.json`, which is stale and is
-  waiting on a fresh Firebase registration.
+- The `applicationId` history comments in both apps'
+  `android/app/build.gradle.kts`, which record `food.hungerbirds.*` as real
+  identifiers that really shipped in a build. Rewriting a changelog to pretend
+  the mistake never happened makes the warning it carries incomprehensible.
+- The explanation of all this in README.md, and this section.
+- A dead `food.hungerbirds.merchant` client inside both apps'
+  `android/app/google-services.json`, left over from the registration made before
+  the rename. The Gradle plugin matches on `applicationId` and ignores the rest,
+  so it costs nothing; deleting that app in the Firebase console and
+  re-downloading is the tidy-up.
 
 The git repository and its clone directory are `Hunger_Birds`. Renaming a GitHub
 repository is the user's call, not something to do while fixing strings.

@@ -26,6 +26,25 @@
     },
     {
       "client_info": {
+        "mobilesdk_app_id": "1:894560089723:android:2fac87bbba2df119a9d4de",
+        "android_client_info": {
+          "package_name": "food.hungrybirds.merchant"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDkDJo44zAW2xFBRR7xXyY0XnXCW2Z5YT8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:894560089723:android:28d24cff40a0a1f1a9d4de",
         "android_client_info": {
           "package_name": "food.hungrybirds.rider"

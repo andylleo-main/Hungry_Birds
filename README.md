@@ -471,10 +471,10 @@ being built, so the same downloaded file can be dropped into both apps. It fails
 the build outright if no client matches, which is how the `hungerbirds`
 misspelling was caught.
 
-> `apps/merchant_app/android/app/google-services.json` is currently **stale**: it
-> was downloaded while that app was still `food.hungerbirds.merchant`. Re-register
-> the merchant app in the Firebase console under `food.hungrybirds.merchant` and
-> replace the file, or its build fails with "No matching client found".
+Both files are the same download and still list a dead
+`food.hungerbirds.merchant` registration from before the rename. Harmless — the
+plugin matches on `applicationId` and ignores the rest — but the Firebase console
+is the place to delete that app, and these files want re-downloading afterwards.
 
 The two apps use different notification channels — `orders` for a stall,
 `deliveries` for a rider — and the backend names the channel per message. They
