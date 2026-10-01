@@ -29,6 +29,21 @@ class AuthStorage {
     await prefs.setString(_refreshKey, refreshToken);
   }
 
+  /// Stores a session that has no refresh token behind it.
+  ///
+  /// The rider app's token is like this: riders sign in at the start of a shift
+  /// and their token simply lasts, with regenerating the password as the way to
+  /// end it early. Clearing the refresh slot matters - ApiClient only attempts a
+  /// refresh when one is present, so leaving a stale value from an earlier login
+  /// would send the rider's 401 down a path that cannot work.
+  Future<void> saveAccessTokenOnly(String accessToken) async {
+    _accessToken = accessToken;
+    _refreshToken = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_accessKey, accessToken);
+    await prefs.remove(_refreshKey);
+  }
+
   Future<void> updateAccessToken(String accessToken) async {
     _accessToken = accessToken;
     final prefs = await SharedPreferences.getInstance();

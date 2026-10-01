@@ -1,0 +1,8 @@
+# Copy to key.properties (same directory) and fill in with the values you chose
+# when generating the keystore. key.properties is gitignored - never commit it.
+#
+# storeFile must be an absolute path, or a path relative to android/app/.
+storePassword=your-keystore-password
+keyPassword=your-key-password
+keyAlias=hungerbirds
+storeFile=/absolute/path/to/hungerbirds-release.jks

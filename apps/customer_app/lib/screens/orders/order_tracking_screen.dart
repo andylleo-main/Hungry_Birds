@@ -236,6 +236,11 @@ class _StatusBanner extends StatelessWidget {
       OrderStatus.accepted => (AppTheme.success, Icons.thumb_up_alt_outlined, 'Order accepted'),
       OrderStatus.preparing => (AppTheme.warning, Icons.soup_kitchen_outlined, 'Being prepared'),
       OrderStatus.ready => (AppTheme.success, Icons.shopping_bag_outlined, 'Ready for pickup'),
+      OrderStatus.outForDelivery => (
+          AppTheme.success,
+          Icons.delivery_dining_outlined,
+          'On its way to you',
+        ),
       OrderStatus.completed => (AppTheme.success, Icons.check_circle_outline, 'Order completed'),
       OrderStatus.rejected => (
           AppTheme.primaryRed,

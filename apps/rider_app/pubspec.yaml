@@ -1,0 +1,32 @@
+name: rider_app
+description: "Hungry Birds rider app: the deliveries a stall has given you."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  hb_shared:
+    path: ../../packages/hb_shared
+  provider: ^6.1.2
+  # Dials the customer from an order card. A rider standing at the wrong gate
+  # needs this more than any other button in the app.
+  url_launcher: ^6.3.1
+  intl: ^0.19.0
+  http: ^1.2.2
+  shared_preferences: ^2.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

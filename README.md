@@ -118,16 +118,17 @@ account even for TestFlight.
 
 ### One-time: create a release keystore
 
-Do this once, on your own machine. The same keystore signs **both** apps.
+Do this once, on your own machine. The same keystore signs **all three** apps.
 
 ```bash
 keytool -genkey -v -keystore ~/hungerbirds-release.jks \
   -keyalg RSA -keysize 2048 -validity 10000 -alias hungerbirds
 ```
 
-Then, in **each** app, copy `android/key.properties.example` to
+Then, in **each** app (`merchant_app`, `rider_app`, and `customer_app` if you
+still build it), copy `android/key.properties.example` to
 `android/key.properties` and fill in the password, alias, and absolute path to
-the `.jks`. Both files are gitignored and must stay that way.
+the `.jks`. Those files are gitignored and must stay that way.
 
 > **Back up the `.jks` file and its passwords somewhere permanent.** Android
 > identifies an app by its signing key. If you lose the keystore, you cannot
@@ -141,11 +142,18 @@ uninstall/reinstall trap applies.
 
 ### Build
 
+Same command for each app — `merchant_app` for stall owners, `rider_app` for
+the people who carry the deliveries:
+
 ```bash
-cd apps/merchant_app
+cd apps/merchant_app        # or apps/rider_app
 flutter build apk --release --split-per-abi \
   --dart-define=API_BASE_URL=https://<your-service>.up.railway.app/api
 ```
+
+They are separate apps with separate package ids
+(`food.hungerbirds.merchant`, `food.hungerbirds.rider`), so a merchant who also
+rides can have both installed at once.
 
 Output lands in `build/app/outputs/flutter-apk/`. Hand out
 **`app-arm64-v8a-release.apk`** — essentially every phone from the last several

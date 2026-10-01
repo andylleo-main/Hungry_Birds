@@ -1,19 +1,40 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, orderSocketUrl } from '../lib/api';
-import type { Order, OrderStatus } from '../lib/types';
+import type { FulfilmentType, Order, OrderStatus } from '../lib/types';
 import { STATUS_LABEL, isActive } from '../lib/types';
 import { dayAndTime, rupees, timeOfDay } from '../lib/format';
 import { ErrorRetry, Icon, PageLoader } from '../components/ui';
 
-/** The happy path, in order. Rejected/cancelled are terminal detours. */
-const TIMELINE: { status: OrderStatus; icon: string; blurb: string }[] = [
-  { status: 'placed', icon: 'receipt_long', blurb: 'Sent to the stall' },
-  { status: 'accepted', icon: 'check_circle', blurb: 'The stall confirmed your order' },
-  { status: 'preparing', icon: 'skillet', blurb: 'Being cooked right now' },
-  { status: 'ready', icon: 'shopping_bag', blurb: 'Ready to hand over' },
-  { status: 'completed', icon: 'done_all', blurb: 'Picked up and paid' },
-];
+type Step = { status: OrderStatus; icon: string; blurb: string };
+
+/**
+ * The happy path, in order. Rejected/cancelled are terminal detours.
+ *
+ * Built per order rather than fixed, because the two kinds of order genuinely
+ * have different steps: a delivery gains an out-for-delivery stage and ends with
+ * somebody arriving, a dine-in ends at the counter.
+ */
+function timelineFor(fulfilment: FulfilmentType): Step[] {
+  const start: Step[] = [
+    { status: 'placed', icon: 'receipt_long', blurb: 'Sent to the stall' },
+    { status: 'accepted', icon: 'check_circle', blurb: 'The stall confirmed your order' },
+    { status: 'preparing', icon: 'skillet', blurb: 'Being cooked right now' },
+  ];
+  if (fulfilment === 'delivery') {
+    return [
+      ...start,
+      { status: 'ready', icon: 'shopping_bag', blurb: 'Packed and ready to go out' },
+      { status: 'out_for_delivery', icon: 'delivery_dining', blurb: 'On its way to you' },
+      { status: 'completed', icon: 'done_all', blurb: 'Delivered and paid' },
+    ];
+  }
+  return [
+    ...start,
+    { status: 'ready', icon: 'shopping_bag', blurb: 'Ready at the counter' },
+    { status: 'completed', icon: 'done_all', blurb: 'Picked up and paid' },
+  ];
+}
 
 export default function OrderTracking() {
   const { orderId = '' } = useParams();
@@ -107,7 +128,8 @@ export default function OrderTracking() {
   }
   if (!order) return <PageLoader />;
 
-  const currentIndex = TIMELINE.findIndex((s) => s.status === order.status);
+  const timeline = timelineFor(order.fulfilment_type);
+  const currentIndex = timeline.findIndex((s) => s.status === order.status);
   const derailed = order.status === 'rejected' || order.status === 'cancelled';
   const shortId = order.id.slice(0, 8).toUpperCase();
 
@@ -181,7 +203,7 @@ export default function OrderTracking() {
             </div>
           ) : (
             <ol className="flex flex-col">
-              {TIMELINE.map((step, index) => {
+              {timeline.map((step, index) => {
                 const done = index < currentIndex;
                 const current = index === currentIndex;
                 const pending = index > currentIndex;
@@ -197,7 +219,7 @@ export default function OrderTracking() {
                       >
                         <Icon name={done ? 'check' : step.icon} className="text-[18px]" />
                       </span>
-                      {index < TIMELINE.length - 1 && (
+                      {index < timeline.length - 1 && (
                         <span
                           className={`w-0.5 flex-1 ${done ? 'bg-primary' : 'bg-outline'}`}
                           style={{ minHeight: 28 }}
@@ -253,6 +275,38 @@ export default function OrderTracking() {
               </li>
             ))}
           </ul>
+
+          {/* Who is bringing it, once the stall has said. This is the whole point
+              of assignment from the customer's side: somebody to ring when they
+              are outside the wrong hostel gate. */}
+          {order.fulfilment_type === 'delivery' && order.rider_phone && (
+            <div className="flex items-center gap-space-sm rounded-lg border-[1.5px] border-primary bg-primary-tint/40 px-space-sm py-space-sm">
+              <Icon name="sports_motorsports" className="text-[22px] text-primary" />
+              <div className="min-w-0 flex-1">
+                <p className="text-label-sm uppercase tracking-wide text-on-surface-variant">
+                  Your rider
+                </p>
+                <p className="truncate text-label-lg text-on-surface">
+                  {order.rider_name ?? 'On the way'}
+                </p>
+              </div>
+              <a
+                href={`tel:${order.rider_phone}`}
+                className="btn-primary shrink-0 px-space-md py-space-xs"
+              >
+                <Icon name="call" className="text-[18px]" />
+                Call
+              </a>
+            </div>
+          )}
+
+          {order.fulfilment_type === 'delivery' && !order.rider_phone && (
+            <p className="rounded bg-surface-container px-space-sm py-space-sm text-body-sm text-on-surface-variant">
+              {order.self_delivery
+                ? "The stall is bringing this one over themselves."
+                : 'The stall will let you know who is bringing it.'}
+            </p>
+          )}
 
           {/* How this order is arriving. For a delivery the destination is the
               thing the customer most wants confirmed back to them. */}

@@ -5,6 +5,7 @@ enum OrderStatus {
   accepted,
   preparing,
   ready,
+  outForDelivery,
   completed,
   rejected,
   cancelled,
@@ -21,8 +22,24 @@ enum OrderStatus {
   /// backend shipped a new status is not an acceptable way to find out.
   unknown;
 
+  /// The value the API uses. Not [name]: Dart enum members are camelCase and the
+  /// API is snake_case, so outForDelivery would otherwise be sent as
+  /// "outForDelivery" and rejected - and read back as [unknown], which would
+  /// look like a server problem rather than a client one.
+  String get wire => switch (this) {
+        OrderStatus.placed => 'placed',
+        OrderStatus.accepted => 'accepted',
+        OrderStatus.preparing => 'preparing',
+        OrderStatus.ready => 'ready',
+        OrderStatus.outForDelivery => 'out_for_delivery',
+        OrderStatus.completed => 'completed',
+        OrderStatus.rejected => 'rejected',
+        OrderStatus.cancelled => 'cancelled',
+        OrderStatus.unknown => 'unknown',
+      };
+
   static OrderStatus fromJson(String value) => OrderStatus.values.firstWhere(
-        (e) => e.name == value,
+        (e) => e.wire == value,
         orElse: () => OrderStatus.unknown,
       );
 
@@ -30,7 +47,8 @@ enum OrderStatus {
         OrderStatus.placed => 'Order placed',
         OrderStatus.accepted => 'Accepted',
         OrderStatus.preparing => 'Preparing',
-        OrderStatus.ready => 'Ready for pickup',
+        OrderStatus.ready => 'Ready',
+        OrderStatus.outForDelivery => 'Out for delivery',
         OrderStatus.completed => 'Completed',
         OrderStatus.rejected => 'Rejected',
         OrderStatus.cancelled => 'Cancelled',
@@ -42,6 +60,7 @@ enum OrderStatus {
       this == OrderStatus.accepted ||
       this == OrderStatus.preparing ||
       this == OrderStatus.ready ||
+      this == OrderStatus.outForDelivery ||
       // Counted as active on purpose. If a newer server sends a status this
       // build cannot name, showing the order as something odd is far safer for
       // a stall than filing it under "done" and hiding it.
@@ -97,6 +116,16 @@ class Order {
   final String? deliveryLocation;
   final String? deliveryLocationLabel;
 
+  /// Who is carrying it. [riderPhone] is what the customer's call button dials,
+  /// and both are null until the merchant assigns the order - so a rider's
+  /// number never reaches a customer they are not delivering to.
+  final String? riderId;
+  final String? riderName;
+  final String? riderPhone;
+
+  /// The merchant is taking this one themselves.
+  final bool selfDelivery;
+
   const Order({
     required this.id,
     required this.vendorId,
@@ -113,7 +142,14 @@ class Order {
     required this.fulfilmentType,
     required this.deliveryLocation,
     required this.deliveryLocationLabel,
+    this.riderId,
+    this.riderName,
+    this.riderPhone,
+    this.selfDelivery = false,
   });
+
+  /// True once somebody is carrying it, whether a rider or the merchant.
+  bool get hasCourier => riderId != null || selfDelivery;
 
   bool get isDelivery => fulfilmentType == FulfilmentType.delivery;
 
@@ -139,5 +175,9 @@ class Order {
         ),
         deliveryLocation: json['delivery_location'] as String?,
         deliveryLocationLabel: json['delivery_location_label'] as String?,
+        riderId: json['rider_id'] as String?,
+        riderName: json['rider_name'] as String?,
+        riderPhone: json['rider_phone'] as String?,
+        selfDelivery: (json['self_delivery'] as bool?) ?? false,
       );
 }

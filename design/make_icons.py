@@ -66,7 +66,7 @@ def foreground(master: Image.Image, size: int) -> Image.Image:
 def main() -> None:
     master = Image.open(MASTER).convert("RGBA")
 
-    for app in ("merchant_app", "customer_app"):
+    for app in ("merchant_app", "customer_app", "rider_app"):
         res = os.path.join(ROOT, "apps", app, "android", "app", "src", "main", "res")
         if not os.path.isdir(res):
             continue

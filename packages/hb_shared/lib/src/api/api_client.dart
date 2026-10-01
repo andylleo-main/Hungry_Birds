@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/fulfilment.dart';
 import '../models/order.dart';
+import '../models/rider.dart';
 import '../models/user.dart';
 import '../models/vendor.dart';
 import '../models/menu.dart';
@@ -421,11 +422,123 @@ class ApiClient {
     return data.map((e) => Order.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  /// Sends a delivery out with a rider, or with the merchant themselves.
+  ///
+  /// Pass a [riderId] or set [selfDelivery]; passing both is refused. Passing
+  /// neither un-assigns the order, which is what a merchant needs when a rider
+  /// calls in sick after being given it.
+  Future<Order> assignOrder(
+    String orderId, {
+    String? riderId,
+    bool selfDelivery = false,
+  }) async {
+    final data = await _request(
+      'POST',
+      '/vendors/me/orders/$orderId/assign',
+      body: {
+        if (riderId != null) 'rider_id': riderId,
+        'self_delivery': selfDelivery,
+      },
+    ) as Map<String, dynamic>;
+    return Order.fromJson(data);
+  }
+
+  // --- Riders (the merchant's own) ---
+
+  Future<List<Rider>> myRiders() async {
+    final data = await _request('GET', '/vendors/me/riders') as List;
+    return data.map((e) => Rider.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// Adds a rider and returns the one readable copy of their password.
+  ///
+  /// The server stores only a hash, so this response is the only place the
+  /// password ever exists. Show it, and say so.
+  Future<RiderCredentials> createRider({
+    required String displayName,
+    required String phone,
+    String? loginId,
+  }) async {
+    final data = await _request(
+      'POST',
+      '/vendors/me/riders',
+      body: {
+        'display_name': displayName,
+        'phone': phone,
+        if (loginId != null && loginId.isNotEmpty) 'login_id': loginId,
+      },
+    ) as Map<String, dynamic>;
+    return RiderCredentials.fromJson(data);
+  }
+
+  Future<Rider> updateRider(
+    String riderId, {
+    String? displayName,
+    String? phone,
+    bool? isActive,
+  }) async {
+    final body = <String, dynamic>{};
+    if (displayName != null) body['display_name'] = displayName;
+    if (phone != null) body['phone'] = phone;
+    if (isActive != null) body['is_active'] = isActive;
+    final data =
+        await _request('PATCH', '/vendors/me/riders/$riderId', body: body) as Map<String, dynamic>;
+    return Rider.fromJson(data);
+  }
+
+  /// Issues a new password and returns it. This also signs the rider's current
+  /// device out, which is the point when somebody has left.
+  Future<RiderCredentials> regenerateRiderPassword(String riderId) async {
+    final data = await _request('POST', '/vendors/me/riders/$riderId/password')
+        as Map<String, dynamic>;
+    return RiderCredentials.fromJson(data);
+  }
+
+  // --- The rider app ---
+
+  /// Signs a rider in with the id and password their stall gave them.
+  ///
+  /// Stores the token without a refresh token, because rider sessions have no
+  /// refresh flow: they last the shift, and regenerating the password is what
+  /// ends one early.
+  Future<RiderSession> riderLogin(String loginId, String password) async {
+    final data = await _request(
+      'POST',
+      '/auth/rider/login',
+      body: {'login_id': loginId, 'password': password},
+      auth: false,
+    ) as Map<String, dynamic>;
+    final session = RiderSession.fromJson(data);
+    await authStorage.saveAccessTokenOnly(session.accessToken);
+    return session;
+  }
+
+  Future<Rider> riderMe() async {
+    final data = await _request('GET', '/rider/me') as Map<String, dynamic>;
+    return Rider.fromJson(data);
+  }
+
+  /// The orders this rider has been given, newest first. Polled while on shift.
+  Future<List<Order>> riderOrders() async {
+    final data = await _request('GET', '/rider/orders') as List;
+    return data.map((e) => Order.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// A rider marking an order picked up or delivered. Nothing else is accepted.
+  Future<Order> riderUpdateOrderStatus(String orderId, OrderStatus status) async {
+    final data = await _request(
+      'PATCH',
+      '/rider/orders/$orderId/status',
+      body: {'status': status.wire},
+    ) as Map<String, dynamic>;
+    return Order.fromJson(data);
+  }
+
   Future<Order> updateOrderStatus(String orderId, OrderStatus status) async {
     final data = await _request(
       'PATCH',
       '/vendors/me/orders/$orderId/status',
-      body: {'status': status.name},
+      body: {'status': status.wire},
     ) as Map<String, dynamic>;
     return Order.fromJson(data);
   }

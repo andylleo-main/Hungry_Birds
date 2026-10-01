@@ -134,6 +134,7 @@ class _StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = switch (status) {
       OrderStatus.completed || OrderStatus.ready || OrderStatus.accepted => AppTheme.success,
+      OrderStatus.outForDelivery => AppTheme.success,
       OrderStatus.placed || OrderStatus.preparing => AppTheme.warning,
       OrderStatus.rejected => AppTheme.primaryRed,
       OrderStatus.cancelled => AppTheme.textSecondary,

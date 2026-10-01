@@ -6,6 +6,7 @@ import '../state/merchant_state.dart';
 import '../state/orders_state.dart';
 import 'menu_tab.dart';
 import 'orders_tab.dart';
+import 'riders_tab.dart';
 import 'stall_tab.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -27,7 +28,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Scaffold(
         body: IndexedStack(
           index: _index,
-          children: const [OrdersTab(), MenuTab(), StallTab()],
+          children: const [OrdersTab(), MenuTab(), RidersTab(), StallTab()],
         ),
         bottomNavigationBar: BottomNavigationBar(
           currentIndex: _index,
@@ -42,6 +43,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               icon: Icon(Icons.restaurant_menu_outlined),
               activeIcon: Icon(Icons.restaurant_menu),
               label: 'Menu',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.pedal_bike_outlined),
+              activeIcon: Icon(Icons.pedal_bike),
+              label: 'Riders',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.storefront_outlined),

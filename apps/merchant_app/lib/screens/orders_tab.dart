@@ -114,8 +114,22 @@ class _OrderCard extends StatefulWidget {
   State<_OrderCard> createState() => _OrderCardState();
 }
 
+/// What the assign sheet came back with: a rider, the merchant, or nobody.
+class _Assignment {
+  const _Assignment({this.riderId, this.selfDelivery = false});
+
+  final String? riderId;
+  final bool selfDelivery;
+}
+
 class _OrderCardState extends State<_OrderCard> {
   bool _busy = false;
+
+  void _say(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 
   Future<void> _move(OrderStatus status) async {
     setState(() => _busy = true);
@@ -225,6 +239,10 @@ class _OrderCardState extends State<_OrderCard> {
               const SizedBox(height: 10),
               _CustomerContact(name: order.customerName, phone: order.customerPhone!),
             ],
+            if (widget.live && order.isDelivery) ...[
+              const SizedBox(height: 10),
+              _courierRow(order),
+            ],
             if (widget.live) ...[
               const SizedBox(height: 12),
               _actions(order),
@@ -233,6 +251,127 @@ class _OrderCardState extends State<_OrderCard> {
         ),
       ),
     );
+  }
+
+  /// Who is carrying this delivery, and the button to change that.
+  Widget _courierRow(Order order) {
+    final String who;
+    if (order.selfDelivery) {
+      who = "You're taking this one";
+    } else if (order.riderName != null) {
+      who = 'With ${order.riderName}';
+    } else {
+      who = 'Nobody assigned yet';
+    }
+
+    return Row(
+      children: [
+        Icon(
+          order.hasCourier ? Icons.person : Icons.person_outline,
+          size: 18,
+          color: order.hasCourier ? AppTheme.success : AppTheme.warning,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            who,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+        ),
+        TextButton(
+          onPressed: _busy ? null : () => _assign(order),
+          child: Text(order.hasCourier ? 'Change' : 'Assign'),
+        ),
+      ],
+    );
+  }
+
+  /// Picks who takes this delivery out.
+  ///
+  /// The rider list is fetched when the sheet opens rather than held in state:
+  /// it is small, it changes rarely, and a stale list here would mean offering a
+  /// rider who was switched off since the queue was last loaded.
+  Future<void> _assign(Order order) async {
+    final api = context.read<ApiClient>();
+    List<Rider> riders;
+    try {
+      riders = await api.myRiders();
+    } on ApiException catch (e) {
+      if (mounted) _say(e.message);
+      return;
+    } catch (_) {
+      if (mounted) _say("Couldn't load your riders. Check your connection.");
+      return;
+    }
+    if (!mounted) return;
+
+    final active = riders.where((r) => r.isActive).toList();
+
+    final choice = await showModalBottomSheet<_Assignment>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'Who is taking this out?',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.storefront),
+              title: const Text("I'll take it myself"),
+              selected: order.selfDelivery,
+              onTap: () => Navigator.pop(context, const _Assignment(selfDelivery: true)),
+            ),
+            for (final r in active)
+              ListTile(
+                leading: const Icon(Icons.pedal_bike),
+                title: Text(r.displayName),
+                subtitle: Text(r.phone),
+                selected: order.riderId == r.id,
+                onTap: () => Navigator.pop(context, _Assignment(riderId: r.id)),
+              ),
+            if (active.isEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: Text(
+                  'No active riders. Add one on the Riders tab, or take this '
+                  'delivery yourself.',
+                  style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                ),
+              ),
+            if (order.hasCourier)
+              ListTile(
+                leading: const Icon(Icons.person_off_outlined),
+                title: const Text('Nobody for now'),
+                onTap: () => Navigator.pop(context, const _Assignment()),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      await api.assignOrder(
+        order.id,
+        riderId: choice.riderId,
+        selfDelivery: choice.selfDelivery,
+      );
+      // The queue already updates itself from the socket broadcast the assign
+      // triggers, so there is nothing to reload here.
+    } on ApiException catch (e) {
+      if (mounted) _say(e.message);
+    } catch (_) {
+      if (mounted) _say("Couldn't assign that. Check your connection.");
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Widget _actions(Order order) {
@@ -278,19 +417,74 @@ class _OrderCardState extends State<_OrderCard> {
           width: double.infinity,
           child: ElevatedButton(
             onPressed: () => _move(OrderStatus.ready),
-            child: const Text('Mark ready for pickup'),
+            child: Text(order.isDelivery ? 'Mark ready to go out' : 'Mark ready for pickup'),
           ),
         ),
-      OrderStatus.ready => SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () => _move(OrderStatus.completed),
-            child: const Text('Mark completed'),
-          ),
-        ),
+      // A delivery the merchant is taking themselves is theirs to mark out and
+      // then delivered. One assigned to a rider is marked from the rider's app,
+      // so the stall is told rather than asked.
+      OrderStatus.ready => order.isDelivery
+          ? (order.selfDelivery
+              ? SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => _move(OrderStatus.outForDelivery),
+                    child: const Text('Heading out with it'),
+                  ),
+                )
+              : order.riderId != null
+                  ? _Waiting(text: '${order.riderName ?? 'Your rider'} collects it from you')
+                  : const _Waiting(text: 'Assign a rider, or take it yourself'))
+          : SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => _move(OrderStatus.completed),
+                child: const Text('Mark completed'),
+              ),
+            ),
+      OrderStatus.outForDelivery => order.selfDelivery
+          ? SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => _move(OrderStatus.completed),
+                child: const Text('Delivered'),
+              ),
+            )
+          : _Waiting(text: '${order.riderName ?? 'Your rider'} is on the way'),
       _ => const SizedBox.shrink(),
     };
   }
+}
+
+/// A line of text where a button would be, for a step that is somebody else's
+/// to take. Better than a disabled button, which reads as something the merchant
+/// ought to be able to press.
+class _Waiting extends StatelessWidget {
+  const _Waiting({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.textSecondary.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.hourglass_empty, size: 16, color: AppTheme.textSecondary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 class _StatusChip extends StatelessWidget {
@@ -302,6 +496,7 @@ class _StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = switch (status) {
       OrderStatus.completed || OrderStatus.ready || OrderStatus.accepted => AppTheme.success,
+      OrderStatus.outForDelivery => AppTheme.success,
       OrderStatus.placed || OrderStatus.preparing => AppTheme.warning,
       OrderStatus.rejected => AppTheme.primaryRed,
       OrderStatus.cancelled => AppTheme.textSecondary,

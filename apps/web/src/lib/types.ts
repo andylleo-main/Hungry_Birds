@@ -67,6 +67,7 @@ export type OrderStatus =
   | 'accepted'
   | 'preparing'
   | 'ready'
+  | 'out_for_delivery'
   | 'completed'
   | 'rejected'
   | 'cancelled';
@@ -96,9 +97,24 @@ export interface Order {
   delivery_location: string | null;
   /** The human name of the drop-off point; the code is what the API takes. */
   delivery_location_label: string | null;
+  /**
+   * Who is bringing it. Both names are null until the stall assigns the order,
+   * so a rider's number is never shown to a customer they are not delivering to.
+   */
+  rider_id: string | null;
+  rider_name: string | null;
+  rider_phone: string | null;
+  /** The stall is delivering this one themselves. */
+  self_delivery: boolean;
 }
 
-export const ACTIVE_STATUSES: OrderStatus[] = ['placed', 'accepted', 'preparing', 'ready'];
+export const ACTIVE_STATUSES: OrderStatus[] = [
+  'placed',
+  'accepted',
+  'preparing',
+  'ready',
+  'out_for_delivery',
+];
 
 export function isActive(status: OrderStatus): boolean {
   return ACTIVE_STATUSES.includes(status);
@@ -108,7 +124,8 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   placed: 'Order placed',
   accepted: 'Accepted',
   preparing: 'Preparing',
-  ready: 'Ready for pickup',
+  ready: 'Ready',
+  out_for_delivery: 'Out for delivery',
   completed: 'Completed',
   rejected: 'Rejected',
   cancelled: 'Cancelled',
