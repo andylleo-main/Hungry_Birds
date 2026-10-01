@@ -33,7 +33,23 @@ EARNING_STATUSES = [
     OrderStatus.ACCEPTED,
     OrderStatus.PREPARING,
     OrderStatus.READY,
+    OrderStatus.OUT_FOR_DELIVERY,
     OrderStatus.COMPLETED,
+]
+
+# Orders somebody is still working on - what an admin wants at a glance.
+#
+# Listed here rather than inline in the query, and next to EARNING_STATUSES, so
+# the two are read together. out_for_delivery was missing after riders shipped,
+# which left an order with a rider on the way counted as neither active nor
+# finished. awaiting_payment is deliberately absent: nobody is working on an
+# order nobody has paid for, and no stall has even seen it.
+ACTIVE_STATUSES = [
+    OrderStatus.PLACED,
+    OrderStatus.ACCEPTED,
+    OrderStatus.PREPARING,
+    OrderStatus.READY,
+    OrderStatus.OUT_FOR_DELIVERY,
 ]
 
 
@@ -106,16 +122,7 @@ async def build_analytics(days: int, db: AsyncSession) -> AnalyticsOut:
     active_orders = await db.scalar(
         select(func.count())
         .select_from(Order)
-        .where(
-            Order.status.in_(
-                [
-                    OrderStatus.PLACED,
-                    OrderStatus.ACCEPTED,
-                    OrderStatus.PREPARING,
-                    OrderStatus.READY,
-                ]
-            )
-        )
+        .where(Order.status.in_(ACTIVE_STATUSES))
     )
 
     # --- orders per day -----------------------------------------------------
