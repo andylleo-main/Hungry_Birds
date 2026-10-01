@@ -5,10 +5,12 @@
 # This exists because three things can go wrong at build time without saying so,
 # each producing an APK that installs, runs, and is wrong:
 #
-#   1. Forgetting --dart-define=API_BASE_URL. AppConfig falls back to
-#      http://localhost:8000/api, so the app reaches nothing from a phone. The
-#      value is a compile-time const, so it is baked in - changing it later means
-#      rebuilding AND reinstalling everywhere.
+#   1. Forgetting --dart-define=API_BASE_URL. The value is a compile-time const,
+#      so it is baked into the APK - changing it later means rebuilding AND
+#      reinstalling everywhere. AppConfig defaults to the live domain now, so a
+#      forgotten flag no longer points the app at nothing; it is still demanded
+#      below, because a default is a safety net against a silent mistake, not a
+#      statement of which backend you meant to build against.
 #   2. Building without android/key.properties. Gradle deliberately falls back to
 #      the debug key so `flutter run --release` works on a fresh clone. For
 #      anything handed to somebody else that fallback is the worst case: the debug

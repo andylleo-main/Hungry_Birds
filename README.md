@@ -193,7 +193,7 @@ licences are all required, and a missing piece shows up as a Gradle error rather
 than anything about the SDK.
 
 ```bash
-API_BASE_URL=https://<your-service>.up.railway.app/api ./scripts/build_apks.sh
+API_BASE_URL=https://www.hungrybirds.food/api ./scripts/build_apks.sh
 ```
 
 Both apps, release-signed, arm64 copies collected into `dist/` under names you can
