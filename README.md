@@ -1,15 +1,22 @@
 # Hungry Birds
 
 Campus food ordering for BIT Mesra. Students browse the food stalls on campus,
-place cash-on-delivery orders, and watch the status update live; stall owners
-manage their menu and work through incoming orders from a separate app.
+pay for an order up front, and watch the status update live; stall owners work the
+queue from an Android app and either serve it themselves or hand it to one of their
+riders to deliver.
 
-- **Customer app** (Flutter) — browse stalls, order, track live
-- **Merchant app** (Flutter) — stall dashboard, live order queue, menu management
-- **Backend** (FastAPI + Postgres + Redis) — API, auth, realtime
+- **Web app** (React) — students browse, order and track; the admin panel is built in
+- **Merchant app** (Flutter/Android) — stall dashboard, live order queue, menu, riders
+- **Rider app** (Flutter/Android) — the deliveries a stall has assigned you
+- **Backend** (FastAPI + Postgres + Redis) — API, auth, realtime, payments, push
 
-Sign-up is restricted to `@bitmesra.ac.in` email addresses. Payment is cash
-only — there is no payment gateway.
+Students sign in with an `@bitmesra.ac.in` address; stall owners may register with
+any address but can only sign in from the merchant app, and only once an admin has
+approved their stall. See [Who signs in where](#who-signs-in-where).
+
+Every order is paid online through Cashfree before any stall sees it. There is no
+cash on delivery. For testing before the gateway credentials exist, `PAYMENTS_MODE=mock`
+confirms payments without charging anything — see [Payments](#payments).
 
 ## Repository layout
 
@@ -181,8 +188,34 @@ correct.
 
 ### Build
 
-Same command for each app — `merchant_app` for stall owners, `rider_app` for
-the people who carry the deliveries:
+`flutter doctor` should be clean first — the Android SDK, a JDK and accepted
+licences are all required, and a missing piece shows up as a Gradle error rather
+than anything about the SDK.
+
+```bash
+API_BASE_URL=https://<your-service>.up.railway.app/api ./scripts/build_apks.sh
+```
+
+Both apps, release-signed, arm64 copies collected into `dist/` under names you can
+hand over without choosing between three files. Add an app name
+(`./scripts/build_apks.sh rider_app`) to build just one.
+
+The script exists because three mistakes here are invisible at build time and all
+three produce an APK that installs and runs and is wrong, so it turns each into a
+hard failure:
+
+- **No `API_BASE_URL`.** `AppConfig` falls back to `http://localhost:8000/api`, so
+  the app reaches nothing from a phone. It is a compile-time constant, so the host
+  is baked in — changing it later means rebuilding *and* reinstalling everywhere.
+  There is deliberately no default.
+- **No `key.properties`.** Gradle falls back to the debug key, as described above,
+  and succeeds. The script refuses before spending the build time, and also fails if
+  the output comes out debug-signed anyway — which means `key.properties` does not
+  match what is inside the `.jks`.
+- **The wrong ABI.** `--split-per-abi` writes three APKs and
+  `app-armeabi-v7a-release.apk` installs quite happily on an arm64 phone.
+
+For one app, unsigned, or a different ABI, call Flutter directly:
 
 ```bash
 cd apps/merchant_app        # or apps/rider_app
@@ -201,9 +234,9 @@ rides can have both installed at once.
 > Nothing fails, which is what makes it confusing. Uninstall the old one by hand,
 > once, on every phone that has it.
 
-The source package moved with the rename, so build from clean the first time after
-pulling it — Gradle's incremental state still holds generated sources under the old
-package name:
+The source package moved with the rename, so if you call Flutter directly, build
+from clean the first time after pulling it — Gradle's incremental state still holds
+generated sources under the old package name. `build_apks.sh` already does this.
 
 ```bash
 flutter clean && flutter pub get

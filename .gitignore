@@ -24,6 +24,10 @@ apps/**/android/key.properties
 *.jks
 *.keystore
 
+# Release APKs collected by scripts/build_apks.sh. Build outputs, and far too
+# large for git - hand them out directly.
+dist/
+
 # Web app
 backend/static/
 node_modules/
