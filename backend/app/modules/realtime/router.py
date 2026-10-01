@@ -17,7 +17,7 @@ from app.db.models.order import Order
 from app.db.models.user import User, UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
-from app.modules.orders.service import order_channel, vendor_channel
+from app.modules.orders.service import may_view_order, order_channel, vendor_channel
 from app.modules.realtime.service import (
     acquire_socket_slot,
     issue_ticket,
@@ -121,15 +121,14 @@ async def ws_order_tracking(
     user = await _authenticate_ws(ticket, db, redis)
     order = await db.get(Order, order_id) if user is not None else None
 
-    authorized = False
-    if user is not None and order is not None:
-        is_owner_customer = order.customer_id == user.id
-        is_owner_vendor = False
-        if user.role == UserRole.VENDOR:
-            result = await db.execute(select(Vendor).where(Vendor.user_id == user.id))
-            vendor = result.scalar_one_or_none()
-            is_owner_vendor = vendor is not None and vendor.id == order.vendor_id
-        authorized = is_owner_customer or is_owner_vendor or user.role == UserRole.ADMIN
+    # The same predicate the HTTP route uses. This branch used to be a second
+    # copy that had drifted: it let a stall subscribe to an order of theirs that
+    # nobody had paid for, which GET /orders/{id} refuses.
+    authorized = (
+        order is not None
+        and user is not None
+        and await may_view_order(order, user, db)
+    )
 
     if not authorized:
         await websocket.close(code=CLOSE_UNAUTHORIZED)

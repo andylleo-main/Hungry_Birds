@@ -33,6 +33,7 @@ from app.modules.orders.service import (
     assert_transition,
     generate_delivery_code,
     load_order,
+    may_view_order,
     order_query,
     publish_order_event,
 )
@@ -184,21 +185,11 @@ async def _get_order_for_user(order_id: uuid.UUID, user: User, db: AsyncSession)
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
 
-    is_owner_customer = order.customer_id == user.id
-    is_owner_vendor = False
-    if user.role == UserRole.VENDOR:
-        result = await db.execute(select(Vendor).where(Vendor.user_id == user.id))
-        vendor = result.scalar_one_or_none()
-        # The vendor branch only - and only for a paid order. The customer must
-        # keep seeing their own unpaid order so the tracking page can tell them
-        # to finish paying; the stall has no business with it until it is paid.
-        is_owner_vendor = (
-            vendor is not None
-            and vendor.id == order.vendor_id
-            and order.status != OrderStatus.AWAITING_PAYMENT
-        )
-
-    if not (is_owner_customer or is_owner_vendor or user.role == UserRole.ADMIN):
+    # Shared with the order WebSocket, which used to carry its own slightly
+    # different copy of this rule. The customer keeps seeing their own unpaid
+    # order so the tracking page can tell them to finish paying; the stall has no
+    # business with it until it is paid.
+    if not await may_view_order(order, user, db):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
     return order
 

@@ -162,3 +162,26 @@ async def test_fails_closed_where_the_limit_is_the_security_control():
             BrokenRedis(), "unit", "someone", (Limit(1, MINUTE),), fail_open=False
         )
     assert exc.value.status_code == 503
+
+
+def test_the_limiter_exemption_reads_the_routed_path():
+    """The middleware must decide exemption from the same string the router uses.
+
+    request.url is rebuilt by concatenating scheme, host and path and re-parsing
+    it, so a path that moves the authority boundary during that re-parse can make
+    request.url.path differ from the path actually served (Starlette
+    PYSEC-2026-161, -248). Anything deciding who skips a limiter has to read the
+    ASGI scope, or an exemption could be granted for a path that is not the one
+    being routed.
+    """
+    from pathlib import Path
+
+    source = Path("app/main.py").read_text()
+    body = source.split("async def enforce_request_limits", 1)[1].split("\n@", 1)[0]
+    # Comments are stripped first: the explanation of why request.url.path is
+    # wrong necessarily names it, and matching that would fail on the fix itself.
+    code = "\n".join(
+        line.split("#", 1)[0] for line in body.splitlines() if line.strip() != ""
+    )
+    assert "request.scope" in code
+    assert "request.url" not in code

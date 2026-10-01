@@ -172,3 +172,40 @@ async def publish_order_event(redis: Redis, order: Order) -> None:
     await redis.publish(order_channel(order.id), payload)
     if order.payment_status == PaymentStatus.PAID:
         await redis.publish(vendor_channel(order.vendor_id), payload)
+
+
+async def may_view_order(order: Order, user, db: AsyncSession) -> bool:
+    """Whether this user is allowed to see this order.
+
+    One predicate, because there are two ways in - the HTTP route and the order
+    WebSocket - and they used to answer differently. The socket let a stall
+    subscribe to an order of theirs that nobody had paid for yet, which the HTTP
+    route deliberately refuses: an unpaid order is the customer's alone until the
+    money lands, or a stall could start cooking against an order that may never be
+    paid for. Reaching it needed the order's UUID, so nothing was practically
+    exposed - but two copies of an access rule is one copy too many, and the
+    socket is the copy nobody looks at.
+
+    A rider's access is not here on purpose. Riders are not Users and hold a
+    different token; their routes scope every query to Order.rider_id themselves,
+    and they must never receive the handover code, which this predicate says
+    nothing about.
+    """
+    from app.db.models.user import UserRole
+    from app.db.models.vendor import Vendor
+
+    if user is None:
+        return False
+    if user.role == UserRole.ADMIN:
+        return True
+    if order.customer_id == user.id:
+        return True
+    if user.role == UserRole.VENDOR:
+        result = await db.execute(select(Vendor).where(Vendor.user_id == user.id))
+        vendor = result.scalar_one_or_none()
+        return (
+            vendor is not None
+            and vendor.id == order.vendor_id
+            and order.status != OrderStatus.AWAITING_PAYMENT
+        )
+    return False

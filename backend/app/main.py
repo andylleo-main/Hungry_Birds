@@ -136,7 +136,14 @@ _UNTHROTTLED_PATHS = ('/api/payments/cashfree/webhook',)
 
 @app.middleware('http')
 async def enforce_request_limits(request: Request, call_next):
-    path = request.url.path
+    # The ASGI scope path, not request.url.path. They are normally identical, but
+    # request.url is rebuilt by concatenating scheme, host and path and re-parsing
+    # the result, so a path that moves the authority boundary during that re-parse
+    # can make the two disagree (Starlette PYSEC-2026-161 and -248). Routing uses
+    # the scope path, so anything deciding who gets past a limiter has to use the
+    # same string the router will - otherwise an exemption could be granted for a
+    # path that is not the one being served.
+    path = request.scope.get('path', '')
     if path in _UNMETERED_PATHS or path.startswith(_UNMETERED_PREFIXES):
         return await call_next(request)
 
