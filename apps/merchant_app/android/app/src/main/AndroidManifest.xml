@@ -5,6 +5,9 @@
          reach the server, check your connection" on a phone with perfect
          signal. This app is useless offline, so it belongs here. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Android 13 and up. Without it, notifications are silently dropped: the
+         app looks fine and nothing ever arrives. Requested at runtime too. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="Hungry Birds Partner"
@@ -32,6 +35,14 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Which channel a notification lands on when the app is backgrounded or
+             closed and Android, not our code, draws it. The channel itself is
+             created in MainActivity; naming one here that does not exist would
+             make Android fall back to a low-importance default, so the phone
+             would stay silent during a lunch rush. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="orders"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

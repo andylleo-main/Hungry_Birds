@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "894560089723",
+    "project_id": "hungrybirds-7779f",
+    "storage_bucket": "hungrybirds-7779f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:894560089723:android:713b75cadd6ccbc3a9d4de",
+        "android_client_info": {
+          "package_name": "food.hungerbirds.merchant"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDkDJo44zAW2xFBRR7xXyY0XnXCW2Z5YT8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

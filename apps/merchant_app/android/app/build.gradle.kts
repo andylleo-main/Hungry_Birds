@@ -5,6 +5,10 @@ plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // Must come after com.android.application: it hooks the Android variants to
+    // process google-services.json. The build fails outright if that file is
+    // missing, which is why this app gained Firebase only once the file existed.
+    id("com.google.gms.google-services")
 }
 
 // Release signing secrets live in android/key.properties, which is gitignored.

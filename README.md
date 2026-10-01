@@ -430,12 +430,12 @@ package name `food.hungerbirds.merchant`, and set two Railway variables:
 Leave them blank and push is simply off. The service account key is a
 credential — Railway variables only, never the repo.
 
-**Still to wire up:** the merchant app needs `google-services.json` from that
-same Firebase project before the Flutter side can be added, because the Android
-build fails outright if the Google Services plugin is applied without it. Drop
-that file at `apps/merchant_app/android/app/google-services.json` and the app
-side is a small, contained change: the Firebase plugins, a token request on
-start, and a `POST /api/vendors/me/devices` with the result.
+`apps/merchant_app/android/app/google-services.json` is committed. It is not a
+secret — it ships inside every APK — unlike the service-account key, which must
+only ever exist in Railway's variables.
+
+Only the merchant app has Firebase. Riders poll their order list, so the rider
+app needs none of this.
 
 **How it behaves.** The merchant app registers its token on every start, not
 only the first — Firebase rotates a token on reinstall, on app data being
@@ -443,6 +443,13 @@ cleared, and sometimes on its own, and a stall whose token has quietly rotated
 would otherwise just stop getting notifications with nothing to see. A token is
 unique across the whole table rather than per stall, so a phone handed to a
 different stall moves with its new owner instead of buzzing for both.
+
+On the phone: the `orders` notification channel is created in `MainActivity.kt`
+at high importance, because naming a channel in the manifest does not create one
+and Android would otherwise fall back to a silent low-importance default — a
+phone on the counter staying quiet through a lunch rush, with nothing to explain
+why. Android 13+ also needs the `POST_NOTIFICATIONS` runtime permission, which is
+requested at sign-in; without it notifications are dropped silently.
 
 Sending is a background task that swallows its own failures, and Firebase gets a
 five-second timeout. A token Firebase reports as `UNREGISTERED` or

@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:hb_shared/hb_shared.dart';
+
+import '../services/push.dart';
 
 /// Where the merchant sits in the onboarding funnel. The app shows a
 /// different root screen for each stage.
@@ -14,7 +18,12 @@ enum MerchantStage {
 class MerchantState extends ChangeNotifier {
   final ApiClient api;
 
-  MerchantState(this.api);
+  /// New-order notifications. Owned here because its lifetime is the signed-in
+  /// stall's: it starts once there is an approved vendor to attach a token to,
+  /// and stops before sign-out while the token still works.
+  final PushService push;
+
+  MerchantState(this.api) : push = PushService(api);
 
   MerchantStage stage = MerchantStage.loading;
   AppUser? user;
@@ -54,6 +63,12 @@ class MerchantState extends ChangeNotifier {
     try {
       vendor = await api.myVendor();
       _set(vendor!.isApproved ? MerchantStage.ready : MerchantStage.awaitingApproval);
+      if (vendor!.isApproved) {
+        // Deliberately not awaited. Push is a convenience, and asking Firebase
+        // for a token can take a moment on a cold start - the order queue
+        // should not wait on it. Failures are swallowed inside start().
+        unawaited(push.start());
+      }
     } on ApiException catch (e) {
       if (e.statusCode == 404) {
         vendor = null;
@@ -114,6 +129,10 @@ class MerchantState extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // Before api.logout(), while the access token still works - unregistering
+    // needs an authenticated call, and a phone handed to somebody else must stop
+    // buzzing for this stall's orders.
+    await push.stop();
     await api.logout();
     user = null;
     vendor = null;

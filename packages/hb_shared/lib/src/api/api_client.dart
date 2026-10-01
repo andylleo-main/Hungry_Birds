@@ -383,6 +383,29 @@ class ApiClient {
     return Order.fromJson(data);
   }
 
+  // --- Push notification devices (the merchant's own) ---
+
+  /// Tells the server where to push this stall's new orders.
+  ///
+  /// Called on every app start, not only the first. Firebase rotates a
+  /// registration token on reinstall, on app data being cleared, and sometimes
+  /// unprompted; a stall whose token has quietly rotated would otherwise just
+  /// stop being notified. The server upserts on the token, so repeating this is
+  /// free.
+  Future<void> registerDevice(String fcmToken, {String platform = 'android'}) async {
+    await _request(
+      'POST',
+      '/vendors/me/devices',
+      body: {'fcm_token': fcmToken, 'platform': platform},
+    );
+  }
+
+  /// Stops pushing to this phone. Called on sign-out, so a device handed to
+  /// somebody else does not keep buzzing for the old stall's orders.
+  Future<void> unregisterDevice(String fcmToken) async {
+    await _request('DELETE', '/vendors/me/devices/$fcmToken');
+  }
+
   // --- Riders (the merchant's own) ---
 
   Future<List<Rider>> myRiders() async {

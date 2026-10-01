@@ -45,6 +45,9 @@ dependencies:
   url_launcher: ^6.3.1
   http: ^1.2.2
   shared_preferences: ^2.3.3
+  # Push notifications for new orders. Only this app has them - riders poll.
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.5
 
 dev_dependencies:
   flutter_test:
