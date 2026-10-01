@@ -204,10 +204,11 @@ The script exists because three mistakes here are invisible at build time and al
 three produce an APK that installs and runs and is wrong, so it turns each into a
 hard failure:
 
-- **No `API_BASE_URL`.** `AppConfig` falls back to `http://localhost:8000/api`, so
-  the app reaches nothing from a phone. It is a compile-time constant, so the host
-  is baked in — changing it later means rebuilding *and* reinstalling everywhere.
-  There is deliberately no default.
+- **No `API_BASE_URL`.** It is a compile-time constant, so the host is baked in —
+  changing it later means rebuilding *and* reinstalling everywhere. The script
+  still demands it explicitly even though `AppConfig` now defaults to the live
+  domain, because the default is a safety net against a silent mistake, not a
+  substitute for saying which backend you meant.
 - **No `key.properties`.** Gradle falls back to the debug key, as described above,
   and succeeds. The script refuses before spending the build time, and also fails if
   the output comes out debug-signed anyway — which means `key.properties` does not

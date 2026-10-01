@@ -5,11 +5,24 @@
 /// ApiClient is appended to this, so the prefix belongs here rather than in
 /// each request.
 ///
-/// Override at build/run time with:
-///   flutter run --dart-define=API_BASE_URL=https://your-app.up.railway.app/api
+/// The default is the live deployment, not localhost, and that is deliberate.
+/// This value is a compile-time constant baked into the APK, so a release build
+/// that forgets the flag is not a build that fails - it is a build that installs,
+/// runs, and silently reaches nothing. Defaulting to localhost meant the quiet
+/// failure was the easy mistake; defaulting to production means the worst a
+/// forgotten flag does is point at the right server.
+///
+/// Working against a local backend is the case that now needs the flag:
+///   flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000/api
+/// (10.0.2.2 is how the Android emulator reaches the host's localhost; a real
+/// device needs your machine's LAN address, and Android blocks cleartext HTTP
+/// outside debug builds.)
+///
+/// scripts/build_apks.sh requires API_BASE_URL explicitly regardless, so a
+/// release build never depends on this default being right.
 class AppConfig {
   static const apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://localhost:8000/api',
+    defaultValue: 'https://www.hungrybirds.food/api',
   );
 }
