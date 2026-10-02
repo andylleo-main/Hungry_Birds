@@ -90,6 +90,9 @@ class ApiClient {
       case 'POST':
         response = await _client.post(uri, headers: headers, body: jsonEncode(body ?? {}));
         break;
+      case 'PUT':
+        response = await _client.put(uri, headers: headers, body: jsonEncode(body ?? {}));
+        break;
       case 'PATCH':
         response = await _client.patch(uri, headers: headers, body: jsonEncode(body ?? {}));
         break;
@@ -97,6 +100,12 @@ class ApiClient {
         response = await _client.delete(uri, headers: headers);
         break;
       default:
+        // Reached before anything is sent, so a method missing from this switch
+        // is not a failed request - it is a call that never happened. It then
+        // surfaces as whatever the screen says for an unexpected error, which
+        // is usually about the network. PUT was missing here and that is exactly
+        // how it presented: every save on the fulfilment screen rolled its
+        // switch back reporting a connection problem, on a working connection.
         throw ArgumentError('Unsupported method $method');
     }
 
