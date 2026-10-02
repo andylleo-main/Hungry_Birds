@@ -138,14 +138,20 @@ complaints are real and one is not:
   desktop* apps. These are Android apps and it has no bearing on them.
 
 **`keytool` is not on PATH on Windows.** It ships inside the JDK that comes with
-Android Studio, so it is already on the machine, just not findable. It lives at:
+Android Studio, so it is already on the machine, just not findable. Do not guess
+the path - the install directory is not always `Android Studio` (an upgrade or a
+second install leaves things like `Android Studio1`, and the error you get for a
+wrong folder is "not recognized", which reads as if keytool were missing). Ask
+where it is:
 
-```
-C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe
+```powershell
+$kt = Get-ChildItem "C:\Program Files\Android" -Filter keytool.exe -Recurse -ErrorAction SilentlyContinue |
+      Select-Object -First 1 -ExpandProperty FullName
+$kt
 ```
 
-`flutter doctor -v` prints the exact path on the "Java binary at:" line if that
-one is wrong.
+That leaves the path in `$kt` for the commands below, so it never has to be
+retyped. `flutter doctor -v` also prints it on the "Java binary at:" line.
 
 Also note **PowerShell's line-continuation character is a backtick, not a
 backslash**. A `\` at the end of a line does not continue it, which is why a
@@ -161,12 +167,19 @@ keytool -genkey -v -keystore ~/hungrybirds-release.jks \
   -keyalg RSA -keysize 2048 -validity 10000 -alias hungrybirds
 ```
 
-On Windows PowerShell, as one line, with the full path to `keytool` and
-`$HOME` rather than `~` (PowerShell does not expand `~` for programs it
-launches, so `~` would create a folder literally named `~`):
+On Windows PowerShell, as one line, using the `$kt` found above and `$HOME`
+rather than `~` (PowerShell does not expand `~` for programs it launches, so `~`
+would create a folder literally named `~`):
 
 ```powershell
-& "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" -genkey -v -keystore $HOME\hungrybirds-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias hungrybirds
+& $kt -genkey -v -keystore $HOME\hungrybirds-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias hungrybirds
+```
+
+Check it afterwards, before spending a build on it - a wrong password or alias
+does not stop Gradle, it just makes it fall back to the debug key:
+
+```powershell
+& $kt -list -v -keystore $HOME\hungrybirds-release.jks -alias hungrybirds
 ```
 
 Then, in **each** app (`merchant_app` and `rider_app`), copy
