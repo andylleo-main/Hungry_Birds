@@ -253,12 +253,28 @@ licences are all required, and a missing piece shows up as a Gradle error rather
 than anything about the SDK.
 
 ```bash
-API_BASE_URL=https://www.hungrybirds.food/api ./scripts/build_apks.sh
+./scripts/build_apks.sh --live
 ```
+
+`--live` means the deployment students use, `https://www.hungrybirds.food/api`.
+To build against anything else, name it:
+
+```bash
+API_BASE_URL=https://your-host/api ./scripts/build_apks.sh
+```
+
+One of the two is required — there is no silent default, because a wrong host is
+baked into the APK and only discoverable by installing it.
 
 Both apps, release-signed, arm64 copies collected into `dist/` under names you can
 hand over without choosing between three files. Add an app name
-(`./scripts/build_apks.sh rider_app`) to build just one.
+(`./scripts/build_apks.sh --live rider_app`) to build just one.
+
+> **Type the command, do not paste it.** Copied terminal text can carry an
+> invisible control character, and bash then rejects the line with an error
+> naming something else entirely — `$'\302\226export': command not found`, or a
+> complaint about a variable assignment being "not a valid identifier". `--live`
+> exists partly to keep what you have to type short.
 
 **On Windows**, run that from **Git Bash**, not PowerShell — it is a shell script,
 and PowerShell cannot execute one. Git Bash comes with Git for Windows; right-click

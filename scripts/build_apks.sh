@@ -30,21 +30,51 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$REPO/dist"
-APPS=("${@:-}")
-[[ -z "${APPS[0]}" ]] && APPS=(merchant_app rider_app)
+
+# The deployment students use. Only reachable through --live below, never as a
+# silent default - see the API_BASE_URL check.
+LIVE_API_BASE_URL="https://www.hungrybirds.food/api"
+
+# --live is a way of saying "the production backend" without typing the URL.
+# It exists because typing it is where this goes wrong: the host is baked into
+# the APK, a typo is only discoverable by installing the result, and pasting the
+# command is worse than typing it - a stray invisible character in a copied line
+# makes bash reject the whole thing with an error that names something else.
+# Naming the target is just as explicit as spelling it out, and cannot be
+# misspelt.
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --live) API_BASE_URL="$LIVE_API_BASE_URL" ;;
+    -h|--help)
+      printf 'usage: %s [--live] [app ...]\n\n' "$(basename "$0")"
+      printf '  --live          build against %s\n' "$LIVE_API_BASE_URL"
+      printf '  app             merchant_app and/or rider_app (default: both)\n\n'
+      printf 'Or set the host yourself:\n'
+      printf '  API_BASE_URL=https://your-host/api %s\n' "$(basename "$0")"
+      exit 0
+      ;;
+    -*) printf 'unknown option: %s (try --help)\n' "$arg" >&2; exit 2 ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+
+APPS=("${ARGS[@]}")
+[[ ${#APPS[@]} -eq 0 ]] && APPS=(merchant_app rider_app)
 
 die() { printf '\n\033[31merror:\033[0m %s\n\n' "$1" >&2; exit 1; }
 note() { printf '\033[36m==>\033[0m %s\n' "$1"; }
 
 # --- 1. the URL, which is baked in and cannot be changed after the fact --------
 
-[[ -n "${API_BASE_URL:-}" ]] || die "API_BASE_URL is not set.
+[[ -n "${API_BASE_URL:-}" ]] || die "no backend chosen.
 
-  API_BASE_URL=https://your-host/api $0
+  $(basename "$0") --live                      # $LIVE_API_BASE_URL
+  API_BASE_URL=https://your-host/api $(basename "$0")   # anything else
 
-Without it the APK is compiled against http://localhost:8000/api and will reach
-nothing from a phone. There is deliberately no default here: a wrong URL is only
-discoverable by installing the result, so it has to be stated every time."
+The host is a compile-time constant, baked into the APK: changing it later means
+rebuilding AND reinstalling everywhere. There is deliberately no silent default,
+because a wrong one is only discoverable by installing the result."
 
 [[ "$API_BASE_URL" == https://* ]] || die "API_BASE_URL must be https://.
 Android blocks cleartext HTTP by default, so an http:// host fails on the phone
