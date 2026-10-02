@@ -2,6 +2,11 @@
 # when generating the keystore. key.properties is gitignored - never commit it.
 #
 # storeFile must be an absolute path, or a path relative to android/app/.
+#
+# On Windows use FORWARD slashes: C:/Users/you/hungrybirds-release.jks
+# This is a Java .properties file, so a backslash is an escape character and
+# C:\Users\you\... is read as C:Usersyou... - the build then fails saying the
+# keystore is missing while the path in this file still looks correct.
 storePassword=your-keystore-password
 keyPassword=your-key-password
 keyAlias=hungrybirds

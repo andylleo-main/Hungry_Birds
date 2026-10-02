@@ -121,6 +121,34 @@ Sideloading is the practical way to get these onto phones on campus — no Play
 Store account needed. Android only; iOS requires a $99/yr Apple Developer
 account even for TestFlight.
 
+### On Windows, first
+
+`flutter doctor` has to be clean for Android before any of this works. Two of its
+complaints are real and one is not:
+
+- **"cmdline-tools component is missing"** — real, and it blocks the licences.
+  Android Studio → **Settings → Languages & Frameworks → Android SDK → SDK Tools**
+  tab → tick **Android SDK Command-line Tools (latest)** → Apply.
+- **"Android license status unknown"** — real. After the above, run
+  `flutter doctor --android-licenses` and accept every one.
+- **"Visual Studio not installed"** — ignore it. That is for building *Windows
+  desktop* apps. These are Android apps and it has no bearing on them.
+
+**`keytool` is not on PATH on Windows.** It ships inside the JDK that comes with
+Android Studio, so it is already on the machine, just not findable. It lives at:
+
+```
+C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe
+```
+
+`flutter doctor -v` prints the exact path on the "Java binary at:" line if that
+one is wrong.
+
+Also note **PowerShell's line-continuation character is a backtick, not a
+backslash**. A `\` at the end of a line does not continue it, which is why a
+pasted multi-line command fails on the first line. The commands below are given
+on one line for that reason.
+
 ### One-time: create a release keystore
 
 Do this once, on your own machine. The same keystore signs **both** apps.
@@ -130,10 +158,26 @@ keytool -genkey -v -keystore ~/hungrybirds-release.jks \
   -keyalg RSA -keysize 2048 -validity 10000 -alias hungrybirds
 ```
 
+On Windows PowerShell, as one line, with the full path to `keytool` and
+`$HOME` rather than `~` (PowerShell does not expand `~` for programs it
+launches, so `~` would create a folder literally named `~`):
+
+```powershell
+& "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" -genkey -v -keystore $HOME\hungrybirds-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias hungrybirds
+```
+
 Then, in **each** app (`merchant_app` and `rider_app`), copy
 `android/key.properties.example` to `android/key.properties` and fill in the
 password, alias, and absolute path to the `.jks`. Those files are gitignored and
 must stay that way.
+
+> **On Windows, write `storeFile` with forward slashes.** This is a Java
+> `.properties` file, where a backslash is an escape character — so
+> `C:\Users\you\hungrybirds-release.jks` is read as `C:Usersyouhungrybirds-release.jks`
+> and the build fails saying the keystore does not exist, while pointing at a
+> path that looks right in the file. Write `C:/Users/you/hungrybirds-release.jks`
+> instead. (`C:\\Users\\you\\...` with doubled backslashes also works, but is
+> easier to get wrong.)
 
 If you already made a keystore under the old spelling, do **not** regenerate it —
 put its real alias and filename in `key.properties` and carry on. The alias has
@@ -199,6 +243,33 @@ API_BASE_URL=https://www.hungrybirds.food/api ./scripts/build_apks.sh
 Both apps, release-signed, arm64 copies collected into `dist/` under names you can
 hand over without choosing between three files. Add an app name
 (`./scripts/build_apks.sh rider_app`) to build just one.
+
+**On Windows**, run that from **Git Bash**, not PowerShell — it is a shell script,
+and PowerShell cannot execute one. Git Bash comes with Git for Windows; right-click
+the repo folder and choose "Open Git Bash here". The command above is then
+unchanged.
+
+If you would rather not use Git Bash, the same build by hand, per app, in
+PowerShell:
+
+```powershell
+cd apps\merchant_app
+flutter clean
+flutter pub get
+flutter build apk --release --split-per-abi --dart-define=API_BASE_URL=https://www.hungrybirds.food/api
+```
+
+The APK is then at
+`build\app\outputs\flutter-apk\app-arm64-v8a-release.apk`. Repeat in
+`apps\rider_app`. Doing it this way skips the three guards the script exists for,
+so check the signature yourself before handing anything out:
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\build-tools\36.0.0\apksigner.bat" verify --print-certs build\app\outputs\flutter-apk\app-arm64-v8a-release.apk
+```
+
+If that prints `CN=Android Debug`, the build did not pick up `key.properties` —
+do not distribute it, because a debug-signed app can never be updated.
 
 The script exists because three mistakes here are invisible at build time and all
 three produce an APK that installs and runs and is wrong, so it turns each into a

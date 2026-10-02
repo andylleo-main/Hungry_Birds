@@ -75,10 +75,25 @@ done
 
 APKSIGNER="$(command -v apksigner || true)"
 if [[ -z "$APKSIGNER" ]]; then
-  for sdk in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" "$HOME/Library/Android/sdk" "$HOME/Android/Sdk"; do
+  # Default SDK locations per platform. On Windows this script runs under Git
+  # Bash, where $HOME is the MSYS home and the SDK is not under it - it lives in
+  # %LOCALAPPDATA%, which Git Bash exports as $LOCALAPPDATA with a Windows path
+  # that bash still resolves.
+  for sdk in \
+    "${ANDROID_HOME:-}" \
+    "${ANDROID_SDK_ROOT:-}" \
+    "$HOME/Library/Android/sdk" \
+    "$HOME/Android/Sdk" \
+    "${LOCALAPPDATA:-}/Android/Sdk" \
+    "${USERPROFILE:-}/AppData/Local/Android/Sdk"
+  do
     [[ -n "$sdk" && -d "$sdk/build-tools" ]] || continue
+    # apksigner.bat on Windows, apksigner elsewhere. Matching only the bare name
+    # found nothing on Windows and quietly downgraded to the unverified warning,
+    # which defeats the point of checking at all.
     # Newest build-tools version wins; -V sorts 34.0.0 above 9.0.0 correctly.
-    APKSIGNER="$(find "$sdk/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1)"
+    APKSIGNER="$(find "$sdk/build-tools" -maxdepth 2 \
+      \( -name apksigner -o -name apksigner.bat \) 2>/dev/null | sort -V | tail -1)"
     [[ -n "$APKSIGNER" ]] && break
   done
 fi
