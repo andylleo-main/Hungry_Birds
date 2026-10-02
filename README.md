@@ -129,8 +129,11 @@ complaints are real and one is not:
 - **"cmdline-tools component is missing"** — real, and it blocks the licences.
   Android Studio → **Settings → Languages & Frameworks → Android SDK → SDK Tools**
   tab → tick **Android SDK Command-line Tools (latest)** → Apply.
-- **"Android license status unknown"** — real. After the above, run
-  `flutter doctor --android-licenses` and accept every one.
+- **"Android license status unknown"** — run `flutter doctor --android-licenses`.
+  On recent toolchains this answers "Warning: The --licenses option is no longer
+  needed", because `sdkmanager` has been replaced by the Android CLI, which
+  handles licences itself. That is the step passing, not failing — re-run
+  `flutter doctor` and the Android line should be clean.
 - **"Visual Studio not installed"** — ignore it. That is for building *Windows
   desktop* apps. These are Android apps and it has no bearing on them.
 
