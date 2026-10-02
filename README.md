@@ -276,25 +276,30 @@ hand over without choosing between three files. Add an app name
 > complaint about a variable assignment being "not a valid identifier". `--live`
 > exists partly to keep what you have to type short.
 
-**On Windows**, run that from **Git Bash**, not PowerShell — it is a shell script,
-and PowerShell cannot execute one. Git Bash comes with Git for Windows; right-click
-the repo folder and choose "Open Git Bash here". The command above is then
-unchanged.
-
-If you would rather not use Git Bash, the same build by hand, per app, in
-PowerShell:
+**On Windows**, use the PowerShell version instead — same guards, same output,
+no Git Bash:
 
 ```powershell
-cd apps\merchant_app
-flutter clean
-flutter pub get
-flutter build apk --release --split-per-abi --dart-define=API_BASE_URL=https://www.hungrybirds.food/api
+.\scripts\build_apks.ps1 -Live
 ```
 
-The APK is then at
-`build\app\outputs\flutter-apk\app-arm64-v8a-release.apk`. Repeat in
-`apps\rider_app`. Doing it this way skips the three guards the script exists for,
-so check the signature yourself before handing anything out:
+`-ApiBaseUrl https://your-host/api` for any other backend, and an app name
+(`.\scripts\build_apks.ps1 -Live rider_app`) to build just one.
+
+If PowerShell refuses to run it ("running scripts is disabled on this system"),
+that is the execution policy, not the script. Allow local scripts for your own
+account, once:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+The bash script also works on Windows from **Git Bash** (right-click the repo
+folder → "Open Git Bash here"), if you prefer it.
+
+Either way, if you build by hand instead — `flutter build apk --release
+--split-per-abi --dart-define=API_BASE_URL=...` in each app directory — you skip
+the three guards, so check the signature yourself before handing anything out:
 
 ```powershell
 & "$env:LOCALAPPDATA\Android\Sdk\build-tools\36.0.0\apksigner.bat" verify --print-certs build\app\outputs\flutter-apk\app-arm64-v8a-release.apk
