@@ -101,6 +101,22 @@ class OrderLineItem {
 
 class Order {
   final String id;
+
+  /// What a customer quotes when something goes wrong, and what gets printed on
+  /// the stall's ticket. Format NNNNNN-RRRR, e.g. "014237-5096".
+  ///
+  /// [id] is still the identifier every API path is built from; this one exists
+  /// to be read aloud and written down.
+  final String orderNumber;
+
+  /// The small number this stall calls across its counter: 1, 2, 3 and up,
+  /// restarting each day.
+  ///
+  /// Null until the order is paid for and reaches the queue, and null on every
+  /// order placed before tokens existed - so anything drawing it has to cope
+  /// with its absence rather than assume a number.
+  final int? tokenNumber;
+
   final String vendorId;
   final String customerId;
   final OrderStatus status;
@@ -141,6 +157,12 @@ class Order {
 
   const Order({
     required this.id,
+    required this.orderNumber,
+    // Optional because an order genuinely may not have one: it has not been
+    // paid for yet, or it predates tokens. orderNumber stays required - every
+    // order has one from birth, so a construction that cannot name it is a
+    // construction that has lost track of which order it is talking about.
+    this.tokenNumber,
     required this.vendorId,
     required this.customerId,
     required this.status,
@@ -169,6 +191,11 @@ class Order {
 
   factory Order.fromJson(Map<String, dynamic> json) => Order(
         id: json['id'] as String,
+        // Defaulted rather than required so an order serialised by a server
+        // that predates order numbers still decodes instead of blanking the
+        // whole queue - the same reason fulfilment_type is defaulted below.
+        orderNumber: (json['order_number'] as String?) ?? '',
+        tokenNumber: json['token_number'] as int?,
         vendorId: json['vendor_id'] as String,
         customerId: json['customer_id'] as String,
         status: OrderStatus.fromJson(json['status'] as String),

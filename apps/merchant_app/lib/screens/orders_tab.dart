@@ -156,6 +156,27 @@ class _OrderCardState extends State<_OrderCard> {
             Row(
               children: [
                 _StatusChip(status: order.status),
+                const SizedBox(width: 8),
+                // The number this stall shouts across the counter. Biggest thing
+                // in the header on purpose: it is what a cook matches a bag to.
+                // Absent on an order placed before tokens existed, so it is
+                // drawn conditionally rather than with a placeholder.
+                if (order.tokenNumber != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryRed,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '#${order.tokenNumber}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
                 const Spacer(),
                 Text(
                   DateFormat('d MMM, h:mm a').format(order.createdAt.toLocal()),
@@ -163,6 +184,20 @@ class _OrderCardState extends State<_OrderCard> {
                 ),
               ],
             ),
+            // The long number, for when a customer rings up about this order.
+            // Quiet, because nobody reads it during service.
+            if (order.orderNumber.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  order.orderNumber,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
             const SizedBox(height: 12),
             for (final item in order.items)
               Padding(

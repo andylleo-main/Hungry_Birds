@@ -123,6 +123,14 @@ export interface OrderLineItem {
 
 export interface Order {
   id: string;
+  /**
+   * What the customer quotes to support, and what the stall prints on the
+   * ticket: NNNNNN-RNNN. `id` is still the identifier used in URLs and API
+   * calls; this one exists to be read aloud.
+   */
+  order_number: string;
+  /** The small number the stall calls out. Null until the order is paid for. */
+  token_number: number | null;
   vendor_id: string;
   customer_id: string;
   status: OrderStatus;

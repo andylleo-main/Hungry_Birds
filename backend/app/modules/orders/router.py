@@ -32,6 +32,7 @@ from app.modules.orders.service import (
     TERMINAL_STATUSES,
     assert_transition,
     generate_delivery_code,
+    generate_order_number,
     load_order,
     may_view_order,
     order_query,
@@ -111,6 +112,10 @@ async def place_order(
         vendor_id=vendor.id,
         note=payload.note,
         total_amount=0,
+        # Drawn at creation, unlike the token number: this is how an order is
+        # referred to in support and on a refund, so it has to exist from the
+        # moment the row does - including for an order nobody ever pays for.
+        order_number=await generate_order_number(db),
         fulfilment_type=payload.fulfilment_type,
         delivery_location=payload.delivery_location,
         # Only a delivery changes hands away from the counter, so only a

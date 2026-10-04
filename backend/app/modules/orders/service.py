@@ -1,15 +1,21 @@
 import secrets
 import uuid
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException, status as http_status
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models.order import FulfilmentType, Order, OrderStatus
 from app.db.models.payment import PaymentStatus
 from app.modules.orders.schemas import OrderWithCodeOut
+
+# The campus runs on IST, and so does the token counter's idea of a day. Written
+# as a fixed offset rather than pulled from zoneinfo because India has no DST and
+# a tzdata lookup here would be a dependency on the container's timezone files.
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # What an order must carry before it can be serialised.
 #
@@ -139,6 +145,67 @@ def generate_delivery_code() -> str:
     a rider close orders they never delivered.
     """
     return f"{secrets.randbelow(10_000):04d}"
+
+
+async def generate_order_number(db: AsyncSession) -> str:
+    """The number a customer quotes and a receipt prints: NNNNNN-RRRR.
+
+    The six-digit half comes from order_number_seq and is what makes the string
+    unique. The four random digits exist only so the series cannot be walked -
+    they are not a credential, and they are thin cover on their own. What makes
+    them sufficient is the rule in the model: this is never a lookup key on a
+    route a customer can reach.
+
+    Because uniqueness comes from the sequence and not from the randomness, there
+    is no collision to handle and no retry loop here. secrets rather than random
+    for the tail, for the same reason generate_delivery_code uses it.
+
+    nextval() does not roll back, so a failed order burns its number. The gaps
+    are expected; see the column comment.
+    """
+    seq = await db.scalar(text("SELECT nextval('order_number_seq')"))
+    return f"{seq:06d}-{secrets.randbelow(10_000):04d}"
+
+
+def service_date_now() -> date:
+    """Today, on the calendar a stall actually works to.
+
+    Asia/Kolkata rather than UTC. UTC midnight is 05:30 IST, so a UTC day would
+    restart the token counter in the middle of breakfast service.
+    """
+    return datetime.now(IST).date()
+
+
+async def allocate_token(order: Order, db: AsyncSession) -> None:
+    """Give an order the small number its stall will call out.
+
+    Idempotent, and that matters: this is driven from apply_payment_success,
+    which runs from both the Cashfree webhook and the mock-payment route, and a
+    duplicate or replayed webhook must not hand the same order a second number.
+
+    Called when the order enters the stall's queue rather than when the row is
+    created, so an abandoned checkout does not burn a number. A stall calling
+    "number 12!" when 9, 10 and 11 never existed is how you discover that
+    distinction the hard way.
+
+    One statement, atomic. See VendorTokenCounter for why not max()+1.
+    """
+    if order.token_number is not None:
+        return
+
+    today = service_date_now()
+    token = await db.scalar(
+        text(
+            "INSERT INTO vendor_token_counters (vendor_id, service_date, last_token)"
+            " VALUES (:vendor_id, :service_date, 1)"
+            " ON CONFLICT (vendor_id, service_date)"
+            " DO UPDATE SET last_token = vendor_token_counters.last_token + 1"
+            " RETURNING last_token"
+        ),
+        {"vendor_id": order.vendor_id, "service_date": today},
+    )
+    order.service_date = today
+    order.token_number = token
 
 
 def order_channel(order_id) -> str:

@@ -143,7 +143,7 @@ async def apply_payment_success(
     disagreement - the caller answers 200 either way, because a retry cannot fix
     a wrong amount and Cashfree will keep sending until it gets one.
     """
-    from app.modules.orders.service import can_transition_payment
+    from app.modules.orders.service import allocate_token, can_transition_payment
 
     data = body.get("data") or {}
     cf_payment = data.get("payment") or {}
@@ -177,8 +177,13 @@ async def apply_payment_success(
     payment.paid_at = datetime.now(timezone.utc)
 
     if order.status == OrderStatus.AWAITING_PAYMENT:
-        # The moment the stall first sees it.
+        # The moment the stall first sees it, and so the moment it earns a token
+        # number. Allocating any earlier would spend numbers on checkouts nobody
+        # completed, and the stall would call out 12 having never called 9.
+        # allocate_token is idempotent, which is what makes a replayed webhook
+        # safe here.
         order.status = OrderStatus.PLACED
+        await allocate_token(order, db)
 
     await db.commit()
     return "applied"

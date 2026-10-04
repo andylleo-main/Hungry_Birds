@@ -8,7 +8,7 @@ import { EmptyState, ErrorRetry, Icon, PageLoader } from '../components/ui';
 
 function OrderRow({ order }: { order: Order }) {
   const active = isActive(order.status);
-  const shortId = order.id.slice(0, 8).toUpperCase();
+
 
   return (
     <Link
@@ -25,7 +25,7 @@ function OrderRow({ order }: { order: Order }) {
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-space-sm">
-          <p className="truncate text-label-lg text-on-surface">#{shortId}</p>
+          <p className="truncate text-label-lg text-on-surface">#{order.order_number}</p>
           <span
             className={`badge ${active ? '' : 'bg-surface-container text-on-surface-variant'}`}
           >

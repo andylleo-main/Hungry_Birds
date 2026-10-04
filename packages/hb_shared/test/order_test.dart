@@ -141,6 +141,27 @@ void main() {
       expect(order.items, hasLength(1));
     });
 
+    test('reads the two numbers an order carries', () {
+      final order = Order.fromJson(payload({
+        'order_number': '014237-5096',
+        'token_number': 7,
+      }));
+      expect(order.orderNumber, '014237-5096');
+      expect(order.tokenNumber, 7);
+    });
+
+    test('an order with no token yet decodes rather than throwing', () {
+      // Null until it is paid for and reaches the stall's queue. A merchant's
+      // list holds unpaid orders too, so this is the common case, not an edge.
+      expect(Order.fromJson(payload()).tokenNumber, isNull);
+    });
+
+    test('an order from a server that predates order numbers still decodes', () {
+      // Same reason fulfilment_type is defaulted: one unfamiliar order must not
+      // take the whole response - and therefore the whole queue - with it.
+      expect(Order.fromJson(payload()).orderNumber, '');
+    });
+
     test('a delivery code is absent unless the server sent one', () {
       // The rider endpoints return a payload with no delivery_code field at all.
       // A rider who could read it could close an order without reaching anybody.

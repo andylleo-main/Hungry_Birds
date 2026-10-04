@@ -170,7 +170,7 @@ export default function OrderTracking() {
   const timeline = timelineFor(order.fulfilment_type);
   const currentIndex = timeline.findIndex((s) => s.status === order.status);
   const derailed = order.status === 'rejected' || order.status === 'cancelled';
-  const shortId = order.id.slice(0, 8).toUpperCase();
+
 
   return (
     <div className="mx-auto max-w-content px-margin-mobile py-space-lg md:px-margin md:py-space-xl">
@@ -221,7 +221,7 @@ export default function OrderTracking() {
           </span>
           <div>
             <div className="flex items-center gap-space-sm">
-              <h1 className="text-headline-sm text-on-surface">Order #{shortId}</h1>
+              <h1 className="text-headline-sm text-on-surface">Order #{order.order_number}</h1>
               {live && isActive(order.status) && (
                 <span className="inline-flex items-center gap-space-xs text-label-sm uppercase text-success">
                   <span className="h-2 w-2 animate-pulse rounded-full bg-success" />

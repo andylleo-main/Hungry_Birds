@@ -10,6 +10,8 @@ import 'package:rider_app/state/rider_state.dart';
 void main() {
   Order order(String id, OrderStatus status) => Order(
         id: id,
+        orderNumber: '000001-4821',
+        tokenNumber: 7,
         vendorId: 'v1',
         customerId: 'c1',
         status: status,

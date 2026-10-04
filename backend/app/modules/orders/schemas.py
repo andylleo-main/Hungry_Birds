@@ -93,6 +93,12 @@ class OrderItemOut(BaseModel):
 
 class OrderOut(BaseModel):
     id: uuid.UUID
+    # What a customer quotes to support and what prints on the stall's ticket.
+    # The id above stays the identifier; this is for people to say out loud.
+    order_number: str
+    # The small number the stall calls across the counter. Null until the order
+    # reaches the queue, and on every order placed before tokens existed.
+    token_number: int | None
     vendor_id: uuid.UUID
     customer_id: uuid.UUID
     status: OrderStatus

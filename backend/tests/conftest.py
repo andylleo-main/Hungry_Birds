@@ -178,12 +178,17 @@ def pay(db):
 
     from app.db.models.order import Order, OrderStatus
     from app.db.models.payment import PaymentStatus
+    from app.modules.orders.service import allocate_token
 
     async def _pay(order_id):
         order = await db.get(Order, _uuid.UUID(str(order_id)))
         order.payment_status = PaymentStatus.PAID
         if order.status == OrderStatus.AWAITING_PAYMENT:
             order.status = OrderStatus.PLACED
+            # Entering the queue is what earns a token number, so a fixture that
+            # claims to be apply_payment_success has to do this too. Leaving it
+            # out would give every test an order the stall could not call out.
+            await allocate_token(order, db)
         await db.commit()
         return order
 
