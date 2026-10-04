@@ -13,6 +13,11 @@ from app.db.models.payment import PaymentStatus
 
 class OrderItemIn(BaseModel):
     menu_item_id: uuid.UUID
+    # Required when the dish has sizes, refused when it does not - decided by
+    # resolve_line_price rather than here, since only the stall's menu knows
+    # which it is. Optional with a default so a client ordering a dish without
+    # sizes is unchanged, the same reasoning fulfilment_type is defaulted below.
+    variant_id: uuid.UUID | None = None
     quantity: int = Field(ge=1, le=50)
 
 
@@ -85,6 +90,10 @@ class OrderItemOut(BaseModel):
     id: uuid.UUID
     menu_item_id: uuid.UUID | None
     name_snapshot: str
+    # "Half", "Full", or null for a dish that has no sizes. Separate from the
+    # name rather than appended to it, so a stall's analytics can group by dish
+    # and still break down by size.
+    variant_name_snapshot: str | None = None
     price_snapshot: Decimal
     quantity: int
 

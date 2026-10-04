@@ -240,7 +240,17 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
     menu_item_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("menu_items.id", ondelete="SET NULL"), nullable=True
     )
+    # SET NULL on both, matching menu_item_id above and for the same reason: a
+    # merchant tidying their menu must not take order history with them.
+    variant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("menu_item_variants.id", ondelete="SET NULL"), nullable=True
+    )
     name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Kept in its own column rather than folded into name_snapshot. Concatenating
+    # would destroy grouping - the stall's analytics want "Butter Paneer" across
+    # every size *and* the split between them - and both apps already render the
+    # dish name on a line of its own.
+    variant_name_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
     price_snapshot: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 

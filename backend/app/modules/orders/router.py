@@ -39,6 +39,7 @@ from app.modules.orders.service import (
     order_query,
     publish_order_event,
 )
+from app.modules.menu.service import resolve_line_price
 from app.modules.vendors.deps import get_own_vendor
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -148,16 +149,33 @@ async def place_order(
         ).scalars()
     }
 
+    # Sizes, keyed by id, but only ones belonging to the items above - so a
+    # crafted payload cannot pair a cheap size with an expensive dish, or borrow
+    # a size from another stall's menu. The ownership chain is item -> vendor,
+    # already proved by the query above, then variant -> item here.
+    variants = {v.id: v for item in found.values() for v in item.variants}
+
     unavailable = []
     for line in payload.items:
         menu_item = found.get(line.menu_item_id)
-        if menu_item is None or not menu_item.is_available:
+        variant = variants.get(line.variant_id) if line.variant_id else None
+        gone = (
+            menu_item is None
+            or not menu_item.is_available
+            # A size that is not this dish's is not a size at all.
+            or (line.variant_id is not None and (variant is None or variant.item_id != menu_item.id))
+            or (variant is not None and not variant.is_available)
+        )
+        if gone:
+            name = menu_item.name if menu_item is not None else None
+            if name is not None and variant is not None:
+                name = f"{name} ({variant.name})"
             unavailable.append(
                 {
                     "menu_item_id": str(line.menu_item_id),
                     # None where the stall has deleted the dish outright. The
                     # client falls back to "an item" rather than printing a UUID.
-                    "name": menu_item.name if menu_item is not None else None,
+                    "name": name,
                 }
             )
 
@@ -180,13 +198,19 @@ async def place_order(
     total = 0
     for line in payload.items:
         menu_item = found[line.menu_item_id]
-        line_total = menu_item.price * line.quantity
-        total += line_total
+        variant = variants.get(line.variant_id) if line.variant_id else None
+        # The one place that knows a dish can be priced two ways, and the only
+        # thing that decides what a line costs. The price comes off the row the
+        # server read, never off the payload.
+        unit = resolve_line_price(menu_item, variant)
+        total += unit * line.quantity
         order.items.append(
             OrderItem(
                 menu_item_id=menu_item.id,
+                variant_id=variant.id if variant else None,
                 name_snapshot=menu_item.name,
-                price_snapshot=menu_item.price,
+                variant_name_snapshot=variant.name if variant else None,
+                price_snapshot=unit,
                 quantity=line.quantity,
             )
         )
