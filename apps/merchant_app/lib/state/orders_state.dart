@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:hb_shared/hb_shared.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../services/new_order_alert.dart';
+
 /// The vendor's order queue. Seeded by a fetch, then kept current by the
 /// vendor WebSocket so new orders and status changes land without polling.
 class OrdersState extends ChangeNotifier {
@@ -12,9 +14,29 @@ class OrdersState extends ChangeNotifier {
 
   OrdersState(this.api);
 
+  /// The chime. Owned here because its lifetime is the queue's: it starts when
+  /// an order lands and has to stop when this is torn down.
+  final NewOrderAlert alert = NewOrderAlert();
+
   List<Order> orders = [];
   bool loading = true;
   Object? error;
+
+  /// Orders that have arrived and not yet been looked at.
+  ///
+  /// A list rather than a flag because two can land during one rush, and the
+  /// merchant should be told about the second after dismissing the first rather
+  /// than finding it silently in the queue.
+  final List<Order> pendingAlerts = [];
+
+  /// Whether the first load has finished.
+  ///
+  /// The guard that stops this screaming at the wrong time. `load()` replaces
+  /// the whole list without going through `_apply`, and `_scheduleReconnect`
+  /// calls it every three seconds while the socket is down - so without this,
+  /// a merchant with bad wifi would be alerted about their entire queue, over
+  /// and over.
+  bool _loadedOnce = false;
 
   String? _vendorId;
   WebSocketChannel? _channel;
@@ -34,6 +56,7 @@ class OrdersState extends ChangeNotifier {
     try {
       orders = await api.vendorOrders();
       error = null;
+      _loadedOnce = true;
     } catch (e) {
       error = e;
     } finally {
@@ -72,13 +95,48 @@ class OrdersState extends ChangeNotifier {
     });
   }
 
+  /// The socket's funnel, reachable from a test.
+  ///
+  /// Exposed because OrdersState has no socket seam - start() connects for real
+  /// - and the alert guards are the part worth pinning, not the WebSocket.
+  @visibleForTesting
+  void applyForTest(Order incoming) => _apply(incoming);
+
   void _apply(Order incoming) {
     final index = orders.indexWhere((o) => o.id == incoming.id);
     if (index == -1) {
       orders = [incoming, ...orders];
+      _maybeAlert(incoming);
     } else {
       orders = [...orders]..[index] = incoming;
     }
+    notifyListeners();
+  }
+
+  /// Raise the alarm, if this is genuinely a new order somebody should see.
+  ///
+  /// Three things have to be true, and each of them has bitten a version of
+  /// this feature somewhere:
+  ///
+  ///  * the first load has finished, or a reconnect re-announces the whole
+  ///    queue every three seconds;
+  ///  * the order is `placed`, so the stall is not alerted about something it
+  ///    has already accepted or about an order arriving mid-flight from
+  ///    another device;
+  ///  * nothing is already ringing for it, since `_apply` also runs for the
+  ///    merchant's own status changes.
+  void _maybeAlert(Order order) {
+    if (!_loadedOnce) return;
+    if (order.status != OrderStatus.placed) return;
+    if (pendingAlerts.any((o) => o.id == order.id)) return;
+    pendingAlerts.add(order);
+    unawaited(alert.start());
+  }
+
+  /// Called when the merchant has seen it - by accepting, or by dismissing.
+  Future<void> acknowledge(Order order) async {
+    pendingAlerts.removeWhere((o) => o.id == order.id);
+    if (pendingAlerts.isEmpty) await alert.stop();
     notifyListeners();
   }
 
@@ -92,6 +150,9 @@ class OrdersState extends ChangeNotifier {
     _reconnectTimer?.cancel();
     _subscription?.cancel();
     _channel?.sink.close();
+    // Or the chime outlives the screen that raised it and plays over whatever
+    // the merchant opened next.
+    unawaited(alert.stop());
     super.dispose();
   }
 }

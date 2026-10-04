@@ -79,6 +79,13 @@ class OrderLineItem {
   final String id;
   final String? menuItemId;
   final String nameSnapshot;
+
+  /// "Half", "Full", or null for a dish with no sizes.
+  ///
+  /// Snapshotted like the name and price, so a ticket reprinted next week shows
+  /// the size that was actually bought even if the stall has since renamed or
+  /// removed it.
+  final String? variantName;
   final double priceSnapshot;
   final int quantity;
 
@@ -86,6 +93,7 @@ class OrderLineItem {
     required this.id,
     required this.menuItemId,
     required this.nameSnapshot,
+    this.variantName,
     required this.priceSnapshot,
     required this.quantity,
   });
@@ -94,6 +102,7 @@ class OrderLineItem {
         id: json['id'] as String,
         menuItemId: json['menu_item_id'] as String?,
         nameSnapshot: json['name_snapshot'] as String,
+        variantName: json['variant_name_snapshot'] as String?,
         priceSnapshot: double.parse(json['price_snapshot'].toString()),
         quantity: json['quantity'] as int,
       );
