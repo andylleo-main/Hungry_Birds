@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,6 +16,7 @@ from app.core.locations import label_for
 from app.modules.fulfilment.schemas import LocationOut
 from app.modules.fulfilment.service import enabled_codes
 from app.modules.menu.schemas import CategoryWithItems, ItemOut
+from app.modules.vendors.analytics import VendorAnalyticsOut, build_vendor_analytics
 from app.modules.vendors.deps import get_own_vendor
 from app.modules.vendors.schemas import VendorApply, VendorDetailOut, VendorOut, VendorUpdate
 
@@ -164,3 +165,25 @@ async def get_vendor_detail(
         uncategorized_items=uncategorized,
         delivery_locations=delivery_locations,
     )
+
+
+@router.get(
+    "/me/analytics",
+    response_model=VendorAnalyticsOut,
+    dependencies=[Depends(limit_by_user("vendor_analytics", *limits.VENDOR_ANALYTICS))],
+)
+async def my_analytics(
+    # Bounded for the same reason the admin's is: this scans orders, and an
+    # unbounded range turns one dashboard refresh into a full table scan as the
+    # data grows.
+    days: int = Query(30, ge=1, le=365),
+    vendor: Vendor = Depends(get_own_vendor),
+    db: AsyncSession = Depends(get_db),
+) -> VendorAnalyticsOut:
+    """This stall's own numbers, and only ever this stall's.
+
+    Scoped by get_own_vendor rather than by a query parameter, so there is no
+    id to tamper with - a merchant cannot ask for somebody else's figures
+    because there is nowhere to put the request.
+    """
+    return await build_vendor_analytics(days, vendor.id, db)

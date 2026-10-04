@@ -7,6 +7,7 @@ import '../models/order.dart';
 import '../models/rider.dart';
 import '../models/user.dart';
 import '../models/vendor.dart';
+import '../models/analytics.dart';
 import '../models/menu.dart';
 import 'auth_storage.dart';
 import 'api_exception.dart';
@@ -434,6 +435,14 @@ class ApiClient {
 
   Future<void> deleteVariant(String itemId, String variantId) =>
       _request('DELETE', '/vendors/me/items/$itemId/variants/$variantId');
+
+  /// This stall's own numbers. Scoped server-side by the signed-in stall, so
+  /// there is no id to pass and none to tamper with.
+  Future<VendorAnalytics> myAnalytics({int days = 30}) async {
+    final data = await _request('GET', '/vendors/me/analytics', query: {'days': days})
+        as Map<String, dynamic>;
+    return VendorAnalytics.fromJson(data);
+  }
 
   Future<UploadSignature> uploadSignature() async {
     final data = await _request('GET', '/media/signature') as Map<String, dynamic>;

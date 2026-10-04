@@ -126,7 +126,13 @@ async def build_analytics(days: int, db: AsyncSession) -> AnalyticsOut:
     )
 
     # --- orders per day -----------------------------------------------------
-    day_col = func.date_trunc("day", Order.created_at)
+    #
+    # Bucketed on the local calendar, not UTC. created_at is a timestamptz, and
+    # date_trunc on it groups by UTC days - which begin at 05:30 IST, so an
+    # evening rush lands in two different bars and "today" starts mid-breakfast.
+    # The merchant screen takes the same view, for the same reason, and both
+    # match the service day the token counter resets on.
+    day_col = func.date_trunc("day", func.timezone("Asia/Kolkata", Order.created_at))
     rows = (
         await db.execute(
             select(

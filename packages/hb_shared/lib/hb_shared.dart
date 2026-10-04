@@ -1,6 +1,7 @@
 export 'src/models/user.dart';
 export 'src/models/vendor.dart';
 export 'src/models/menu.dart';
+export 'src/models/analytics.dart';
 export 'src/models/fulfilment.dart';
 export 'src/models/order.dart';
 export 'src/models/rider.dart';

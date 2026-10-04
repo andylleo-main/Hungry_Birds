@@ -114,6 +114,11 @@ MEDIA_SIGNATURE = (Limit(20, MINUTE), Limit(100, HOUR))
 # --- Admin ------------------------------------------------------------------
 # Trusted, but a stolen admin token shouldn't be able to churn the whole vendor
 # table in seconds.
+# Tighter than ADMIN_READ. This is the heaviest query a vendor can set off -
+# several aggregates over their whole order history - and there is one admin but
+# thirty stalls, any of whom can leave the dashboard open on a counter.
+VENDOR_ANALYTICS = (Limit(30, MINUTE),)
+
 ADMIN_READ = (Limit(120, MINUTE),)
 ADMIN_WRITE = (Limit(60, MINUTE),)
 
