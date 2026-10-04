@@ -131,6 +131,35 @@ class _OrderCardState extends State<_OrderCard> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Cancelling refunds a paid order, so it asks first.
+  ///
+  /// Rejecting at `placed` needs no confirmation - the stall has not committed
+  /// to anything yet. By `accepted` the customer has been told their food is
+  /// being made, so a mis-tap here is worth one extra step.
+  Future<void> _confirmCancel() async {
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cancel this order?'),
+        content: const Text(
+          'The customer gets their money back and is told you could not make '
+          "it. This cannot be undone.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep it'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Cancel order'),
+          ),
+        ],
+      ),
+    );
+    if (go == true && mounted) await _move(OrderStatus.cancelled);
+  }
+
   Future<void> _move(OrderStatus status) async {
     setState(() => _busy = true);
     try {
@@ -242,17 +271,51 @@ class _OrderCardState extends State<_OrderCard> {
               ),
             ),
             if (order.note != null && order.note!.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
+              // Loud on purpose. This used to be 13px regular text on a 10%
+              // amber wash with no border and no icon, which made it quieter
+              // than the destination banner directly above it - so the one
+              // thing on the card written by a person, and the one thing that
+              // changes what goes in the bag, read as the least important.
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: AppTheme.warning.withValues(alpha: 0.1),
+                  color: AppTheme.warning.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
+                  border: const Border(
+                    left: BorderSide(color: AppTheme.warning, width: 4),
+                  ),
                 ),
-                child: Text(
-                  'Note: ${order.note}',
-                  style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.sticky_note_2, size: 16, color: AppTheme.warning),
+                        const SizedBox(width: 6),
+                        Text(
+                          'NOTE FROM THE CUSTOMER',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6,
+                            color: AppTheme.warning.withValues(alpha: 0.95),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      order.note!,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        height: 1.3,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -468,12 +531,28 @@ class _OrderCardState extends State<_OrderCard> {
             ),
           ],
         ),
-      OrderStatus.accepted => SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () => _move(OrderStatus.preparing),
-            child: const Text('Start preparing'),
-          ),
+      // Cancel sits beside "start preparing" because the customer can no longer
+      // cancel for themselves, and accepted -> cancelled is the last point where
+      // anybody can stop an order. Without it, a student who ordered at the
+      // wrong counter has no way out at all and the stall has no way to give it
+      // to them. Cancelling refunds, same as rejecting.
+      OrderStatus.accepted => Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _confirmCancel,
+                child: const Text('Cancel'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: ElevatedButton(
+                onPressed: () => _move(OrderStatus.preparing),
+                child: const Text('Start preparing'),
+              ),
+            ),
+          ],
         ),
       OrderStatus.preparing => SizedBox(
           width: double.infinity,

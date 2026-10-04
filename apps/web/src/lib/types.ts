@@ -66,7 +66,7 @@ export type PaymentStatus =
   | 'refunded'
   | 'refund_failed';
 
-export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
+const PAYMENT_LABELS: Record<PaymentStatus, string> = {
   pending: 'Not paid yet',
   paid: 'Paid',
   failed: 'Payment failed',
@@ -75,6 +75,20 @@ export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
   refunded: 'Refunded',
   refund_failed: 'Refund needs attention',
 };
+
+/**
+ * What to show for an order's money state.
+ *
+ * A function rather than the bare record, because the union above is closed and
+ * the server's is not. A payment state added on the backend used to render as
+ * empty text here - the record returns undefined and React prints nothing - so
+ * the status simply vanished from the page with no clue that anything was
+ * missing. The Flutter client has carried an `unknown` member for exactly this
+ * since the first new OrderStatus shipped; this is the same idea.
+ */
+export function paymentLabel(status: PaymentStatus | string): string {
+  return PAYMENT_LABELS[status as PaymentStatus] ?? 'Updated';
+}
 
 /** What the browser needs to open Cashfree's sheet. Deliberately no amount. */
 export interface PaymentSession {

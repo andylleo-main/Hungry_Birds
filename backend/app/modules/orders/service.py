@@ -72,6 +72,17 @@ ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
 # the two can never disagree.
 TERMINAL_STATUSES = frozenset(set(OrderStatus) - set(ALLOWED_TRANSITIONS))
 
+# Endings where the customer does not get the food, so a paid order owes its
+# money back.
+#
+# Derived rather than listed, deliberately, and the opposite choice from
+# EARNING_STATUSES in admin/analytics.py - which is listed out so that adding a
+# status forces somebody to decide whether it counts as revenue. Both are right,
+# because the dangerous direction differs: there, the risk of a new status is
+# counting money we never earned; here, the risk is keeping money we owe. A
+# terminal status added later should default to refunding, not to silence.
+REFUNDABLE_ENDINGS = TERMINAL_STATUSES - {OrderStatus.COMPLETED}
+
 # Statuses that only make sense for a delivery. The transition table above says
 # what order things happen in; this says which orders they apply to at all.
 DELIVERY_ONLY_STATUSES = frozenset({OrderStatus.OUT_FOR_DELIVERY})

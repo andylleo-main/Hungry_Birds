@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from fastapi import BackgroundTasks
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,7 @@ from app.core.config import Settings
 from app.db.models.order import Order, OrderStatus
 from app.db.models.payment import Payment, PaymentStatus
 from app.db.session import async_session_factory
+from app.core.tasks import fire_and_log
 from app.modules.payments import cashfree, mock
 
 logger = logging.getLogger(__name__)
@@ -236,11 +238,29 @@ async def start_refund(order_id: uuid.UUID, reason: str, db: AsyncSession) -> No
     order = await db.get(Order, order_id)
     if order is None or not can_transition_payment(order.payment_status, PaymentStatus.REFUND_PENDING):
         return
-    order.payment_status = PaymentStatus.REFUND_PENDING
 
     result = await db.execute(select(Payment).where(Payment.order_id == order_id))
     payment = result.scalar_one_or_none()
-    if payment is not None and not payment.refund_id:
+
+    if payment is None:
+        # Nothing was ever taken through the gateway, so there is nothing for it
+        # to give back. Moving to REFUND_PENDING here would be worse than doing
+        # nothing: attempt_refund returns silently on a missing payment row, so
+        # the order would sit in refund-pending for ever, and any screen that
+        # lists refunds in flight would show one that nobody will ever make.
+        #
+        # Unreachable on today's paths - PAID without a payment row does not
+        # happen - but the next payment method that settles outside Cashfree will
+        # reach it, and a log line is a far better outcome than a stuck order.
+        logger.warning(
+            "refund wanted for order %s (%s) but it has no payment row - nothing to refund",
+            order_id,
+            reason,
+        )
+        return
+
+    order.payment_status = PaymentStatus.REFUND_PENDING
+    if not payment.refund_id:
         payment.refund_id = refund_id_for(order_id)
     await db.commit()
 
@@ -307,6 +327,96 @@ async def _mark_mock_refunded(order_id: uuid.UUID, reason: str) -> None:
         order.payment_status = PaymentStatus.REFUNDED
         await db.commit()
     logger.info("mock refund for order %s (%s) - no money moved", order_id, reason)
+
+
+MAX_REFUND_ATTEMPTS = 8
+# How many stuck refunds one read is allowed to re-drive. Small, because each
+# one becomes a background call to Cashfree and a customer refreshing their
+# orders page must not pay for a backlog with latency.
+REFUND_DRAIN_BATCH = 3
+
+
+def _refund_backoff(attempts: int) -> timedelta:
+    """How long to leave a failed refund alone before trying it again.
+
+    Doubling, capped at an hour: roughly 1m, 2m, 4m ... which spans about four
+    hours across MAX_REFUND_ATTEMPTS. Long enough that a Cashfree incident is
+    over before the attempts run out, short enough that a customer is not
+    waiting on a human.
+    """
+    return timedelta(minutes=min(2**attempts, 60))
+
+
+async def drain_stuck_refunds(
+    db: AsyncSession,
+    settings: Settings,
+    background: BackgroundTasks,
+    vendor_id: uuid.UUID | None = None,
+    customer_id: uuid.UUID | None = None,
+) -> int:
+    """Re-drive refunds that were started and never finished.
+
+    attempt_refund runs once, as a background task, and re-raises on failure -
+    leaving the order in refund_pending with the error recorded. Its own comment
+    says "the next drain should try again", and until now there was no drain:
+    refund_attempts was incremented and never read, so a Cashfree blip during a
+    rejection lost a customer's money until somebody noticed by hand.
+
+    Rides on the order lists for the same reason sweep_abandoned does - there is
+    no scheduler in this project - and scoped the same way, so a busy read never
+    turns into unbounded work. The scoping also happens to aim it well: the
+    customer whose refund is stuck is the one refreshing their orders page.
+
+    No distributed lock. Two concurrent reads can pick the same row, and that is
+    survivable because the refund id is derived from the order id and reused on
+    every attempt, so Cashfree treats a duplicate as the same refund - the
+    guarantee refund_id_for was written for. The backoff below does the rest:
+    attempt_refund increments refund_attempts and commits before it calls
+    anybody, which moves the row out of the window almost immediately.
+    """
+    if not settings.payments_enabled:
+        return 0
+
+    stmt = (
+        select(Order.id, Payment.refund_attempts)
+        .join(Payment, Payment.order_id == Order.id)
+        .where(
+            Order.payment_status.in_(
+                [PaymentStatus.REFUND_PENDING, PaymentStatus.REFUND_FAILED]
+            ),
+            Payment.refund_attempts < MAX_REFUND_ATTEMPTS,
+        )
+        .order_by(Payment.updated_at)
+        .limit(REFUND_DRAIN_BATCH)
+    )
+    if vendor_id is not None:
+        stmt = stmt.where(Order.vendor_id == vendor_id)
+    if customer_id is not None:
+        stmt = stmt.where(Order.customer_id == customer_id)
+
+    now = datetime.now(timezone.utc)
+    rows = (await db.execute(stmt)).all()
+
+    started = 0
+    for order_id, attempts in rows:
+        payment = (
+            await db.execute(select(Payment).where(Payment.order_id == order_id))
+        ).scalar_one_or_none()
+        if payment is None:
+            continue
+        last = payment.updated_at
+        if last is not None and now - last < _refund_backoff(attempts):
+            continue
+        background.add_task(
+            fire_and_log,
+            "drain_stuck_refund",
+            lambda oid=order_id: attempt_refund(oid, "retrying an unfinished refund", settings),
+        )
+        started += 1
+
+    if started:
+        logger.info("re-driving %s unfinished refund(s)", started)
+    return started
 
 
 async def sweep_abandoned(

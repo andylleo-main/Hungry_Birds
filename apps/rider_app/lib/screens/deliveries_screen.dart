@@ -260,17 +260,49 @@ class _DeliveryCardState extends State<_DeliveryCard> {
                 ),
               ),
             if (order.note != null && order.note!.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
+              // Same treatment as the merchant card, and for the same reason: a
+              // rider reads this card while walking, and "leave it at the gate,
+              // don't call" has to survive being glanced at.
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: AppTheme.warning.withValues(alpha: 0.1),
+                  color: AppTheme.warning.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
+                  border: const Border(
+                    left: BorderSide(color: AppTheme.warning, width: 4),
+                  ),
                 ),
-                child: Text(
-                  'Note: ${order.note}',
-                  style: const TextStyle(fontSize: 13),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.sticky_note_2, size: 16, color: AppTheme.warning),
+                        const SizedBox(width: 6),
+                        Text(
+                          'NOTE FROM THE CUSTOMER',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6,
+                            color: AppTheme.warning.withValues(alpha: 0.95),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      order.note!,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        height: 1.3,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],

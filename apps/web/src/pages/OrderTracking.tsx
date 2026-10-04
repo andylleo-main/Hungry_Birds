@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { load as loadCashfree } from '@cashfreepayments/cashfree-js';
 import { ApiError, api, orderSocketUrl } from '../lib/api';
 import type { FulfilmentType, Order, OrderStatus } from '../lib/types';
-import { PAYMENT_LABEL, STATUS_LABEL, isActive, isMockPayment } from '../lib/types';
+import { paymentLabel, STATUS_LABEL, isActive, isMockPayment } from '../lib/types';
 import { dayAndTime, rupees, timeOfDay } from '../lib/format';
 import { ErrorRetry, Icon, PageLoader, Spinner } from '../components/ui';
 
@@ -150,14 +150,6 @@ export default function OrderTracking() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId]);
 
-  async function cancel() {
-    try {
-      setOrder(await api.cancelOrder(orderId));
-    } catch {
-      void load();
-    }
-  }
-
   if (error) {
     return (
       <div className="mx-auto max-w-content px-margin-mobile py-space-xl md:px-margin">
@@ -264,10 +256,16 @@ export default function OrderTracking() {
                 <p className="text-label-lg text-on-surface">
                   {order.status === 'rejected'
                     ? 'The stall could not take this order'
-                    : 'You cancelled this order'}
+                    : 'This order was cancelled'}
                 </p>
                 <p className="text-body-sm text-on-surface-variant">
-                  Nothing was charged — payment only happens at the counter.
+                  {order.payment_status === 'refunded'
+                    ? 'Your money has been refunded.'
+                    : order.payment_status === 'paid' ||
+                        order.payment_status === 'refund_pending' ||
+                        order.payment_status === 'refund_failed'
+                      ? 'Your refund is on its way back to the card you paid with. Banks usually take a few working days.'
+                      : 'Nothing was charged.'}
                 </p>
               </div>
             </div>
@@ -316,10 +314,14 @@ export default function OrderTracking() {
             </ol>
           )}
 
+          {/* Cancelling is the stall's call now, not the customer's. A student
+              who ordered at the wrong counter rings the stall, which is what
+              the number below is for - and the stall can still refuse it, which
+              refunds. */}
           {order.status === 'placed' && (
-            <button type="button" className="btn-ghost mt-space-sm text-primary" onClick={cancel}>
-              Cancel this order
-            </button>
+            <p className="mt-space-sm text-body-sm text-on-surface-variant">
+              Need to change something? Call the stall before they start cooking.
+            </p>
           )}
         </div>
 
@@ -431,7 +433,7 @@ export default function OrderTracking() {
             <div>
               <p className="text-headline-sm text-on-surface">Total</p>
               <p className="text-label-md text-on-surface-variant">
-                {PAYMENT_LABEL[order.payment_status]}
+                {paymentLabel(order.payment_status)}
               </p>
             </div>
             <span className="text-headline-md text-primary">{rupees(order.total_amount)}</span>

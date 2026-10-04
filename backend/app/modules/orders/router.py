@@ -29,6 +29,7 @@ from app.modules.fulfilment.service import assert_order_fulfilment
 from app.modules.notifications.service import notify_new_order, notify_rider_assigned
 from app.modules.payments import service as payments
 from app.modules.orders.service import (
+    REFUNDABLE_ENDINGS,
     TERMINAL_STATUSES,
     assert_transition,
     generate_delivery_code,
@@ -208,6 +209,7 @@ async def place_order(
     dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
 )
 async def list_my_orders(
+    background: BackgroundTasks,
     user: User = Depends(require_role(*ORDERING_ROLES)),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -216,6 +218,10 @@ async def list_my_orders(
     # would otherwise display these rows. Cheap: it touches only this customer's
     # abandoned checkouts, and only ones older than the gateway's own expiry.
     await payments.sweep_abandoned(db, settings, customer_id=user.id)
+    # And the same trick for refunds that were started and never finished. This
+    # is the page somebody waiting on their money refreshes, so it is the right
+    # read to hang the retry on.
+    await payments.drain_stuck_refunds(db, settings, background, customer_id=user.id)
 
     result = await db.execute(
         order_query(Order.customer_id == user.id).order_by(Order.created_at.desc())
@@ -251,50 +257,13 @@ async def get_order(
     return OrderWithCodeOut.model_validate(order)
 
 
-@router.post(
-    "/{order_id}/cancel",
-    response_model=OrderWithCodeOut,
-    dependencies=[Depends(limit_by_user("cancel_order", *limits.CANCEL_ORDER))],
-)
-async def cancel_order(
-    order_id: uuid.UUID,
-    background: BackgroundTasks,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
-    settings: Settings = Depends(get_settings),
-) -> OrderWithCodeOut:
-    order = await _get_order_for_user(order_id, user, db)
-    if order.customer_id != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the customer can cancel this order")
-    if not can_transition(order.status, OrderStatus.CANCELLED):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, f"Cannot cancel an order that is already {order.status.value}"
-        )
-    order.status = OrderStatus.CANCELLED
-    await db.commit()
-
-    # Cancelling before the stall accepted means the money comes straight back.
-    # Same shape as a rejection: commit the state, call Cashfree afterwards.
-    if order.payment_status is PaymentStatus.PAID:
-        await payments.start_refund(order.id, "cancelled by the customer", db)
-        background.add_task(
-            fire_and_log,
-            "refund_cancelled_order",
-            lambda: payments.attempt_refund(order.id, "cancelled by the customer", settings),
-        )
-
-    order = await _load_order_with_items(order.id, db)
-    await publish_order_event(redis, order)
-    return OrderWithCodeOut.model_validate(order)
-
-
 @vendor_orders_router.get(
     "",
     response_model=list[OrderWithCodeOut],
     dependencies=[Depends(limit_by_user("order_read", *limits.ORDER_READ))],
 )
 async def list_vendor_orders(
+    background: BackgroundTasks,
     vendor: Vendor = Depends(get_own_vendor),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -307,6 +276,7 @@ async def list_vendor_orders(
     in the queue every time the connection blinked.
     """
     await payments.sweep_abandoned(db, settings, vendor_id=vendor.id)
+    await payments.drain_stuck_refunds(db, settings, background, vendor_id=vendor.id)
 
     result = await db.execute(
         order_query(
@@ -340,17 +310,28 @@ async def update_order_status(
     order.status = payload.status
     await db.commit()
 
-    # A stall rejecting an order is the customer's money coming back. The state
-    # change commits here and the call to Cashfree happens after the response,
-    # so a gateway outage cannot make rejecting an order fail - the stall must
-    # never be stuck with an order they cannot refuse because somebody else's
-    # server is down.
-    if payload.status is OrderStatus.REJECTED and order.payment_status is PaymentStatus.PAID:
-        await payments.start_refund(order.id, "stall could not make this order", db)
+    # A stall ending an order without the customer getting their food is the
+    # customer's money coming back. The state change commits here and the call to
+    # Cashfree happens after the response, so a gateway outage cannot make
+    # refusing an order fail - the stall must never be stuck with an order they
+    # cannot refuse because somebody else's server is down.
+    #
+    # This used to check REJECTED alone, while the transition table has always
+    # allowed CANCELLED from both PLACED and ACCEPTED. A stall that sent
+    # cancelled on a paid order therefore closed it and kept the money, silently
+    # and with nothing in any log to say so. Asking REFUNDABLE_ENDINGS instead of
+    # naming statuses is what stops the next terminal status repeating it.
+    if payload.status in REFUNDABLE_ENDINGS and order.payment_status is PaymentStatus.PAID:
+        reason = (
+            "stall could not make this order"
+            if payload.status is OrderStatus.REJECTED
+            else "stall cancelled this order"
+        )
+        await payments.start_refund(order.id, reason, db)
         background.add_task(
             fire_and_log,
-            "refund_rejected_order",
-            lambda: payments.attempt_refund(order.id, "stall could not make this order", settings),
+            "refund_refused_order",
+            lambda: payments.attempt_refund(order.id, reason, settings),
         )
 
     order = await _load_order_with_items(order.id, db)

@@ -312,7 +312,6 @@ export const api = {
 
   myOrders: () => request<Order[]>('GET', '/orders'),
   order: (id: string) => request<Order>('GET', `/orders/${id}`),
-  cancelOrder: (id: string) => request<Order>('POST', `/orders/${id}/cancel`),
 
   // --- Admin ---
   analytics: (days = 30) => request<Analytics>('GET', `/admin/analytics?days=${days}`),

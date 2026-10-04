@@ -57,7 +57,6 @@ PROFILE_WRITE = (Limit(20, MINUTE),)
 # every individual order was legitimate. Ten a minute is far above what a
 # hungry person does and far below what hurts.
 PLACE_ORDER = (Limit(10, MINUTE), Limit(40, HOUR))
-CANCEL_ORDER = (Limit(20, MINUTE),)
 
 # Tracking screens poll as well as holding a socket, so this stays roomy.
 ORDER_READ = (Limit(120, MINUTE),)
