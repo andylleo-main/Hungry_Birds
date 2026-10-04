@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/printer.dart';
 import '../state/merchant_state.dart';
 import '../state/orders_state.dart';
 
@@ -124,6 +125,11 @@ class _Assignment {
 
 class _OrderCardState extends State<_OrderCard> {
   bool _busy = false;
+
+  /// Separate from _busy, which blanks the whole action row for a status change.
+  /// Printing must not hide the buttons: a merchant whose printer is off should
+  /// still be able to tap "Start preparing" while the attempt times out.
+  bool _printing = false;
 
   void _say(String message) {
     ScaffoldMessenger.of(context)
@@ -499,6 +505,33 @@ class _OrderCardState extends State<_OrderCard> {
     }
   }
 
+  /// Sends the ticket to the counter printer.
+  ///
+  /// Kept off the accept action deliberately: accepting is the moment the stall
+  /// commits to cooking, and a printer that is out of paper or out of range must
+  /// not be able to fail that. So accepting always succeeds and printing is a
+  /// separate tap, which also means a jammed ticket can simply be printed again.
+  Future<void> _print(Order order) async {
+    final printer = context.read<PrinterService>();
+    final stallName = context.read<MerchantState>().vendor?.stallName ?? 'Hungry Birds';
+
+    if (!printer.hasPrinter) {
+      _say('No printer set up yet. Stall → Ticket printer.');
+      return;
+    }
+
+    setState(() => _printing = true);
+    try {
+      await printer.printOrder(order, stallName: stallName);
+    } on PrinterException catch (e) {
+      if (mounted) _say(e.message);
+    } catch (_) {
+      if (mounted) _say("Couldn't print that ticket.");
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
   Widget _actions(Order order) {
     if (_busy) {
       return const Center(
@@ -544,7 +577,21 @@ class _OrderCardState extends State<_OrderCard> {
                 child: const Text('Cancel'),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
+            // Icon-only so the two decisions keep their full width; this is a
+            // utility beside them, not a third choice.
+            IconButton.outlined(
+              onPressed: _printing ? null : () => _print(order),
+              icon: _printing
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    )
+                  : const Icon(Icons.print_outlined),
+              tooltip: 'Print ticket',
+            ),
+            const SizedBox(width: 8),
             Expanded(
               flex: 2,
               child: ElevatedButton(

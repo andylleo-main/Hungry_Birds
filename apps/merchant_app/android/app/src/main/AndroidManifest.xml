@@ -9,6 +9,31 @@
          app looks fine and nothing ever arrives. Requested at runtime too. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- The kitchen ticket printer, which pairs over Bluetooth.
+
+         Android 12 (API 31) split the old BLUETOOTH permission in two and made
+         both runtime-requested. neverForLocation is the important part: without
+         it Android treats a Bluetooth scan as a location request, and an app
+         that asks a stall owner for their location to print a receipt is an app
+         that gets questioned in Play review and declined by the user. We only
+         ever talk to a device the owner already paired in Android settings, so
+         we genuinely never derive location from this. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"/>
+
+    <!-- Android 11 and below, where the split above does not exist. Capped with
+         maxSdkVersion so a modern phone is never asked for these - in
+         particular not for ACCESS_FINE_LOCATION, which on API 30 and under was
+         the only way to enumerate Bluetooth devices at all. The cap is what
+         keeps that historical requirement from following us onto new phones. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30"/>
+
     <application
         android:label="Hungry Birds Partner"
         android:name="${applicationName}"

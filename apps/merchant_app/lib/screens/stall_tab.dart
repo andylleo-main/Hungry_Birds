@@ -4,8 +4,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../services/cloudinary_uploader.dart';
+import '../services/printer.dart';
 import '../state/merchant_state.dart';
 import 'fulfilment_screen.dart';
+import 'printer_screen.dart';
 
 class StallTab extends StatefulWidget {
   const StallTab({super.key});
@@ -219,6 +221,21 @@ class _StallTabState extends State<StallTab> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const FulfilmentScreen()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.print_outlined),
+              title: const Text('Ticket printer', style: TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text(
+                context.watch<PrinterService>().savedName ?? 'Not set up',
+                style: const TextStyle(fontSize: 13),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const PrinterScreen()),
               ),
             ),
           ),

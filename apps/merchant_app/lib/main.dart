@@ -6,16 +6,29 @@ import 'app_config.dart';
 import 'screens/apply_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/pending_approval_screen.dart';
+import 'services/printer.dart';
 import 'state/merchant_state.dart';
 
-void main() {
+Future<void> main() async {
+  // SharedPreferences needs the binding up before it can be touched, and the
+  // printer settings are read below.
+  WidgetsFlutterBinding.ensureInitialized();
+
   final authStorage = AuthStorage();
   final api = ApiClient(baseUrl: AppConfig.apiBaseUrl, authStorage: authStorage);
+
+  // Loaded here rather than lazily in the orders screen: the first time a
+  // merchant taps Print is during a rush, and a race between that tap and a
+  // disk read would read as "no printer chosen" on a stall that chose one
+  // weeks ago.
+  final printer = PrinterService();
+  await printer.load();
 
   runApp(
     MultiProvider(
       providers: [
         Provider<ApiClient>.value(value: api),
+        ChangeNotifierProvider<PrinterService>.value(value: printer),
         ChangeNotifierProvider(create: (_) => MerchantState(api)..bootstrap()),
       ],
       child: const MerchantApp(),

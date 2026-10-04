@@ -51,6 +51,10 @@ dependencies:
   # The looping chime when an order lands. A stall is not watching the screen
   # during service, so the queue has to be able to make a noise.
   audioplayers: ^6.1.0
+  # Bluetooth transport for the kitchen ticket printer. Chosen over the
+  # alternatives because it asks only for BLUETOOTH_CONNECT and never for
+  # location, which is what gets a food app questioned in Play review.
+  print_bluetooth_thermal: ^1.2.5
 
 dev_dependencies:
   flutter_test:
