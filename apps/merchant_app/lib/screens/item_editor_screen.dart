@@ -30,6 +30,12 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
 
   bool get _isEditing => widget.item != null;
 
+  /// Sizes this dish already has. Edited in place through its own section, so
+  /// this is kept in state rather than read off widget.item each build.
+  late List<MenuVariant> _variants;
+
+  bool get _hasVariants => _variants.isNotEmpty;
+
   @override
   void initState() {
     super.initState();
@@ -39,6 +45,7 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
     _priceController = TextEditingController(text: item?.price.toStringAsFixed(0) ?? '');
     _categoryId = item?.categoryId;
     _imageUrl = item?.imageUrl;
+    _variants = List.of(item?.variants ?? const []);
   }
 
   @override
@@ -69,6 +76,26 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
     }
   }
 
+  /// Take back a price change nobody has decided on yet.
+  ///
+  /// Here because a merchant who typed 2000 instead of 200 should not have to
+  /// wait for a human to reject it before they can fix it.
+  Future<void> _withdrawPrice() async {
+    try {
+      final item = await context.read<ApiClient>().withdrawItemPrice(widget.item!.id);
+      if (!mounted) return;
+      setState(() {
+        _priceController.text = item.price.toStringAsFixed(0);
+        _error = null;
+      });
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('Price change withdrawn')));
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
@@ -79,7 +106,9 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
     final api = context.read<ApiClient>();
     final name = _nameController.text.trim();
     final description = _descriptionController.text.trim();
-    final price = double.parse(_priceController.text.trim());
+    // Null for a dish priced by its sizes - the field is not on screen, so
+    // there is nothing to read and nothing to send.
+    final price = _hasVariants ? null : double.tryParse(_priceController.text.trim());
 
     try {
       if (_isEditing) {
@@ -87,15 +116,31 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
           widget.item!.id,
           name: name,
           description: description,
-          price: price,
           categoryId: _categoryId,
           imageUrl: _imageUrl,
         );
+
+        // Sent separately, and only when it actually moved.
+        //
+        // Two calls rather than one because they are two decisions: the fields
+        // above take effect now, the price waits for an admin. They are not
+        // atomic, so a failure here means "saved, but the price change did not
+        // go through" - which is explainable, unlike a route whose `price` field
+        // silently writes a different column.
+        //
+        // The diff is belt and braces: the server treats an unchanged price as a
+        // no-op anyway, and that is the half that matters, because a merchant
+        // phone running an older build cannot be made to stop sending it. This
+        // half just means the merchant sees nothing happen rather than
+        // "withdrawn" when they save an unrelated edit.
+        if (!_hasVariants && price != null && price != widget.item!.price) {
+          await api.setItemPrice(widget.item!.id, price);
+        }
       } else {
         await api.createItem(
           name: name,
           description: description.isEmpty ? null : description,
-          price: price,
+          price: price ?? 0,
           categoryId: _categoryId,
           imageUrl: _imageUrl,
         );
@@ -163,18 +208,50 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
                   validator: (v) => (v?.trim().isEmpty ?? true) ? 'Enter an item name' : null,
                 ),
                 const SizedBox(height: 14),
-                TextFormField(
-                  controller: _priceController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'Price (₹)', prefixText: '₹ '),
-                  validator: (v) {
-                    final parsed = double.tryParse(v?.trim() ?? '');
-                    if (parsed == null) return 'Enter a valid price';
-                    if (parsed <= 0) return 'Price must be more than zero';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 14),
+                // Hidden once the dish has sizes, because the dish's own price
+                // is ignored then - every order is priced by the size chosen.
+                // Leaving an editable field that changes nothing is worse than
+                // having no field at all.
+                if (!_hasVariants) ...[
+                  TextFormField(
+                    controller: _priceController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Price (₹)', prefixText: '₹ '),
+                    validator: (v) {
+                      final parsed = double.tryParse(v?.trim() ?? '');
+                      if (parsed == null) return 'Enter a valid price';
+                      if (parsed <= 0) return 'Price must be more than zero';
+                      return null;
+                    },
+                  ),
+                  if (_isEditing && widget.item!.priceAwaitingApproval)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: _PendingPriceNotice(
+                        current: widget.item!.price,
+                        proposed: widget.item!.pendingPrice!,
+                        onWithdraw: _withdrawPrice,
+                      ),
+                    )
+                  else if (_isEditing)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text(
+                        'A new price has to be approved before students see it. '
+                        'Yours keeps selling at the old one until then.',
+                        style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                      ),
+                    ),
+                  const SizedBox(height: 14),
+                ],
+                if (_isEditing) ...[
+                  _SizesSection(
+                    itemId: widget.item!.id,
+                    variants: _variants,
+                    onChanged: (next) => setState(() => _variants = next),
+                  ),
+                  const SizedBox(height: 14),
+                ],
                 DropdownButtonFormField<String?>(
                   initialValue: _categoryId,
                   decoration: const InputDecoration(labelText: 'Section'),
@@ -256,5 +333,321 @@ class _ImagePickerBox extends StatelessWidget {
                 : CachedNetworkImage(imageUrl: imageUrl!, fit: BoxFit.cover, width: double.infinity),
       ),
     );
+  }
+}
+
+/// Says a price is with the admin, and what students are paying meanwhile.
+///
+/// The second half is the part worth saying out loud: a merchant who changes a
+/// price and sees nothing happen will assume it failed, when in fact the dish is
+/// still selling perfectly well at the old number.
+class _PendingPriceNotice extends StatelessWidget {
+  const _PendingPriceNotice({
+    required this.current,
+    required this.proposed,
+    required this.onWithdraw,
+  });
+
+  final double current;
+  final double proposed;
+  final Future<void> Function() onWithdraw;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: AppTheme.warning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: const Border(left: BorderSide(color: AppTheme.warning, width: 4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.hourglass_top, size: 16, color: AppTheme.warning),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '₹${proposed.toStringAsFixed(0)} is waiting for approval',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Students are still paying ₹${current.toStringAsFixed(0)}.',
+            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: onWithdraw,
+              style: TextButton.styleFrom(padding: EdgeInsets.zero),
+              child: const Text('Cancel this change'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Add, rename, reprice and remove the sizes a dish comes in.
+///
+/// Saves each change immediately rather than on the parent form's Save, because
+/// these are separate rows on the server and batching them would mean deciding
+/// what to do when the third of five fails.
+class _SizesSection extends StatefulWidget {
+  const _SizesSection({
+    required this.itemId,
+    required this.variants,
+    required this.onChanged,
+  });
+
+  final String itemId;
+  final List<MenuVariant> variants;
+  final ValueChanged<List<MenuVariant>> onChanged;
+
+  @override
+  State<_SizesSection> createState() => _SizesSectionState();
+}
+
+class _SizesSectionState extends State<_SizesSection> {
+  bool _busy = false;
+
+  void _say(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _run(Future<void> Function() work) async {
+    setState(() => _busy = true);
+    try {
+      await work();
+    } on ApiException catch (e) {
+      _say(e.message);
+    } catch (_) {
+      _say("Couldn't reach the server. Try again.");
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _add() async {
+    final entered = await _askForSize(context, title: 'Add a size');
+    if (entered == null) return;
+    await _run(() async {
+      final created = await context.read<ApiClient>().createVariant(
+            widget.itemId,
+            name: entered.name,
+            price: entered.price,
+            sortOrder: widget.variants.length,
+          );
+      widget.onChanged([...widget.variants, created]);
+    });
+  }
+
+  Future<void> _editPrice(MenuVariant variant) async {
+    final entered = await _askForSize(
+      context,
+      title: 'Change the price of ${variant.name}',
+      initialName: variant.name,
+      initialPrice: variant.price,
+      nameLocked: true,
+    );
+    if (entered == null || entered.price == variant.price) return;
+    await _run(() async {
+      final saved = await context
+          .read<ApiClient>()
+          .setVariantPrice(widget.itemId, variant.id, entered.price);
+      widget.onChanged([
+        for (final v in widget.variants) v.id == variant.id ? saved : v,
+      ]);
+      _say('Sent for approval. ${variant.name} still sells at '
+          '₹${variant.price.toStringAsFixed(0)}.');
+    });
+  }
+
+  Future<void> _toggle(MenuVariant variant) async {
+    await _run(() async {
+      final saved = await context.read<ApiClient>().updateVariant(
+            widget.itemId,
+            variant.id,
+            isAvailable: !variant.isAvailable,
+          );
+      widget.onChanged([
+        for (final v in widget.variants) v.id == variant.id ? saved : v,
+      ]);
+    });
+  }
+
+  Future<void> _remove(MenuVariant variant) async {
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remove ${variant.name}?'),
+        content: const Text(
+          'Orders already placed keep the size they were ordered in. If this is '
+          'the last size, the dish goes back to its own price.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (go != true) return;
+    await _run(() async {
+      await context.read<ApiClient>().deleteVariant(widget.itemId, variant.id);
+      widget.onChanged([for (final v in widget.variants) if (v.id != variant.id) v]);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text('Sizes', style: TextStyle(fontWeight: FontWeight.w800)),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: _busy ? null : _add,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add a size'),
+            ),
+          ],
+        ),
+        if (widget.variants.isEmpty)
+          const Text(
+            'This dish is sold at one price. Add sizes if it comes in more than '
+            'one - half and full, say - and students pick when they order.',
+            style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          )
+        else
+          for (final variant in widget.variants)
+            Card(
+              margin: const EdgeInsets.only(bottom: 6),
+              child: ListTile(
+                dense: true,
+                title: Text(
+                  variant.name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: variant.isAvailable ? null : AppTheme.textSecondary,
+                  ),
+                ),
+                subtitle: Text(
+                  [
+                    '₹${variant.price.toStringAsFixed(0)}',
+                    if (!variant.isAvailable) 'sold out',
+                    if (variant.priceAwaitingApproval)
+                      '₹${variant.pendingPrice!.toStringAsFixed(0)} awaiting approval',
+                  ].join(' · '),
+                  style: const TextStyle(fontSize: 12),
+                ),
+                trailing: PopupMenuButton<String>(
+                  enabled: !_busy,
+                  onSelected: (choice) => switch (choice) {
+                    'price' => _editPrice(variant),
+                    'toggle' => _toggle(variant),
+                    _ => _remove(variant),
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(value: 'price', child: Text('Change price')),
+                    PopupMenuItem(
+                      value: 'toggle',
+                      child: Text(variant.isAvailable ? 'Mark sold out' : 'Back on'),
+                    ),
+                    const PopupMenuItem(value: 'remove', child: Text('Remove')),
+                  ],
+                ),
+              ),
+            ),
+      ],
+    );
+  }
+}
+
+/// What a size is called and what it costs.
+class _SizeEntry {
+  const _SizeEntry(this.name, this.price);
+  final String name;
+  final double price;
+}
+
+Future<_SizeEntry?> _askForSize(
+  BuildContext context, {
+  required String title,
+  String? initialName,
+  double? initialPrice,
+  bool nameLocked = false,
+}) async {
+  final nameController = TextEditingController(text: initialName ?? '');
+  final priceController =
+      TextEditingController(text: initialPrice?.toStringAsFixed(0) ?? '');
+  final formKey = GlobalKey<FormState>();
+
+  try {
+    return await showDialog<_SizeEntry>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: nameController,
+                enabled: !nameLocked,
+                autofocus: !nameLocked,
+                decoration: const InputDecoration(labelText: 'Name', hintText: 'Half'),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Give the size a name' : null,
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: priceController,
+                autofocus: nameLocked,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Price (₹)', prefixText: '₹ '),
+                validator: (v) {
+                  final parsed = double.tryParse(v?.trim() ?? '');
+                  if (parsed == null) return 'Enter a valid price';
+                  if (parsed <= 0) return 'Price must be more than zero';
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              if (!formKey.currentState!.validate()) return;
+              Navigator.pop(
+                context,
+                _SizeEntry(
+                  nameController.text.trim(),
+                  double.parse(priceController.text.trim()),
+                ),
+              );
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  } finally {
+    nameController.dispose();
+    priceController.dispose();
   }
 }

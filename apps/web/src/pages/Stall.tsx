@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
-import type { CategoryWithItems, MenuItem, VendorDetail } from '../lib/types';
+import type { CategoryWithItems, MenuItem, MenuVariant, VendorDetail } from '../lib/types';
 import { placeholderGradient, rupees } from '../lib/format';
-import { EmptyState, ErrorRetry, Icon, PageLoader, QuantityStepper } from '../components/ui';
-import { useCart } from '../state/CartContext';
+import { EmptyState, ErrorRetry, Icon, PageLoader, QuantityStepper, Sheet } from '../components/ui';
+import { keyOf, lineKey, unitPrice, useCart } from '../state/CartContext';
 
 function MenuItemRow({
   item,
@@ -15,9 +15,17 @@ function MenuItemRow({
   vendor: VendorDetail;
   disabled: boolean;
 }) {
-  const { add, setQuantity, quantityOf } = useCart();
-  const quantity = quantityOf(item.id);
+  const { add, setQuantity, quantityOf, lines } = useCart();
+  const [picking, setPicking] = useState(false);
   const unavailable = !item.is_available;
+  const sized = item.variants.length > 0;
+
+  // For a dish with sizes this is the total across every size in the cart, used
+  // only to label the button. A single stepper cannot drive several lines, so a
+  // sized dish never shows one - it opens the picker instead.
+  const quantity = sized
+    ? lines.filter((l) => l.item.id === item.id).reduce((n, l) => n + l.quantity, 0)
+    : quantityOf(lineKey(item.id, null));
 
   return (
     <div
@@ -45,7 +53,9 @@ function MenuItemRow({
       <div className="flex min-w-0 flex-1 flex-col gap-space-xs">
         <div className="flex items-start justify-between gap-space-sm">
           <h4 className="text-headline-sm text-on-surface">{item.name}</h4>
-          <span className="shrink-0 text-label-lg text-on-surface">{rupees(item.price)}</span>
+          <span className="shrink-0 text-label-lg text-on-surface">
+            {sized ? `from ${rupees(item.price_from)}` : rupees(item.price)}
+          </span>
         </div>
 
         {item.description && (
@@ -65,10 +75,23 @@ function MenuItemRow({
               Hiding it outright left the only copy of that line behind a
               checkout the server would refuse, with no way to take it out from
               here - so the customer had to find the cart rail to escape. */}
-          {quantity > 0 ? (
+          {sized ? (
+            unavailable ? null : (
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => setPicking(true)}
+                title={disabled ? 'This stall is closed right now' : undefined}
+                className="inline-flex h-9 items-center gap-space-xs rounded-full bg-primary px-space-md text-label-md text-on-primary transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Icon name="add" className="text-[16px]" />
+                {quantity > 0 ? `Add more (${quantity})` : 'Choose'}
+              </button>
+            )
+          ) : quantity > 0 ? (
             <QuantityStepper
               quantity={quantity}
-              onChange={(next) => setQuantity(item.id, next)}
+              onChange={(next) => setQuantity(lineKey(item.id, null), next)}
               compact
             />
           ) : unavailable ? null : (
@@ -85,7 +108,71 @@ function MenuItemRow({
           )}
         </div>
       </div>
+
+      {sized && (
+        <Sheet open={picking} onClose={() => setPicking(false)} title={item.name}>
+          <ul className="flex flex-col gap-space-xs">
+            {item.variants.map((variant) => (
+              <SizeRow
+                key={variant.id}
+                item={item}
+                variant={variant}
+                vendor={vendor}
+                disabled={disabled}
+              />
+            ))}
+          </ul>
+        </Sheet>
+      )}
     </div>
+  );
+}
+
+/** One size inside the picker, with its own quantity. */
+function SizeRow({
+  item,
+  variant,
+  vendor,
+  disabled,
+}: {
+  item: MenuItem;
+  variant: MenuVariant;
+  vendor: VendorDetail;
+  disabled: boolean;
+}) {
+  const { add, setQuantity, quantityOf } = useCart();
+  const key = lineKey(item.id, variant.id);
+  const quantity = quantityOf(key);
+  const soldOut = !variant.is_available;
+
+  return (
+    <li
+      className={`flex items-center justify-between gap-space-sm rounded bg-surface-container px-space-sm py-space-sm ${
+        soldOut ? 'opacity-60' : ''
+      }`}
+    >
+      <div className="min-w-0">
+        <p className={`text-label-md ${soldOut ? 'text-on-surface-variant' : 'text-on-surface'}`}>
+          {variant.name}
+        </p>
+        <p className="text-label-md text-primary">{rupees(variant.price)}</p>
+      </div>
+      {soldOut ? (
+        <span className="badge bg-surface-container text-on-surface-variant">Sold out</span>
+      ) : quantity > 0 ? (
+        <QuantityStepper quantity={quantity} onChange={(next) => setQuantity(key, next)} compact />
+      ) : (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => add(vendor, item, variant)}
+          className="inline-flex h-9 items-center gap-space-xs rounded-full bg-primary px-space-md text-label-md text-on-primary transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Icon name="add" className="text-[16px]" />
+          Add
+        </button>
+      )}
+    </li>
   );
 }
 
@@ -113,18 +200,23 @@ function CartRail({ vendor }: { vendor: VendorDetail }) {
           <ul className="flex flex-col gap-space-sm">
             {lines.map((line) => (
               <li
-                key={line.item.id}
+                key={keyOf(line)}
                 className="flex items-start justify-between gap-space-sm rounded bg-surface-container px-space-sm py-space-sm"
               >
                 <div className="min-w-0">
-                  <p className="truncate text-label-md text-on-surface">{line.item.name}</p>
+                  <p className="truncate text-label-md text-on-surface">
+                    {line.item.name}
+                    {line.variant && (
+                      <span className="text-on-surface-variant"> · {line.variant.name}</span>
+                    )}
+                  </p>
                   <p className="text-label-md text-primary">
-                    {rupees(Number.parseFloat(line.item.price) * line.quantity)}
+                    {rupees(unitPrice(line) * line.quantity)}
                   </p>
                 </div>
                 <QuantityStepper
                   quantity={line.quantity}
-                  onChange={(next) => setQuantity(line.item.id, next)}
+                  onChange={(next) => setQuantity(keyOf(line), next)}
                   compact
                 />
               </li>

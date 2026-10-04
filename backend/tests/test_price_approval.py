@@ -65,9 +65,17 @@ class TestTheMerchantCannotReachTheLivePrice:
             model = getattr(schemas, name)
             assert "pending_price" not in model.model_fields, name
 
-    async def test_patching_an_item_cannot_change_its_price(
+    async def test_patching_an_item_with_a_price_is_refused_loudly(
         self, client, db, vendor, menu_item
     ):
+        """Rejected, not ignored - and the distinction matters for a real phone.
+
+        Pydantic ignores unknown fields by default, so the merchant APK already
+        in the field would have sent `price`, got a 200, shown "saved", and the
+        price would not have moved. A merchant has no way to tell that apart
+        from the gate working. extra="forbid" turns it into a 422 naming the
+        field, which the app already surfaces.
+        """
         _, headers = vendor
 
         r = await client.patch(
@@ -76,10 +84,25 @@ class TestTheMerchantCannotReachTheLivePrice:
             json={"name": "Momos", "price": "5.00"},
         )
 
-        assert r.status_code == 200, r.text
+        assert r.status_code == 422, r.text
+        assert "price" in r.text
         price, pending = await _price_of(db, menu_item.id)
         assert price == Decimal("60.00"), "a merchant set the live price through the update route"
         assert pending is None, "and it did not even queue it"
+
+    async def test_an_ordinary_edit_still_works(self, client, db, vendor, menu_item):
+        """The forbid must not make the route useless for everything else."""
+        _, headers = vendor
+
+        r = await client.patch(
+            f"/vendors/me/items/{menu_item.id}",
+            headers=headers,
+            json={"description": "Steamed, eight to a plate"},
+        )
+
+        assert r.status_code == 200, r.text
+        price, _ = await _price_of(db, menu_item.id)
+        assert price == Decimal("60.00")
 
 
 class TestProposingAPrice:

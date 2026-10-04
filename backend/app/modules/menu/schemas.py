@@ -43,6 +43,14 @@ class ItemUpdate(BaseModel):
     whether somebody remembered which fields are on this model.
     """
 
+    # Rejects unknown fields rather than ignoring them, which is Pydantic's
+    # default and was the wrong one here. A merchant APK built before price moved
+    # to its own route still sends `price` on every save; ignoring it meant a 200,
+    # a "saved" toast, and a price that silently did not move. A 422 naming the
+    # field is a worse-looking answer and a far better one - the app already
+    # surfaces the message, and an old build fails loudly instead of lying.
+    model_config = {"extra": "forbid"}
+
     name: Name | None = None
     description: Description | None = None
     category_id: uuid.UUID | None = None
@@ -62,6 +70,8 @@ class VariantCreate(BaseModel):
 
 class VariantUpdate(BaseModel):
     """As with ItemUpdate, no price. See PriceUpdate and the variant price route."""
+
+    model_config = {"extra": "forbid"}
 
     name: Name | None = None
     sort_order: SortOrder | None = None

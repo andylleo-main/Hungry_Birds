@@ -4,8 +4,9 @@ import { ApiError, api, unavailableItems } from '../lib/api';
 import { rupees, validateIndianMobile } from '../lib/format';
 import { EmptyState, Icon, QuantityStepper, Spinner } from '../components/ui';
 import { useAuth } from '../state/AuthContext';
-import { useCart } from '../state/CartContext';
+import { keyOf, lineKey, unitPrice, useCart } from '../state/CartContext';
 import { isMockPayment } from '../lib/types';
+import type { CartLine } from '../state/CartContext';
 import type { DeliveryLocation, FulfilmentType, MenuItem } from '../lib/types';
 import { load as loadCashfree } from '@cashfreepayments/cashfree-js';
 
@@ -51,7 +52,10 @@ export default function Checkout() {
   // Null until the stall loads; an empty check is better than a wrong one, and
   // the server refuses the order anyway.
   const [liveMenu, setLiveMenu] = useState<Map<string, MenuItem> | null>(null);
-  // Ids the server came back and refused, if it got that far.
+  // Line keys the server came back and refused, if it got that far. Keys rather
+  // than item ids, because one size of a dish can sell out while another is
+  // still on - striking out both would be wrong and would make the "remove
+  // them" button throw away food the customer can still have.
   const [refused, setRefused] = useState<string[]>([]);
 
   // The stall's fulfilment settings, re-read here rather than taken from the
@@ -129,18 +133,27 @@ export default function Checkout() {
 
   // Derived rather than stored, so removing a struck-through dish updates the
   // banner immediately instead of leaving it claiming a problem that is gone.
-  const soldOut = useMemo(
-    () =>
-      lines
-        .filter(
-          (l) => refused.includes(l.item.id) || liveMenu?.get(l.item.id)?.is_available === false,
-        )
-        .map((l) => l.item),
-    [lines, liveMenu, refused],
-  );
+  // Returns the lines the stall can no longer make, as lines rather than items,
+  // so a sized dish is judged one size at a time.
+  const soldOut = useMemo(() => {
+    function gone(line: CartLine): boolean {
+      if (refused.includes(keyOf(line))) return true;
+      const live = liveMenu?.get(line.item.id);
+      if (live === undefined) return false;
+      if (!live.is_available) return true;
+      if (!line.variant) return false;
+      // The size may have been switched off, or removed from the dish entirely
+      // since this cart was filled.
+      const size = live.variants.find((v) => v.id === line.variant!.id);
+      return size === undefined || !size.is_available;
+    }
+    return lines.filter(gone);
+  }, [lines, liveMenu, refused]);
+
+  const soldOutKeys = useMemo(() => new Set(soldOut.map(keyOf)), [soldOut]);
 
   function dropSoldOut() {
-    for (const item of soldOut) setQuantity(item.id, 0);
+    for (const line of soldOut) setQuantity(keyOf(line), 0);
     setRefused([]);
     setError(null);
   }
@@ -201,7 +214,13 @@ export default function Checkout() {
 
       const order = await api.placeOrder({
         vendor_id: vendor!.id,
-        items: lines.map((l) => ({ menu_item_id: l.item.id, quantity: l.quantity })),
+        items: lines.map((l) => ({
+          menu_item_id: l.item.id,
+          // Omitted rather than sent as null for a dish without sizes: the
+          // server refuses a size on a dish that has none.
+          ...(l.variant ? { variant_id: l.variant.id } : {}),
+          quantity: l.quantity,
+        })),
         note: note.trim() || undefined,
         fulfilment_type: fulfilment,
         // Sent only for a delivery: the server rejects a dine-in that carries
@@ -240,7 +259,7 @@ export default function Checkout() {
         // The stall sold something out between loading this page and paying for
         // it. Mark the lines so they strike through, and say it in words the
         // customer can act on - this used to print the dish's UUID.
-        setRefused(gone.items.map((i) => i.menu_item_id));
+        setRefused(gone.items.map((i) => lineKey(i.menu_item_id, i.variant_id)));
         setError('Some items are no longer available. Remove them to carry on.');
       } else {
         setError(
@@ -440,40 +459,45 @@ export default function Checkout() {
           </div>
 
           <ul className="flex flex-col gap-space-sm">
-            {lines.map((line) => (
-              <li
-                key={line.item.id}
-                className={`flex items-start justify-between gap-space-sm rounded px-space-sm py-space-sm ${
-                  soldOut.some((i) => i.id === line.item.id)
-                    ? 'bg-surface-container opacity-60'
-                    : 'bg-surface-container'
-                }`}
-              >
-                <div className="min-w-0">
-                  <p
-                    className={`truncate text-label-md ${
-                      soldOut.some((i) => i.id === line.item.id)
-                        ? 'text-on-surface-variant line-through'
-                        : 'text-on-surface'
-                    }`}
-                  >
-                    {line.item.name}
-                  </p>
-                  {soldOut.some((i) => i.id === line.item.id) ? (
-                    <p className="text-label-md text-on-surface-variant">Sold out</p>
-                  ) : (
-                    <p className="text-label-md text-primary">
-                      {rupees(Number.parseFloat(line.item.price) * line.quantity)}
+            {lines.map((line) => {
+              // One lookup per line instead of the same `.some()` three times,
+              // and keyed on the line rather than the dish so a sold-out Full
+              // does not cross out the Half beside it.
+              const gone = soldOutKeys.has(keyOf(line));
+              return (
+                <li
+                  key={keyOf(line)}
+                  className={`flex items-start justify-between gap-space-sm rounded bg-surface-container px-space-sm py-space-sm ${
+                    gone ? 'opacity-60' : ''
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p
+                      className={`truncate text-label-md ${
+                        gone ? 'text-on-surface-variant line-through' : 'text-on-surface'
+                      }`}
+                    >
+                      {line.item.name}
+                      {line.variant && (
+                        <span className="text-on-surface-variant"> · {line.variant.name}</span>
+                      )}
                     </p>
-                  )}
-                </div>
-                <QuantityStepper
-                  quantity={line.quantity}
-                  onChange={(next) => setQuantity(line.item.id, next)}
-                  compact
-                />
-              </li>
-            ))}
+                    {gone ? (
+                      <p className="text-label-md text-on-surface-variant">Sold out</p>
+                    ) : (
+                      <p className="text-label-md text-primary">
+                        {rupees(unitPrice(line) * line.quantity)}
+                      </p>
+                    )}
+                  </div>
+                  <QuantityStepper
+                    quantity={line.quantity}
+                    onChange={(next) => setQuantity(keyOf(line), next)}
+                    compact
+                  />
+                </li>
+              );
+            })}
           </ul>
 
           <div className="flex flex-col gap-space-xs border-t border-outline-variant pt-space-sm text-body-sm">
@@ -505,7 +529,9 @@ export default function Checkout() {
             <div className="flex flex-col gap-space-sm rounded bg-warning-tint px-space-sm py-space-sm">
               <p className="text-body-sm text-on-surface">
                 {soldOut.length === 1
-                  ? `${soldOut[0].name} is no longer available.`
+                  ? `${soldOut[0].item.name}${
+                      soldOut[0].variant ? ` (${soldOut[0].variant.name})` : ''
+                    } is no longer available.`
                   : 'Some items are no longer available.'}{' '}
                 The stall has run out while your order was open.
               </p>

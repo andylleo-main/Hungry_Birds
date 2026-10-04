@@ -1,10 +1,41 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { MenuItem, Vendor } from '../lib/types';
+import type { MenuItem, MenuVariant, Vendor } from '../lib/types';
 
 export interface CartLine {
   item: MenuItem;
+  /** The size chosen, or null for a dish that has none. */
+  variant: MenuVariant | null;
   quantity: number;
+}
+
+/**
+ * What identifies a line in the cart.
+ *
+ * Not the item id. Once a dish can come in sizes, "Butter Paneer Half x1" and
+ * "Butter Paneer Full x2" are two lines sharing one item id — they collide as
+ * React keys, and every lookup finds whichever comes first. So identity is the
+ * pair, and every function below takes this rather than an item id.
+ *
+ * Branded deliberately. A plain `string` key would make every existing
+ * `setQuantity(item.id, n)` call site keep compiling while silently addressing
+ * the wrong thing, and this app has no test runner — the compiler is the only
+ * gate there is. The brand turns a missed call site into a build error.
+ */
+declare const lineKeyBrand: unique symbol;
+export type LineKey = string & { readonly [lineKeyBrand]: true };
+
+export function lineKey(itemId: string, variantId: string | null | undefined): LineKey {
+  return `${itemId}:${variantId ?? ''}` as LineKey;
+}
+
+export function keyOf(line: CartLine): LineKey {
+  return lineKey(line.item.id, line.variant?.id);
+}
+
+/** What one unit of a line costs: the size's price, or the dish's own. */
+export function unitPrice(line: CartLine): number {
+  return Number.parseFloat(line.variant?.price ?? line.item.price);
 }
 
 interface CartValue {
@@ -13,15 +44,25 @@ interface CartValue {
   count: number;
   subtotal: number;
   isEmpty: boolean;
-  add: (vendor: Vendor, item: MenuItem) => void;
-  setQuantity: (itemId: string, quantity: number) => void;
-  remove: (itemId: string) => void;
+  add: (vendor: Vendor, item: MenuItem, variant?: MenuVariant | null) => void;
+  setQuantity: (key: LineKey, quantity: number) => void;
+  remove: (key: LineKey) => void;
   clear: () => void;
-  quantityOf: (itemId: string) => number;
+  quantityOf: (key: LineKey) => number;
 }
 
 const CartContext = createContext<CartValue | null>(null);
-const STORAGE_KEY = 'hb_cart';
+
+/**
+ * Bumped from `hb_cart` when lines gained a size.
+ *
+ * `load()` casts whatever it parses without validating it, so a cart written by
+ * the previous build would deserialise into a line with `variant: undefined` and
+ * nothing would notice — it would price at the dish's own number, which is the
+ * wrong one for a dish that now has sizes. Dropping the stale cart costs one
+ * person one re-add; trusting it costs a wrong price.
+ */
+const STORAGE_KEY = 'hb_cart_v2';
 
 interface Persisted {
   vendor: Vendor;
@@ -55,32 +96,34 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
   }, [vendor, lines]);
 
-  const add = useCallback((nextVendor: Vendor, item: MenuItem) => {
-    // An order belongs to exactly one stall, so switching stalls resets it.
-    setVendor((current) => {
-      if (current && current.id !== nextVendor.id) setLines([]);
-      return nextVendor;
-    });
+  const add = useCallback(
+    (nextVendor: Vendor, item: MenuItem, variant: MenuVariant | null = null) => {
+      // An order belongs to exactly one stall, so switching stalls resets it.
+      setVendor((current) => {
+        if (current && current.id !== nextVendor.id) setLines([]);
+        return nextVendor;
+      });
+      const key = lineKey(item.id, variant?.id);
+      setLines((current) => {
+        const existing = current.find((l) => keyOf(l) === key);
+        if (existing) {
+          return current.map((l) => (keyOf(l) === key ? { ...l, quantity: l.quantity + 1 } : l));
+        }
+        return [...current, { item, variant, quantity: 1 }];
+      });
+    },
+    [],
+  );
+
+  const setQuantity = useCallback((key: LineKey, quantity: number) => {
     setLines((current) => {
-      const existing = current.find((l) => l.item.id === item.id);
-      if (existing) {
-        return current.map((l) =>
-          l.item.id === item.id ? { ...l, quantity: l.quantity + 1 } : l,
-        );
-      }
-      return [...current, { item, quantity: 1 }];
+      if (quantity <= 0) return current.filter((l) => keyOf(l) !== key);
+      return current.map((l) => (keyOf(l) === key ? { ...l, quantity } : l));
     });
   }, []);
 
-  const setQuantity = useCallback((itemId: string, quantity: number) => {
-    setLines((current) => {
-      if (quantity <= 0) return current.filter((l) => l.item.id !== itemId);
-      return current.map((l) => (l.item.id === itemId ? { ...l, quantity } : l));
-    });
-  }, []);
-
-  const remove = useCallback((itemId: string) => {
-    setLines((current) => current.filter((l) => l.item.id !== itemId));
+  const remove = useCallback((key: LineKey) => {
+    setLines((current) => current.filter((l) => keyOf(l) !== key));
   }, []);
 
   const clear = useCallback(() => {
@@ -90,10 +133,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<CartValue>(() => {
     const count = lines.reduce((sum, l) => sum + l.quantity, 0);
-    const subtotal = lines.reduce(
-      (sum, l) => sum + Number.parseFloat(l.item.price) * l.quantity,
-      0,
-    );
+    // unitPrice, not l.item.price. The dish's own price is ignored once a size
+    // is chosen, so reading it here would quote a total the server will not
+    // charge - and the customer would see the discrepancy only on the receipt.
+    const subtotal = lines.reduce((sum, l) => sum + unitPrice(l) * l.quantity, 0);
     return {
       vendor: lines.length > 0 ? vendor : null,
       lines,
@@ -104,7 +147,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       setQuantity,
       remove,
       clear,
-      quantityOf: (itemId) => lines.find((l) => l.item.id === itemId)?.quantity ?? 0,
+      quantityOf: (key) => lines.find((l) => keyOf(l) === key)?.quantity ?? 0,
     };
   }, [vendor, lines, add, setQuantity, remove, clear]);
 

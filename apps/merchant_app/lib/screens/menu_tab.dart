@@ -347,11 +347,42 @@ class _MenuTabState extends State<MenuTab> {
             color: item.isAvailable ? null : AppTheme.textSecondary,
           ),
         ),
-        subtitle: Text(
-          item.isAvailable
-              ? '₹${item.price.toStringAsFixed(0)}'
-              : '₹${item.price.toStringAsFixed(0)} · unavailable',
-          style: const TextStyle(fontSize: 13),
+        subtitle: Row(
+          children: [
+            Flexible(
+              child: Text(
+                [
+                  // "from ₹120" for a dish with sizes: its own price column is
+                  // ignored once sizes exist, so quoting it would be a number
+                  // nobody can actually pay.
+                  item.hasVariants
+                      ? 'from ₹${item.priceFrom.toStringAsFixed(0)}'
+                      : '₹${item.price.toStringAsFixed(0)}',
+                  if (item.hasVariants) '${item.variants.length} sizes',
+                  if (!item.isAvailable) 'unavailable',
+                ].join(' · '),
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+            if (item.priceAwaitingApproval) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  'price pending',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.warning,
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,

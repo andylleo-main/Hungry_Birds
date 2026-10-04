@@ -20,11 +20,29 @@ export interface Vendor {
   delivery_enabled: boolean;
 }
 
+/** One size of a dish: "Half" at 120, "Full" at 200. */
+export interface MenuVariant {
+  id: string;
+  name: string;
+  price: string;
+  sort_order: number;
+  is_available: boolean;
+}
+
 export interface MenuItem {
   id: string;
   name: string;
   description: string | null;
+  /**
+   * What the dish sells at when it has no sizes. Once `variants` is non-empty
+   * this is ignored for pricing — the chosen size decides — so show
+   * `price_from` instead.
+   */
   price: string;
+  /** The cheapest size anybody can actually buy, or `price` when there are none. */
+  price_from: string;
+  /** Empty for most dishes. Already ordered by the server. */
+  variants: MenuVariant[];
   category_id: string | null;
   image_url: string | null;
   is_available: boolean;
@@ -131,6 +149,8 @@ export interface OrderLineItem {
   id: string;
   menu_item_id: string | null;
   name_snapshot: string;
+  /** "Half", "Full", or null for a dish that has no sizes. */
+  variant_name_snapshot: string | null;
   price_snapshot: string;
   quantity: number;
 }

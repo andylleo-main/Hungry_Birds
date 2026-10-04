@@ -30,7 +30,12 @@ const REFRESH_KEY = 'hb_refresh_token';
 export interface UnavailableItems {
   code: 'items_unavailable';
   message: string;
-  items: { menu_item_id: string; name: string | null }[];
+  /**
+   * `variant_id` is carried separately so two sizes of one dish can be told
+   * apart — keying on the item alone would strike out Half when only Full sold
+   * out.
+   */
+  items: { menu_item_id: string; variant_id: string | null; name: string | null }[];
 }
 
 export class ApiError extends Error {
@@ -275,7 +280,8 @@ export const api = {
   // --- Orders ---
   placeOrder: (payload: {
     vendor_id: string;
-    items: { menu_item_id: string; quantity: number }[];
+    /** `variant_id` is required for a dish with sizes and refused for one without. */
+    items: { menu_item_id: string; variant_id?: string; quantity: number }[];
     note?: string;
     fulfilment_type: FulfilmentType;
     /** Required for a delivery, must be absent for a dine-in. */

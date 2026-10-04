@@ -339,6 +339,15 @@ export default function OrderTracking() {
                   <span className="text-label-md text-primary">{item.quantity}×</span>
                   <span className="truncate text-body-sm text-on-surface">
                     {item.name_snapshot}
+                    {/* Snapshotted at order time, so a reprint shows the size
+                        that was actually bought even if the stall has since
+                        renamed or removed it. */}
+                    {item.variant_name_snapshot && (
+                      <span className="text-on-surface-variant">
+                        {' '}
+                        · {item.variant_name_snapshot}
+                      </span>
+                    )}
                   </span>
                 </span>
                 <span className="shrink-0 text-label-md text-on-surface">

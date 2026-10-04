@@ -336,11 +336,16 @@ class ApiClient {
     return MenuItem.fromJson(data);
   }
 
+  /// Everything about a dish except what it costs.
+  ///
+  /// `price` is deliberately not a parameter. Changing a price is a different
+  /// decision with a different answer - it waits for an admin - so it has its
+  /// own route. The server rejects a price sent here rather than ignoring it,
+  /// so passing one would fail loudly rather than quietly do nothing.
   Future<MenuItem> updateItem(
     String itemId, {
     String? name,
     String? description,
-    double? price,
     String? categoryId,
     String? imageUrl,
     bool? isAvailable,
@@ -348,7 +353,6 @@ class ApiClient {
     final body = <String, dynamic>{};
     if (name != null) body['name'] = name;
     if (description != null) body['description'] = description;
-    if (price != null) body['price'] = price;
     if (categoryId != null) body['category_id'] = categoryId;
     if (imageUrl != null) body['image_url'] = imageUrl;
     if (isAvailable != null) body['is_available'] = isAvailable;
@@ -357,7 +361,79 @@ class ApiClient {
     return MenuItem.fromJson(data);
   }
 
+  /// Ask for a dish's price to change.
+  ///
+  /// Does not change what students pay. The number goes to an admin, and the
+  /// dish keeps selling at its current price until they approve - so a stall
+  /// whose price is under review is not a stall that has stopped selling.
+  ///
+  /// Sending the price it already has is a no-op server-side, and sending the
+  /// old price while a change is pending withdraws that change.
+  Future<MenuItem> setItemPrice(String itemId, double price) async {
+    final data = await _request('PUT', '/vendors/me/items/$itemId/price', body: {'price': price})
+        as Map<String, dynamic>;
+    return MenuItem.fromJson(data);
+  }
+
+  /// Take back a price change nobody has decided on yet.
+  Future<MenuItem> withdrawItemPrice(String itemId) async {
+    final data =
+        await _request('DELETE', '/vendors/me/items/$itemId/price') as Map<String, dynamic>;
+    return MenuItem.fromJson(data);
+  }
+
   Future<void> deleteItem(String itemId) => _request('DELETE', '/vendors/me/items/$itemId');
+
+  // --- sizes ------------------------------------------------------------------
+
+  /// Add a size. Its price goes live at once - adding is not gated, the same
+  /// way adding a dish is not.
+  Future<MenuVariant> createVariant(
+    String itemId, {
+    required String name,
+    required double price,
+    int sortOrder = 0,
+  }) async {
+    final data = await _request(
+      'POST',
+      '/vendors/me/items/$itemId/variants',
+      body: {'name': name, 'price': price, 'sort_order': sortOrder},
+    ) as Map<String, dynamic>;
+    return MenuVariant.fromJson(data);
+  }
+
+  /// Rename, reorder or switch a size off. Not its price - see
+  /// [setVariantPrice], which is gated exactly as a dish's price is.
+  Future<MenuVariant> updateVariant(
+    String itemId,
+    String variantId, {
+    String? name,
+    int? sortOrder,
+    bool? isAvailable,
+  }) async {
+    final body = <String, dynamic>{};
+    if (name != null) body['name'] = name;
+    if (sortOrder != null) body['sort_order'] = sortOrder;
+    if (isAvailable != null) body['is_available'] = isAvailable;
+    final data = await _request(
+      'PATCH',
+      '/vendors/me/items/$itemId/variants/$variantId',
+      body: body,
+    ) as Map<String, dynamic>;
+    return MenuVariant.fromJson(data);
+  }
+
+  Future<MenuVariant> setVariantPrice(String itemId, String variantId, double price) async {
+    final data = await _request(
+      'PUT',
+      '/vendors/me/items/$itemId/variants/$variantId/price',
+      body: {'price': price},
+    ) as Map<String, dynamic>;
+    return MenuVariant.fromJson(data);
+  }
+
+  Future<void> deleteVariant(String itemId, String variantId) =>
+      _request('DELETE', '/vendors/me/items/$itemId/variants/$variantId');
 
   Future<UploadSignature> uploadSignature() async {
     final data = await _request('GET', '/media/signature') as Map<String, dynamic>;

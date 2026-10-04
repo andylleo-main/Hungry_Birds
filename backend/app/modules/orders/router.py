@@ -173,6 +173,12 @@ async def place_order(
             unavailable.append(
                 {
                     "menu_item_id": str(line.menu_item_id),
+                    # Carried separately from the id above so a client can tell
+                    # two sizes of one dish apart. Keying the strikethrough on
+                    # the item alone would cross out Half when only Full sold
+                    # out. Echoes what was asked for, so a size that does not
+                    # exist still comes back identifiable.
+                    "variant_id": str(line.variant_id) if line.variant_id else None,
                     # None where the stall has deleted the dish outright. The
                     # client falls back to "an item" rather than printing a UUID.
                     "name": name,

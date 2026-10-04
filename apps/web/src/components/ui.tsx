@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { ReactNode } from 'react';
 
 /**
@@ -96,6 +97,72 @@ export function QuantityStepper({
       >
         <Icon name="add" className="text-[16px]" />
       </button>
+    </div>
+  );
+}
+
+/**
+ * A bottom sheet on a phone, a centred card on a desktop.
+ *
+ * The app had no modal, dialog or sheet of any kind, so this is the first.
+ * Geometry follows MobileCartBar (fixed to the bottom edge, `shadow-sheet`) and
+ * the click-away pattern from the header's account menu. z-50 and below are
+ * already taken by the fixed header and the mobile cart bar, so this sits above
+ * both.
+ *
+ * Escape closes it and the backdrop is a real button rather than a div, because
+ * a sheet you can only leave by making a choice is a trap on a page somebody
+ * opened by accident.
+ */
+export function Sheet({
+  open,
+  onClose,
+  title,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60]">
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 cursor-default bg-black/40"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-t-xl bg-surface-container-lowest p-space-md shadow-sheet sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[28rem] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl"
+      >
+        <div className="mb-space-sm flex items-center justify-between">
+          <h3 className="text-headline-sm text-on-surface">{title}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container"
+          >
+            <Icon name="close" className="text-[20px]" />
+          </button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
