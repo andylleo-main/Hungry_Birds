@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ApiError, api } from '../lib/api';
+import { ApiError, api, unavailableItems } from '../lib/api';
 import { rupees, validateIndianMobile } from '../lib/format';
 import { EmptyState, Icon, QuantityStepper, Spinner } from '../components/ui';
 import { useAuth } from '../state/AuthContext';
 import { useCart } from '../state/CartContext';
 import { isMockPayment } from '../lib/types';
-import type { DeliveryLocation, FulfilmentType } from '../lib/types';
+import type { DeliveryLocation, FulfilmentType, MenuItem } from '../lib/types';
 import { load as loadCashfree } from '@cashfreepayments/cashfree-js';
 
 function Step({
@@ -46,6 +46,13 @@ export default function Checkout() {
   const [note, setNote] = useState('');
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The stall's menu as it is right now, against which the cart is checked.
+  // Null until the stall loads; an empty check is better than a wrong one, and
+  // the server refuses the order anyway.
+  const [liveMenu, setLiveMenu] = useState<Map<string, MenuItem> | null>(null);
+  // Ids the server came back and refused, if it got that far.
+  const [refused, setRefused] = useState<string[]>([]);
 
   // The stall's fulfilment settings, re-read here rather than taken from the
   // cart. The cart survives a reload in localStorage, so by the time someone
@@ -92,9 +99,22 @@ export default function Checkout() {
         setDineInOk(detail.dine_in_enabled);
         setDeliveryOk(detail.delivery_enabled);
         setLocations(detail.delivery_locations);
-        // Pick a mode the stall actually offers, so the page never opens on a
-        // choice that cannot be submitted.
-        setFulfilment((current) => current ?? (detail.dine_in_enabled ? 'dine_in' : 'delivery'));
+
+        // Nothing is pre-selected. Dine-in used to be picked here as soon as
+        // this resolved, which meant somebody who wanted delivery could pay for
+        // a collection without ever having made a choice.
+
+        // The same response already carries the stall's whole menu, so keep it:
+        // it lets the page catch a dish that sold out while the cart sat in
+        // localStorage, before the customer fills in a phone number and reaches
+        // for their card rather than after.
+        setLiveMenu(
+          new Map(
+            [...detail.categories.flatMap((c) => c.items), ...detail.uncategorized_items].map(
+              (item) => [item.id, item],
+            ),
+          ),
+        );
       })
       .catch(() => {
         // Leave whatever the cart knew. Placing the order will still be checked
@@ -106,6 +126,24 @@ export default function Checkout() {
       cancelled = true;
     };
   }, [vendorId]);
+
+  // Derived rather than stored, so removing a struck-through dish updates the
+  // banner immediately instead of leaving it claiming a problem that is gone.
+  const soldOut = useMemo(
+    () =>
+      lines
+        .filter(
+          (l) => refused.includes(l.item.id) || liveMenu?.get(l.item.id)?.is_available === false,
+        )
+        .map((l) => l.item),
+    [lines, liveMenu, refused],
+  );
+
+  function dropSoldOut() {
+    for (const item of soldOut) setQuantity(item.id, 0);
+    setRefused([]);
+    setError(null);
+  }
 
   const modes = useMemo(
     () =>
@@ -197,11 +235,20 @@ export default function Checkout() {
       // them somewhere that shows the live answer.
       navigate(`/orders/${order.id}`, { replace: true });
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Could not start the payment. Nothing was charged - please try again.',
-      );
+      const gone = unavailableItems(err);
+      if (gone) {
+        // The stall sold something out between loading this page and paying for
+        // it. Mark the lines so they strike through, and say it in words the
+        // customer can act on - this used to print the dish's UUID.
+        setRefused(gone.items.map((i) => i.menu_item_id));
+        setError('Some items are no longer available. Remove them to carry on.');
+      } else {
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : 'Could not start the payment. Nothing was charged - please try again.',
+        );
+      }
       setPlacing(false);
     }
   }
@@ -343,9 +390,11 @@ export default function Checkout() {
             </div>
             <p className="mt-space-sm flex items-center gap-space-xs text-body-sm text-on-surface-variant">
               <Icon name="call" className="text-[16px] text-primary" />
-              {fulfilment === 'delivery'
-                ? 'Shared with whoever brings your order, so they can reach you.'
-                : 'The stall calls this number when your order is ready.'}
+              {fulfilment === null
+                ? 'The stall uses this to reach you about your order.'
+                : fulfilment === 'delivery'
+                  ? 'Shared with whoever brings your order, so they can reach you.'
+                  : 'The stall calls this number when your order is ready.'}
             </p>
           </Step>
 
@@ -394,13 +443,29 @@ export default function Checkout() {
             {lines.map((line) => (
               <li
                 key={line.item.id}
-                className="flex items-start justify-between gap-space-sm rounded bg-surface-container px-space-sm py-space-sm"
+                className={`flex items-start justify-between gap-space-sm rounded px-space-sm py-space-sm ${
+                  soldOut.some((i) => i.id === line.item.id)
+                    ? 'bg-surface-container opacity-60'
+                    : 'bg-surface-container'
+                }`}
               >
                 <div className="min-w-0">
-                  <p className="truncate text-label-md text-on-surface">{line.item.name}</p>
-                  <p className="text-label-md text-primary">
-                    {rupees(Number.parseFloat(line.item.price) * line.quantity)}
+                  <p
+                    className={`truncate text-label-md ${
+                      soldOut.some((i) => i.id === line.item.id)
+                        ? 'text-on-surface-variant line-through'
+                        : 'text-on-surface'
+                    }`}
+                  >
+                    {line.item.name}
                   </p>
+                  {soldOut.some((i) => i.id === line.item.id) ? (
+                    <p className="text-label-md text-on-surface-variant">Sold out</p>
+                  ) : (
+                    <p className="text-label-md text-primary">
+                      {rupees(Number.parseFloat(line.item.price) * line.quantity)}
+                    </p>
+                  )}
                 </div>
                 <QuantityStepper
                   quantity={line.quantity}
@@ -417,7 +482,13 @@ export default function Checkout() {
               <span className="text-on-surface">{rupees(subtotal)}</span>
             </div>
             <div className="flex justify-between text-on-surface-variant">
-              <span>{fulfilment === 'delivery' ? 'Delivery charge' : 'Pickup charge'}</span>
+              <span>
+                {fulfilment === null
+                  ? 'Delivery or pickup'
+                  : fulfilment === 'delivery'
+                    ? 'Delivery charge'
+                    : 'Pickup charge'}
+              </span>
               <span className="text-success">Free</span>
             </div>
           </div>
@@ -430,15 +501,40 @@ export default function Checkout() {
             <span className="text-headline-lg text-primary">{rupees(subtotal)}</span>
           </div>
 
-          {error && (
+          {soldOut.length > 0 && (
+            <div className="flex flex-col gap-space-sm rounded bg-warning-tint px-space-sm py-space-sm">
+              <p className="text-body-sm text-on-surface">
+                {soldOut.length === 1
+                  ? `${soldOut[0].name} is no longer available.`
+                  : 'Some items are no longer available.'}{' '}
+                The stall has run out while your order was open.
+              </p>
+              <button type="button" className="btn-secondary w-full" onClick={dropSoldOut}>
+                {soldOut.length === 1 ? 'Remove it and carry on' : 'Remove them and carry on'}
+              </button>
+            </div>
+          )}
+
+          {error && soldOut.length === 0 && (
             <p className="rounded bg-primary-tint px-space-sm py-space-sm text-body-sm text-primary">
               {error}
             </p>
           )}
 
-          <button type="button" className="btn-primary w-full" disabled={placing} onClick={placeOrder}>
+          {/* Refused while nothing is chosen: the mode is no longer picked for
+              the customer, so the button has to wait for them rather than send
+              an order the server will bounce. Refused with a sold-out line in
+              the cart for the same reason. */}
+          <button
+            type="button"
+            className="btn-primary w-full"
+            disabled={placing || fulfilment === null || soldOut.length > 0}
+            onClick={placeOrder}
+          >
             {placing ? (
               <Spinner />
+            ) : fulfilment === null ? (
+              'Choose dine in or delivery'
             ) : (
               <>
                 Pay {rupees(subtotal)}

@@ -126,21 +126,59 @@ async def place_order(
             else None
         ),
     )
+    # One query for every line, rather than one per line. Two reasons beyond the
+    # round trips: the stall's own items are fetched whether or not they are
+    # available, so a sold-out dish can be named rather than described by id;
+    # and every line is checked before anything is refused, so a cart with three
+    # sold-out dishes says so once instead of over three attempts.
+    #
+    # Scoped to this vendor, so an item id belonging to another stall simply is
+    # not found. That is deliberate: answering with a name would turn this into
+    # a way to read another stall's menu by guessing ids.
+    found = {
+        item.id: item
+        for item in (
+            await db.execute(
+                select(MenuItem).where(
+                    MenuItem.id.in_({line.menu_item_id for line in payload.items}),
+                    MenuItem.vendor_id == vendor.id,
+                )
+            )
+        ).scalars()
+    }
+
+    unavailable = []
+    for line in payload.items:
+        menu_item = found.get(line.menu_item_id)
+        if menu_item is None or not menu_item.is_available:
+            unavailable.append(
+                {
+                    "menu_item_id": str(line.menu_item_id),
+                    # None where the stall has deleted the dish outright. The
+                    # client falls back to "an item" rather than printing a UUID.
+                    "name": menu_item.name if menu_item is not None else None,
+                }
+            )
+
+    if unavailable:
+        # A structured body, not a sentence. This used to interpolate the raw
+        # UUID into the message, and the web app rendered it verbatim - so a
+        # customer whose dish sold out mid-checkout was shown
+        # "Menu item 3f8a1c2e-9b44-... is not available from this vendor".
+        # The client needs the ids to strike the right lines through, and the
+        # names to say which dishes, so it gets both and writes its own wording.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "items_unavailable",
+                "message": "Some items are no longer available",
+                "items": unavailable,
+            },
+        )
+
     total = 0
     for line in payload.items:
-        result = await db.execute(
-            select(MenuItem).where(
-                MenuItem.id == line.menu_item_id,
-                MenuItem.vendor_id == vendor.id,
-                MenuItem.is_available.is_(True),
-            )
-        )
-        menu_item = result.scalar_one_or_none()
-        if menu_item is None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                f"Menu item {line.menu_item_id} is not available from this vendor",
-            )
+        menu_item = found[line.menu_item_id]
         line_total = menu_item.price * line.quantity
         total += line_total
         order.items.append(

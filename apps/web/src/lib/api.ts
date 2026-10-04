@@ -26,14 +26,39 @@ export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? '/api';
 const ACCESS_KEY = 'hb_access_token';
 const REFRESH_KEY = 'hb_refresh_token';
 
+/** A refusal the UI is expected to handle specially, rather than just print. */
+export interface UnavailableItems {
+  code: 'items_unavailable';
+  message: string;
+  items: { menu_item_id: string; name: string | null }[];
+}
+
 export class ApiError extends Error {
   status: number;
 
-  constructor(status: number, message: string) {
+  /**
+   * The structured body, when the server sent one instead of a sentence.
+   *
+   * Some refusals need the page to do something rather than show a line of
+   * text - striking through the dishes that sold out, for instance. Those
+   * arrive as an object with a `code`, and the page writes its own wording from
+   * the parts. `message` still carries something sayable as a fallback.
+   */
+  detail?: UnavailableItems;
+
+  constructor(status: number, message: string, detail?: UnavailableItems) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.detail = detail;
   }
+}
+
+/** Narrows an unknown error to the sold-out refusal, for the one page that cares. */
+export function unavailableItems(error: unknown): UnavailableItems | null {
+  return error instanceof ApiError && error.detail?.code === 'items_unavailable'
+    ? error.detail
+    : null;
 }
 
 export const tokens = {
@@ -113,19 +138,25 @@ async function request<T>(
 
   if (!res.ok) {
     let message = `Something went wrong (${res.status})`;
+    let structured: UnavailableItems | undefined;
     try {
       const decoded = await res.json();
-      if (decoded?.detail) {
-        message =
-          typeof decoded.detail === 'string'
-            ? decoded.detail
-            : // FastAPI validation errors arrive as a list of objects.
-              (decoded.detail[0]?.msg ?? message);
+      const detail = decoded?.detail;
+      if (typeof detail === 'string') {
+        message = detail;
+      } else if (Array.isArray(detail)) {
+        // FastAPI validation errors arrive as a list of objects.
+        message = detail[0]?.msg ?? message;
+      } else if (detail && typeof detail === 'object' && typeof detail.code === 'string') {
+        // A refusal the page is meant to act on rather than print. Kept whole
+        // so the caller gets the parts; `message` is what it falls back to.
+        structured = detail as UnavailableItems;
+        message = structured.message ?? message;
       }
     } catch {
       // Non-JSON body; keep the generic message.
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, structured);
   }
 
   if (res.status === 204) return undefined as T;

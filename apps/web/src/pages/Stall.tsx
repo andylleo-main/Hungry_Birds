@@ -61,25 +61,28 @@ function MenuItemRow({
             <span />
           )}
 
-          {!unavailable &&
-            (quantity > 0 ? (
-              <QuantityStepper
-                quantity={quantity}
-                onChange={(next) => setQuantity(item.id, next)}
-                compact
-              />
-            ) : (
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => add(vendor, item)}
-                title={disabled ? 'This stall is closed right now' : undefined}
-                className="inline-flex h-9 items-center gap-space-xs rounded-full bg-primary px-space-md text-label-md text-on-primary transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Icon name="add" className="text-[16px]" />
-                Add
-              </button>
-            ))}
+          {/* A sold-out dish keeps its stepper when it is already in the cart.
+              Hiding it outright left the only copy of that line behind a
+              checkout the server would refuse, with no way to take it out from
+              here - so the customer had to find the cart rail to escape. */}
+          {quantity > 0 ? (
+            <QuantityStepper
+              quantity={quantity}
+              onChange={(next) => setQuantity(item.id, next)}
+              compact
+            />
+          ) : unavailable ? null : (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => add(vendor, item)}
+              title={disabled ? 'This stall is closed right now' : undefined}
+              className="inline-flex h-9 items-center gap-space-xs rounded-full bg-primary px-space-md text-label-md text-on-primary transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Icon name="add" className="text-[16px]" />
+              Add
+            </button>
+          )}
         </div>
       </div>
     </div>
