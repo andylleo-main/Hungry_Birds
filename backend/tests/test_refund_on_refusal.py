@@ -23,8 +23,8 @@ def _lines(item, qty=1):
     return [{"menu_item_id": str(item.id), "quantity": qty}]
 
 
-def _success_body(order_id, amount="60.00"):
-    """The shape Cashfree posts on a successful payment.
+def _success_body(gateway_order_id, amount="60.00"):
+    """The shape Razorpay posts on a captured payment.
 
     Same as the copy in test_payments.py, and random per call for the same
     reason: the payment id is what the idempotency ledger keys on, and that
@@ -32,18 +32,18 @@ def _success_body(order_id, amount="60.00"):
     its own events as replays.
     """
     return {
-        "type": "PAYMENT_SUCCESS_WEBHOOK",
-        "data": {
-            "order": {
-                "order_id": f"hb_{order_id}",
-                "order_amount": float(amount),
-                "order_currency": "INR",
-            },
+        "event": "payment.captured",
+        "payload": {
             "payment": {
-                "cf_payment_id": str(uuid.uuid4().int % 10**12),
-                "payment_status": "SUCCESS",
-                "payment_amount": float(amount),
-            },
+                "entity": {
+                    "id": f"pay_{uuid.uuid4().hex[:14]}",
+                    "entity": "payment",
+                    "order_id": str(gateway_order_id),
+                    "status": "captured",
+                    "amount": int(round(float(amount) * 100)),
+                    "currency": "INR",
+                }
+            }
         },
     }
 
@@ -66,7 +66,9 @@ async def _paid_order(client, headers, vendor_id, item, signed_webhook):
 
     session = await client.post(f"/orders/{order_id}/payment-session", headers=headers)
     assert session.status_code == 200, session.text
-    await signed_webhook(_success_body(order_id))
+    # Razorpay mints the order id, so it has to be carried back from the session
+    # rather than derived - there is no longer any id of ours to predict.
+    await signed_webhook(_success_body(session.json()["gateway_order_id"]))
     return order_id
 
 
@@ -107,7 +109,7 @@ class TestTheRule:
 
 class TestWhatTheStallDoes:
     async def test_rejecting_a_paid_order_still_refunds(
-        self, stub_cashfree, signed_webhook, client, db, customer, vendor, menu_item
+        self, stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
     ):
         from app.db.models.payment import PaymentStatus
 
@@ -124,7 +126,7 @@ class TestWhatTheStallDoes:
         )
 
     async def test_cancelling_a_paid_order_refunds_too(
-        self, stub_cashfree, signed_webhook, client, db, customer, vendor, menu_item
+        self, stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
     ):
         """The bug. This closed the order and kept the money."""
         from app.db.models.payment import PaymentStatus
@@ -142,7 +144,7 @@ class TestWhatTheStallDoes:
         ), "a stall cancelling a paid order kept the customer's money"
 
     async def test_cancelling_after_accepting_also_refunds(
-        self, stub_cashfree, signed_webhook, client, db, customer, vendor, menu_item
+        self, stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
     ):
         """accepted -> cancelled is in the transition table, so it is reachable
         and has to carry the money with it."""
@@ -162,7 +164,7 @@ class TestWhatTheStallDoes:
         )
 
     async def test_completing_an_order_refunds_nothing(
-        self, stub_cashfree, signed_webhook, client, db, customer, vendor, menu_item
+        self, stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
     ):
         """The one ending where the customer got what they paid for."""
         from app.db.models.payment import PaymentStatus
@@ -255,7 +257,8 @@ class TestTheDrain:
         db.add(
             Payment(
                 order_id=order.id,
-                cf_order_id=f"cf_{order.id}",
+                gateway_order_id=f"order_{order.id.hex[:14]}",
+                gateway_payment_id=f"pay_{order.id.hex[:14]}",
                 amount=order.total_amount,
                 currency="INR",
                 refund_attempts=1,
@@ -296,7 +299,8 @@ class TestTheDrain:
         db.add(
             Payment(
                 order_id=order.id,
-                cf_order_id=f"cf_{order.id}",
+                gateway_order_id=f"order_{order.id.hex[:14]}",
+                gateway_payment_id=f"pay_{order.id.hex[:14]}",
                 amount=order.total_amount,
                 currency="INR",
                 refund_attempts=3,
@@ -336,7 +340,8 @@ class TestTheDrain:
         db.add(
             Payment(
                 order_id=order.id,
-                cf_order_id=f"cf_{order.id}",
+                gateway_order_id=f"order_{order.id.hex[:14]}",
+                gateway_payment_id=f"pay_{order.id.hex[:14]}",
                 amount=order.total_amount,
                 currency="INR",
                 refund_attempts=0,

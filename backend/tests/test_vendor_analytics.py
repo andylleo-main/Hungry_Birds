@@ -196,7 +196,7 @@ class TestWhatAStallActuallyWants:
         assert {"Half", "Full"} <= sizes
 
     async def test_refusals_are_counted_and_priced(
-        self, client, customer, vendor, menu_item, pay, stub_cashfree
+        self, client, customer, vendor, menu_item, pay, stub_razorpay
     ):
         """A stall turning away one order in seven is about to lose its
         customers and has no other way to see it."""
@@ -217,7 +217,7 @@ class TestWhatAStallActuallyWants:
         assert float(totals["refused_value"]) >= 60
 
     async def test_a_rejected_order_is_not_revenue(
-        self, client, customer, vendor, menu_item, pay, stub_cashfree
+        self, client, customer, vendor, menu_item, pay, stub_razorpay
     ):
         _, headers = customer
         v, vendor_headers = vendor

@@ -23,30 +23,25 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from app.modules.payments import razorpay
+
 # Shared by every id below so one grep finds all of it, in the database as well
 # as in the code.
 PREFIX = "mock_"
 
-EVENT_TYPE = "MOCK_PAYMENT_SUCCESS"
+EVENT_TYPE = "mock.payment.captured"
 
 
-def cf_order_id_for(order_id: uuid.UUID) -> str:
-    """Deliberately not the "hb_" shape the real gateway uses.
+def gateway_order_id_for(order_id: uuid.UUID) -> str:
+    """Deliberately not the "order_" shape Razorpay mints.
 
-    service.order_id_from_cf removes "hb_" and nothing else, so this id cannot be
-    named by an inbound Cashfree webhook to settle anything.
+    A real webhook names a Razorpay order id and is matched by querying
+    payments.gateway_order_id, so a mock row could in principle be named by one.
+    The prefix is what stops that: no Razorpay id begins with "mock_", and the
+    webhook route is closed in mock mode anyway, so this is the second of two
+    independent reasons the universes cannot cross.
     """
     return f"{PREFIX}order_{order_id}"
-
-
-def payment_session_id_for(order_id: uuid.UUID) -> str:
-    """Stands in for Cashfree's session id.
-
-    The browser never sends it anywhere - the web app sees mode "mock" and skips
-    the SDK entirely - but the column is what marks a payment as ready to be
-    attempted, and the checkout route refuses an empty one.
-    """
-    return f"{PREFIX}session_{order_id}"
 
 
 def is_mock(value: str | None) -> bool:
@@ -54,34 +49,28 @@ def is_mock(value: str | None) -> bool:
     return bool(value) and value.startswith(PREFIX)
 
 
-def success_payload(*, cf_order_id: str, amount: Decimal) -> dict:
-    """The webhook body Cashfree would have posted for a successful payment.
+def success_entity(*, gateway_order_id: str, amount: Decimal) -> dict:
+    """The payment entity Razorpay would have sent for a successful payment.
+
+    An entity rather than a whole webhook body, because apply_payment_success
+    takes one: the real webhook and the checkout callback both reduce to this
+    shape, and the mock going through the same door is what keeps it honest.
 
     Built with the amount read from the payments row, so it passes the same
     amount check a real payload does rather than bypassing it. That check is the
     one thing standing between a forged payload and an order marked paid, so it
     must stay on the path even here.
     """
-    now = datetime.now(timezone.utc).isoformat()
     return {
-        "type": EVENT_TYPE,
-        "data": {
-            "order": {
-                "order_id": cf_order_id,
-                "order_amount": str(amount),
-                "order_currency": "INR",
-            },
-            "payment": {
-                # Unique per confirmation, because the payment_events ledger is
-                # keyed on it: a fixed value would make the second mock payment
-                # of the session look like a duplicate of the first.
-                "cf_payment_id": f"{PREFIX}{uuid.uuid4().hex[:16]}",
-                "payment_amount": str(amount),
-                "payment_currency": "INR",
-                "payment_status": "SUCCESS",
-                "payment_time": now,
-                "payment_group": "mock",
-            },
-        },
-        "event_time": now,
+        # Unique per confirmation, because the payment_events ledger is keyed on
+        # it: a fixed value would make the second mock payment of the session
+        # look like a duplicate of the first.
+        "id": f"{PREFIX}pay_{uuid.uuid4().hex[:16]}",
+        "entity": "payment",
+        "amount": razorpay.to_paise(amount),
+        "currency": "INR",
+        "status": "captured",
+        "order_id": gateway_order_id,
+        "method": "mock",
+        "created_at": int(datetime.now(timezone.utc).timestamp()),
     }

@@ -31,8 +31,11 @@ Dart packages `hb_shared`, Firebase project `hungrybirds-7779f`.
 ## Standing instructions from the user
 
 - **Do not mix this project with Knitcult or Laoni.** Different products. Do not
-  copy code, config or conventions between them. Cashfree is the one deliberate
-  exception: the user asked for the same SDK integration Knitcult uses.
+  copy code, config or conventions between them. There is no longer an exception:
+  Cashfree used to be one, because the user asked for the same SDK integration
+  Knitcult uses, and that instruction was withdrawn in launch week when
+  Cashfree's onboarding could not be finished in time. The gateway is now
+  **Razorpay**, hand-rolled over httpx here and shared with nothing.
 - **No purple anywhere** in any UI.
 - **Another session works in this repo.** Fetch before committing, keep commits
   scoped, never force-push a shared branch.

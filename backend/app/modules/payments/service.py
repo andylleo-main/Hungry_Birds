@@ -2,8 +2,8 @@
 
 The governing rule is that this module records what the gateway tells us and
 never adjudicates fulfilment. A webhook that can fail for a business reason is
-exactly what must not exist: Cashfree retries anything it does not get a 2xx for,
-and a retry cannot fix a disagreement about whether a stall is open.
+exactly what must not exist: Razorpay retries anything it does not get a 2xx for,
+for 24 hours, and a retry cannot fix a disagreement about whether a stall is open.
 """
 
 import hashlib
@@ -21,152 +21,153 @@ from app.db.models.order import Order, OrderStatus
 from app.db.models.payment import Payment, PaymentStatus
 from app.db.session import async_session_factory
 from app.core.tasks import fire_and_log
-from app.modules.payments import cashfree, mock
+from app.modules.payments import mock, razorpay
 
 logger = logging.getLogger(__name__)
 
-# Added on top of Cashfree's own order expiry before an unpaid order is written
-# off locally. The sum has to exceed the gateway's window, or we would cancel an
-# order Cashfree is still willing to take money for - and then have to refund a
+# Added on top of the gateway's own payment window before an unpaid order is
+# written off locally. The sum has to exceed that window, or we would cancel an
+# order Razorpay is still willing to take money for - and then have to refund a
 # payment for food nobody is making.
 SWEEP_GRACE_MINUTES = 5
 
 
-def cf_order_id_for(order_id: uuid.UUID) -> str:
-    """Our id for the Cashfree order. Derived, so it never needs looking up."""
-    return f"hb_{order_id}"
+async def payment_for_gateway_order(
+    gateway_order_id: str, db: AsyncSession
+) -> Payment | None:
+    """Find the payment row a gateway order id belongs to.
 
-
-def order_id_from_cf(cf_order_id: str) -> uuid.UUID | None:
-    try:
-        return uuid.UUID(cf_order_id.removeprefix("hb_"))
-    except ValueError:
-        return None
-
-
-def refund_id_for(order_id: uuid.UUID) -> str:
-    """One refund id per order, reused on every attempt.
-
-    Cashfree is idempotent on this, so a retry can never pay a customer twice.
-    Generating a fresh one per attempt is the bug that would.
+    **Razorpay mints its own order ids**, where Cashfree let us choose "hb_{uuid}"
+    and parse the order back out of it. So this is a query rather than string
+    surgery - which is why `payments.gateway_order_id` is uniquely indexed, and
+    why there is no longer any id shape for a forged webhook to imitate.
     """
-    return f"rf_{order_id}"
+    result = await db.execute(
+        select(Payment).where(Payment.gateway_order_id == gateway_order_id)
+    )
+    return result.scalar_one_or_none()
 
 
-def event_id_for(body: dict, timestamp: str, raw: bytes) -> str:
+def event_id_for(body: dict, raw: bytes, header_event_id: str | None = None) -> str:
     """A stable identity for a webhook, for the idempotency ledger.
 
-    Prefers whatever id Cashfree put in the payload. Falls back to a digest of
-    the signed timestamp and body, which is stable across retries because
-    Cashfree replays both unchanged.
+    Prefers Razorpay's own X-Razorpay-Event-Id, which is unique per event and
+    repeated unchanged on every retry - exactly what the unique index over
+    payment_events.event_id wants.
+
+    This carries more weight than it did under Cashfree. Razorpay sends no
+    timestamp with a webhook, so there is no staleness window to reject a replay
+    with: the ledger is now the *only* thing standing between a captured request
+    and it being applied twice. The digest fallback keeps that true even if the
+    header is ever missing, because Razorpay replays the same body byte for byte.
     """
-    data = body.get("data") or {}
-    payment = data.get("payment") or {}
-    refund = data.get("refund") or {}
-    natural = payment.get("cf_payment_id") or refund.get("refund_id")
+    if header_event_id:
+        return f"evt:{header_event_id}"
+    entity = ((body.get("payload") or {}).get("payment") or {}).get("entity") or {}
+    refund = ((body.get("payload") or {}).get("refund") or {}).get("entity") or {}
+    natural = entity.get("id") or refund.get("id")
     if natural:
-        return f"{body.get('type', 'event')}:{natural}"
-    return "sha256:" + hashlib.sha256(timestamp.encode() + raw).hexdigest()
+        return f"{body.get('event', 'event')}:{natural}"
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
 async def ensure_payment(order: Order, db: AsyncSession, settings: Settings) -> Payment:
-    """The Payment row for an order, creating the Cashfree order the first time.
+    """The Payment row for an order, creating the gateway order the first time.
 
-    One Cashfree order per order, created once and reused. Cashfree allows
-    several attempts against a single order, so a customer whose card is declined
-    retries at the gateway rather than against a second order of ours - which is
-    what makes being charged twice structurally impossible rather than unlikely.
+    One Razorpay order per order of ours, created once and reused. Razorpay allows
+    several payment attempts against a single order, so a customer whose card is
+    declined retries at the gateway rather than against a second order of ours -
+    which is what makes being charged twice structurally impossible rather than
+    unlikely.
     """
     result = await db.execute(select(Payment).where(Payment.order_id == order.id))
     payment = result.scalar_one_or_none()
 
-    # A row left over from a session in the other payment mode has a session id
-    # the current gateway knows nothing about, so it has to be re-minted. Without
-    # this, switching PAYMENTS_MODE would hand the browser a dead session - and,
-    # worse, leave cf_order_id pointing at a gateway that never heard of it.
-    if payment is not None and payment.payment_session_id:
-        if mock.is_mock(payment.payment_session_id) == settings.payments_mock:
+    # A row left over from the other payment mode names an order the current
+    # gateway has never heard of, so it has to be re-minted. Without this,
+    # switching PAYMENTS_MODE would leave gateway_order_id pointing at a gateway
+    # that cannot settle it, and the order could never be paid by anybody.
+    if payment is not None and payment.gateway_order_id:
+        if mock.is_mock(payment.gateway_order_id) == settings.payments_mock:
             return payment
-        payment.payment_session_id = None
 
     if settings.payments_mock:
-        cf_order_id = mock.cf_order_id_for(order.id)
-        session_id = mock.payment_session_id_for(order.id)
+        gateway_order_id = mock.gateway_order_id_for(order.id)
     else:
-        cf_order_id = cf_order_id_for(order.id)
-        response = await cashfree.create_order(
-            cf_order_id=cf_order_id,
+        response = await razorpay.create_order(
+            # The number a student reads out on the phone. Putting it in the
+            # receipt field makes a support call answerable from either side.
+            receipt=order.order_number,
             # The authoritative figure, priced server-side when the order was
             # placed. OrderCreate has no amount field and must never gain one.
             amount=order.total_amount,
-            customer_id=str(order.customer_id),
-            customer_name=order.customer_name,
-            customer_email=order.customer.email,
-            customer_phone=order.customer_phone or "",
+            notes={"order_id": str(order.id), "order_number": order.order_number},
             settings=settings,
         )
-        session_id = response.get("payment_session_id")
+        gateway_order_id = str(response.get("id") or "")
+        if not gateway_order_id:
+            raise razorpay.RazorpayError("create_order returned no order id")
 
     if payment is None:
         payment = Payment(
             order_id=order.id,
-            cf_order_id=cf_order_id,
+            gateway_order_id=gateway_order_id,
             amount=order.total_amount,
-            refund_id=refund_id_for(order.id),
         )
         db.add(payment)
     else:
-        # Kept in step with the session: cf_order_id is what a webhook is matched
-        # on, so a row holding one mode's order id and the other's session is a
-        # payment that can never be settled by anybody.
-        payment.cf_order_id = cf_order_id
-    payment.payment_session_id = session_id
+        payment.gateway_order_id = gateway_order_id
     await db.commit()
     await db.refresh(payment)
     return payment
 
 
-def _amounts_match(claimed, expected: Decimal) -> bool:
-    """Compare money without letting a float in through the back door."""
+def _paise_match(claimed, expected: Decimal) -> bool:
+    """Compare money as whole paise, which is how Razorpay states every amount.
+
+    Integers all the way, so there is nothing here for binary floating point to
+    round: the only conversion is our own Decimal column into paise, and that is
+    the one place it happens.
+    """
     try:
-        return Decimal(str(claimed)).quantize(Decimal("0.01")) == Decimal(expected).quantize(
-            Decimal("0.01")
-        )
+        return int(claimed) == razorpay.to_paise(expected)
     except (TypeError, ValueError, ArithmeticError):
         return False
 
 
 async def apply_payment_success(
-    order: Order, payment: Payment, body: dict, db: AsyncSession
+    order: Order, payment: Payment, entity: dict, db: AsyncSession
 ) -> str:
     """Mark an order paid, if the payload says what it should.
 
     Returns the outcome recorded against the event. Never raises for a business
     disagreement - the caller answers 200 either way, because a retry cannot fix
-    a wrong amount and Cashfree will keep sending until it gets one.
+    a wrong amount and Razorpay will keep sending for 24 hours until it gets one.
+
+    `entity` is Razorpay's payment entity, from payload.payment.entity on a
+    webhook or straight from the API on the checkout callback. Both carry the
+    same fields, which is what lets the two paths share this.
     """
     from app.modules.orders.service import allocate_token, can_transition_payment
 
-    data = body.get("data") or {}
-    cf_payment = data.get("payment") or {}
-    cf_order = data.get("order") or {}
-
-    claimed = cf_order.get("order_amount", cf_payment.get("payment_amount"))
-    if not _amounts_match(claimed, payment.amount):
+    if not _paise_match(entity.get("amount"), payment.amount):
         # Loud, and deliberately not auto-resolved. Either somebody is probing or
         # something is badly wrong, and both want a human.
         logger.error(
-            "cashfree reported %s for order %s, which we priced at %s - not marking paid",
-            claimed,
+            "razorpay reported %s paise for order %s, which we priced at %s - not marking paid",
+            entity.get("amount"),
             order.id,
             payment.amount,
         )
-        payment.last_error = f"amount mismatch: reported {claimed}, expected {payment.amount}"
+        payment.last_error = (
+            f"amount mismatch: reported {entity.get('amount')} paise, "
+            f"expected {razorpay.to_paise(payment.amount)}"
+        )
         await db.commit()
         return "amount_mismatch"
 
-    if (cf_order.get("order_currency") or "INR") != "INR":
-        payment.last_error = f"unexpected currency {cf_order.get('order_currency')}"
+    if (entity.get("currency") or "INR") != "INR":
+        payment.last_error = f"unexpected currency {entity.get('currency')}"
         await db.commit()
         return "amount_mismatch"
 
@@ -175,7 +176,7 @@ async def apply_payment_success(
         return "rejected_transition"
 
     order.payment_status = PaymentStatus.PAID
-    payment.cf_payment_id = str(cf_payment.get("cf_payment_id") or "") or None
+    payment.gateway_payment_id = str(entity.get("id") or "") or None
     payment.paid_at = datetime.now(timezone.utc)
 
     if order.status == OrderStatus.AWAITING_PAYMENT:
@@ -191,7 +192,40 @@ async def apply_payment_success(
     return "applied"
 
 
-async def apply_payment_failure(order: Order, body: dict, db: AsyncSession) -> str:
+async def apply_cod_upi_collected(order: Order, entity: dict, db: AsyncSession) -> str:
+    """A customer scanned the rider's QR and the money landed.
+
+    The point of routing a doorstep UPI payment through a gateway at all: the
+    rider never has to be believed about whether it arrived, because Razorpay
+    says so directly.
+
+    Checked against `orders.total_amount` rather than a payments row, because a
+    pay-on-delivery order has no payments row - nothing was ever opened at the
+    gateway for it. The fixed-amount QR means a short payment cannot be made in
+    the first place, so this check is about a forged or misrouted webhook rather
+    than about underpayment.
+    """
+    from app.modules.orders.service import can_transition_payment
+
+    if not _paise_match(entity.get("amount"), order.total_amount):
+        logger.error(
+            "qr credit of %s paise for order %s, which totals %s - not marking paid",
+            entity.get("amount"),
+            order.id,
+            order.total_amount,
+        )
+        return "amount_mismatch"
+
+    if not can_transition_payment(order.payment_status, PaymentStatus.PAID):
+        return "rejected_transition"
+
+    order.payment_status = PaymentStatus.PAID
+    order.collected_via = "upi"
+    await db.commit()
+    return "applied"
+
+
+async def apply_payment_failure(order: Order, entity: dict, db: AsyncSession) -> str:
     from app.modules.orders.service import can_transition_payment
 
     if not can_transition_payment(order.payment_status, PaymentStatus.FAILED):
@@ -201,27 +235,32 @@ async def apply_payment_failure(order: Order, body: dict, db: AsyncSession) -> s
     return "applied"
 
 
-async def apply_refund_update(order: Order, payment: Payment, body: dict, db: AsyncSession) -> str:
+async def apply_refund_update(
+    order: Order, payment: Payment, entity: dict, db: AsyncSession
+) -> str:
     from app.modules.orders.service import can_transition_payment
 
-    refund = (body.get("data") or {}).get("refund") or {}
-    status = str(refund.get("refund_status") or "").upper()
+    status = str(entity.get("status") or "").lower()
 
     target = {
-        "SUCCESS": PaymentStatus.REFUNDED,
-        "FAILED": PaymentStatus.REFUND_FAILED,
-        "CANCELLED": PaymentStatus.REFUND_FAILED,
+        "processed": PaymentStatus.REFUNDED,
+        "failed": PaymentStatus.REFUND_FAILED,
     }.get(status)
     if target is None:
-        # PENDING or ONHOLD: nothing has changed yet.
+        # "pending", or something Razorpay added later: nothing has changed yet,
+        # and guessing is how a customer's money gets written off as returned
+        # before it has been.
         return "rejected_transition"
+
+    if entity.get("id"):
+        payment.refund_id = str(entity["id"])[:64]
 
     if not can_transition_payment(order.payment_status, target):
         return "rejected_transition"
 
     order.payment_status = target
     if target is PaymentStatus.REFUND_FAILED:
-        payment.last_error = f"refund {status.lower()}"
+        payment.last_error = f"refund {status}"
     await db.commit()
     return "applied"
 
@@ -230,7 +269,7 @@ async def start_refund(order_id: uuid.UUID, reason: str, db: AsyncSession) -> No
     """Move an order's money state to refund-pending, without calling anybody.
 
     Split from the call on purpose: a stall rejecting an order must succeed while
-    Cashfree is unreachable, so the state change commits inside the request and
+    Razorpay is unreachable, so the state change commits inside the request and
     the network attempt happens afterwards.
     """
     from app.modules.orders.service import can_transition_payment
@@ -249,9 +288,10 @@ async def start_refund(order_id: uuid.UUID, reason: str, db: AsyncSession) -> No
         # the order would sit in refund-pending for ever, and any screen that
         # lists refunds in flight would show one that nobody will ever make.
         #
-        # Unreachable on today's paths - PAID without a payment row does not
-        # happen - but the next payment method that settles outside Cashfree will
-        # reach it, and a log line is a far better outcome than a stuck order.
+        # Reachable now that cash exists: a pay-on-delivery order is marked PAID
+        # by a rider with no gateway payment behind it, and a stall cancelling one
+        # afterwards owes the customer their notes back, not a refund API call. A
+        # log line is a far better outcome than a stuck order.
         logger.warning(
             "refund wanted for order %s (%s) but it has no payment row - nothing to refund",
             order_id,
@@ -260,17 +300,38 @@ async def start_refund(order_id: uuid.UUID, reason: str, db: AsyncSession) -> No
         return
 
     order.payment_status = PaymentStatus.REFUND_PENDING
-    if not payment.refund_id:
-        payment.refund_id = refund_id_for(order_id)
     await db.commit()
 
 
 async def attempt_refund(order_id: uuid.UUID, reason: str, settings: Settings) -> None:
-    """Actually ask Cashfree for the money back.
+    """Actually ask Razorpay for the money back.
 
     Runs after the response, in its own session - the request's session is closed
     by its dependency by the time a background task runs, and reusing it fails
     only under load, which is the worst time to find out.
+
+    **This is the function that can pay a customer twice.** Cashfree accepted a
+    refund id we chose, so repeating a request was free; Razorpay mints its own,
+    so a naive retry creates a second refund and sends the money again. Two
+    guards replace that lost guarantee:
+
+    1. The payment row is claimed with SELECT ... FOR UPDATE SKIP LOCKED, and the
+       lock is held across the gateway call rather than released before it. A
+       second drain that arrives meanwhile is skipped by the database and returns
+       without calling anybody.
+
+       Holding a row lock across an HTTP request is normally worth avoiding, and
+       it is deliberate here: the call is bounded by _REFUND_TIMEOUT, refunds are
+       rare, and the alternative is a window in which two workers both believe
+       they are the only one. A compare-and-set on the attempt counter was tried
+       first and is **not** sufficient - a drain that reads after the first one
+       commits sees the new value, swaps it legitimately, and goes on to refund
+       again.
+
+    2. Existing refunds are listed before one is created, and an existing one is
+       adopted. That covers what no lock can: an attempt that reached Razorpay
+       and then died before recording what came back, releasing the lock with the
+       connection.
     """
     if not settings.payments_enabled:
         return
@@ -284,29 +345,63 @@ async def attempt_refund(order_id: uuid.UUID, reason: str, settings: Settings) -
         return
 
     async with async_session_factory() as db:
-        result = await db.execute(select(Payment).where(Payment.order_id == order_id))
+        result = await db.execute(
+            select(Payment).where(Payment.order_id == order_id).with_for_update(skip_locked=True)
+        )
         payment = result.scalar_one_or_none()
-        order = await db.get(Order, order_id)
-        if payment is None or order is None:
+        if payment is None:
+            # Either there is no payment row, or another worker is holding this
+            # one right now. Both mean there is nothing for us to do.
+            logger.info("refund for order %s is not ours to make right now", order_id)
             return
-        if order.payment_status is not PaymentStatus.REFUND_PENDING:
+
+        order = await db.get(Order, order_id)
+        if order is None or order.payment_status is not PaymentStatus.REFUND_PENDING:
             return
 
         payment.refund_attempts += 1
-        await db.commit()
 
         try:
-            await cashfree.refund(
-                cf_order_id=payment.cf_order_id,
-                refund_id=payment.refund_id or refund_id_for(order_id),
+            payment_id = payment.gateway_payment_id
+            if not payment_id:
+                # No webhook ever landed, so we hold no payment id. Razorpay knows
+                # which payments were made against the order even when we do not.
+                for attempt in await razorpay.order_payments(payment.gateway_order_id, settings):
+                    if str(attempt.get("status")) == "captured":
+                        payment_id = str(attempt.get("id"))
+                        payment.gateway_payment_id = payment_id
+                        break
+            if not payment_id:
+                raise razorpay.RazorpayError(
+                    f"order {payment.gateway_order_id} has no captured payment to refund"
+                )
+
+            # Guard 2.
+            existing = await razorpay.list_refunds(payment_id, settings)
+            if existing:
+                payment.refund_id = str(existing[0].get("id") or "")[:64] or None
+                await db.commit()
+                logger.info(
+                    "adopted refund %s already open for order %s rather than making a second",
+                    payment.refund_id,
+                    order_id,
+                )
+                return
+
+            created = await razorpay.refund(
+                payment_id=payment_id,
                 amount=payment.amount,
-                note=reason,
+                notes={"order_id": str(order_id), "reason": reason[:100]},
                 settings=settings,
             )
+            payment.refund_id = str(created.get("id") or "")[:64] or None
+            # Commits here, which is also what releases the lock taken above.
+            await db.commit()
         except Exception as exc:
             # Left in refund_pending rather than marked failed: the money is
             # still owed and the next drain should try again. The error is
-            # recorded so an admin can see why it is stuck.
+            # recorded so an admin can see why it is stuck - and committing it
+            # is what releases the row for that next attempt.
             payment.last_error = str(exc)[:500]
             await db.commit()
             raise
@@ -359,7 +454,7 @@ async def drain_stuck_refunds(
     attempt_refund runs once, as a background task, and re-raises on failure -
     leaving the order in refund_pending with the error recorded. Its own comment
     says "the next drain should try again", and until now there was no drain:
-    refund_attempts was incremented and never read, so a Cashfree blip during a
+    refund_attempts was incremented and never read, so a gateway blip during a
     rejection lost a customer's money until somebody noticed by hand.
 
     Rides on the order lists for the same reason sweep_abandoned does - there is
@@ -367,12 +462,12 @@ async def drain_stuck_refunds(
     turns into unbounded work. The scoping also happens to aim it well: the
     customer whose refund is stuck is the one refreshing their orders page.
 
-    No distributed lock. Two concurrent reads can pick the same row, and that is
-    survivable because the refund id is derived from the order id and reused on
-    every attempt, so Cashfree treats a duplicate as the same refund - the
-    guarantee refund_id_for was written for. The backoff below does the rest:
-    attempt_refund increments refund_attempts and commits before it calls
-    anybody, which moves the row out of the window almost immediately.
+    No distributed lock, and two concurrent reads can still pick the same row.
+    What makes that survivable now lives in attempt_refund rather than here:
+    it claims the attempt counter with a compare-and-set and lists existing
+    refunds before creating one. Under Cashfree this was free, because the refund
+    id was ours and reused; with Razorpay minting its own, those two guards are
+    the only thing between a retry and a customer refunded twice.
     """
     if not settings.payments_enabled:
         return 0
@@ -430,14 +525,17 @@ async def sweep_abandoned(
     There is no scheduler in this project, so this runs opportunistically from
     the reads that would otherwise show these rows. Nothing is deleted - an
     abandoned order is still a record - and the window is deliberately longer
-    than Cashfree's own expiry so a payment the gateway would still accept is
-    never cancelled underneath it.
+    than the gateway's own so a payment it would still accept is never cancelled
+    underneath it.
 
-    The status predicate is load-bearing: an order the customer cancelled
-    themselves must not be rewritten by a sweep.
+    The status predicate is load-bearing, twice over. An order the customer
+    cancelled themselves must not be rewritten by a sweep; and a pay-on-delivery
+    order is never AWAITING_PAYMENT/PENDING, which is exactly why cash orders are
+    placed straight into the stall's queue rather than parked in the state this
+    cancels twenty minutes later.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(
-        minutes=settings.cashfree_order_expiry_minutes + SWEEP_GRACE_MINUTES
+        minutes=settings.payment_window_minutes + SWEEP_GRACE_MINUTES
     )
     stmt = (
         update(Order)

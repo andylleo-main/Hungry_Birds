@@ -56,15 +56,27 @@ elif settings.otp_debug_echo:
 if settings.payments_mock:
     _startup_log.warning(
         'PAYMENTS_MODE=mock: every order is marked paid without any money '
-        'changing hands, and the Cashfree webhook is disabled. Fine for testing '
+        'changing hands, and the Razorpay webhook is disabled. Fine for testing '
         'the flow; on a deployment students can reach, it is free food. Set '
-        'PAYMENTS_MODE=cashfree once the gateway credentials are in place.'
+        'PAYMENTS_MODE=razorpay once the gateway credentials are in place.'
     )
-elif not settings.cashfree_configured:
+elif not settings.razorpay_configured:
     _startup_log.warning(
-        'Cashfree is not configured, so nothing can be ordered: placing an '
-        'order answers 503. Set CASHFREE_APP_ID and CASHFREE_SECRET_KEY, or '
-        'PAYMENTS_MODE=mock to test without a gateway.'
+        'Razorpay is not configured, so nothing can be paid for online: placing '
+        'an online order answers 503. Set RAZORPAY_KEY_ID and '
+        'RAZORPAY_KEY_SECRET, or PAYMENTS_MODE=mock to test without a gateway.'
+    )
+elif not settings.razorpay_webhook_configured:
+    # Separate from the credentials above, and worth its own line, because this
+    # is the failure that looks like nothing is wrong: checkout opens, the
+    # customer pays, Razorpay takes the money - and no order is ever marked paid
+    # because nothing we trust ever says so. The checkout callback covers most of
+    # it, but refunds and doorstep UPI have no second path.
+    _startup_log.warning(
+        'RAZORPAY_WEBHOOK_SECRET is not set, so the webhook route answers 404 '
+        'and Razorpay cannot tell us about refunds or UPI QR collections. '
+        'Register the webhook at <PUBLIC_BASE_URL>/api/payments/razorpay/webhook '
+        'and set its signing secret.'
     )
 
 if settings.cors_origin_list == ['*']:
@@ -132,7 +144,7 @@ _UNMETERED_PATHS = ('/health',)
 # throttled webhook is a 429, which Cashfree retries, which builds a backlog that
 # cannot drain - and the thing being lost is notification that somebody has
 # already been charged. The route has its own generous, signature-gated limit.
-_UNTHROTTLED_PATHS = ('/api/payments/cashfree/webhook',)
+_UNTHROTTLED_PATHS = ('/api/payments/razorpay/webhook',)
 
 
 @app.middleware('http')

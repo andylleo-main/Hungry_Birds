@@ -64,7 +64,21 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=OrderStatus.AWAITING_PAYMENT,
         nullable=False,
     )
-    payment_method: Mapped[str] = mapped_column(String(20), default="cashfree", nullable=False)
+    # "online" or "cod". Historical rows say "cashfree", from before the gateway
+    # swap, which is why every reader asks whether this *is* "cod" rather than
+    # whether it is online - the online value has had two spellings and may have
+    # a third, while "cod" means one thing.
+    payment_method: Mapped[str] = mapped_column(String(20), default="online", nullable=False)
+
+    # How a pay-on-delivery order was settled at the door: "cash" or "upi".
+    # Null on anything paid online, and on a cash order nobody has collected yet.
+    # A stall counting its cash box at close wants exactly this column.
+    collected_via: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    # The Razorpay QR a rider is currently showing for this order, if any.
+    # Indexed, because the qr_code.credited webhook names only the QR and this is
+    # the entire mapping back to an order.
+    cod_qr_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
 
     # What a customer quotes when something goes wrong, and what gets printed on
     # the stall's ticket. Format NNNNNN-RRRR, e.g. "014237-5096".

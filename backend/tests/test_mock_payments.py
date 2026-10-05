@@ -42,11 +42,11 @@ async def test_a_bad_payments_mode_refuses_to_boot():
         Settings(payments_mode="moc", database_url="postgresql+asyncpg://x/y", secret_key="k" * 32)
 
 
-async def test_mock_mode_does_not_need_cashfree_to_take_orders(
+async def test_mock_mode_does_not_need_a_gateway_to_take_orders(
     client, customer, vendor, menu_item, mock_payments
 ):
     """The whole point: no credentials, and an order can still be placed."""
-    assert not mock_payments.cashfree_configured
+    assert not mock_payments.razorpay_configured
     assert mock_payments.payments_enabled
 
     _, headers = customer
@@ -56,7 +56,7 @@ async def test_mock_mode_does_not_need_cashfree_to_take_orders(
     assert order["payment_status"] == "pending"
 
 
-async def test_the_mock_session_is_marked_mock_and_names_no_cashfree_order(
+async def test_the_mock_session_is_marked_mock_and_names_no_real_order(
     client, customer, vendor, menu_item, mock_payments
 ):
     _, headers = customer
@@ -71,8 +71,10 @@ async def test_the_mock_session_is_marked_mock_and_names_no_cashfree_order(
     assert session["mode"] == "mock"
     # Deliberately NOT the "hb_" shape: service.order_id_from_cf strips only that
     # prefix, so a real Cashfree webhook can never name a mock payment row.
-    assert session["cf_order_id"] == f"mock_order_{order['id']}"
-    assert session["payment_session_id"].startswith("mock_")
+    assert session["gateway_order_id"] == f"mock_order_{order['id']}"
+    # No Razorpay id shape, so a real inbound webhook can never name this row
+    # even if the route were somehow open.
+    assert not session["gateway_order_id"].startswith("order_")
 
 
 # --- the happy path it exists for -------------------------------------------
@@ -121,13 +123,13 @@ async def test_a_mock_payment_is_recorded_in_the_event_ledger(
 
     rows = (
         await db.execute(
-            select(PaymentEvent).where(PaymentEvent.event_type == "MOCK_PAYMENT_SUCCESS")
+            select(PaymentEvent).where(PaymentEvent.event_type == "mock.payment.captured")
         )
     ).scalars().all()
     mine = [e for e in rows if str(order["id"]) in str(e.raw)]
     assert len(mine) == 1
     assert mine[0].outcome == "applied"
-    assert mine[0].event_id.startswith("MOCK_PAYMENT_SUCCESS:mock_")
+    assert mine[0].event_id.startswith("mock.payment.captured:mock_pay_")
 
 
 async def test_confirming_twice_does_not_pay_twice(
@@ -174,14 +176,14 @@ async def test_the_mock_amount_still_goes_through_the_amount_check(
     # builder to lie about the figure.
     from app.modules.payments import mock as mock_module
 
-    real = mock_module.success_payload
+    real = mock_module.success_entity
     try:
-        mock_module.success_payload = lambda *, cf_order_id, amount: real(
-            cf_order_id=cf_order_id, amount=amount + 1
+        mock_module.success_entity = lambda *, gateway_order_id, amount: real(
+            gateway_order_id=gateway_order_id, amount=amount + 1
         )
         r = await client.post(f"/orders/{order['id']}/mock-payment", headers=headers)
     finally:
-        mock_module.success_payload = real
+        mock_module.success_entity = real
 
     assert r.json()["status"] == "amount_mismatch"
     after = (await client.get(f"/orders/{order['id']}", headers=headers)).json()
@@ -193,7 +195,7 @@ async def test_the_mock_amount_still_goes_through_the_amount_check(
 
 
 async def test_the_mock_route_does_not_exist_in_real_payment_mode(
-    client, customer, vendor, menu_item, stub_cashfree
+    client, customer, vendor, menu_item, stub_razorpay
 ):
     """The one property keeping a free-food endpoint harmless.
 
@@ -212,18 +214,18 @@ async def test_the_mock_route_does_not_exist_in_real_payment_mode(
     assert after["payment_status"] == "pending"
 
 
-async def test_the_cashfree_webhook_is_closed_in_mock_mode(client, mock_payments):
-    """The subtle one, and the reason cashfree_configured exists separately.
+async def test_the_real_webhook_is_closed_in_mock_mode(client, mock_payments):
+    """The subtle one, and the reason the signing secret gates it separately.
 
-    In mock mode payments are enabled while the Cashfree secret is empty. That
-    secret is the HMAC key webhook signatures are checked against, so a webhook
-    gated on "payments enabled" would verify every forged signature against an
-    empty key and mark orders paid for anybody who posted one.
+    In mock mode payments are enabled while the webhook secret is empty. That
+    secret is the HMAC key signatures are checked against, so a webhook gated on
+    "payments enabled" would verify every forged signature against an empty key
+    and mark orders paid for anybody who posted one.
     """
     r = await client.post(
-        "/payments/cashfree/webhook",
-        json={"type": "PAYMENT_SUCCESS_WEBHOOK"},
-        headers={"x-webhook-timestamp": "1", "x-webhook-signature": ""},
+        "/payments/razorpay/webhook",
+        json={"event": "payment.captured"},
+        headers={"x-razorpay-signature": ""},
     )
     assert r.status_code == 404
 
@@ -287,7 +289,7 @@ async def test_mock_mode_is_off_by_default():
     from app.core.config import Settings
 
     bare = Settings(database_url="postgresql+asyncpg://x/y", secret_key="k" * 32)
-    assert bare.payments_mode == "cashfree"
+    assert bare.payments_mode == "razorpay"
     assert not bare.payments_mock
     # And with no gateway either, orders are refused outright rather than
     # falling back to something that lets them through.
@@ -333,7 +335,7 @@ async def test_the_config_endpoint_reports_the_mode(client, mock_payments):
     assert r.json()["payments_mode"] == "mock"
 
 
-async def test_the_config_endpoint_reports_cashfree_normally(client):
+async def test_the_config_endpoint_reports_the_real_gateway_normally(client):
     r = await client.get("/config")
     assert r.status_code == 200
-    assert r.json()["payments_mode"] == "cashfree"
+    assert r.json()["payments_mode"] == "razorpay"

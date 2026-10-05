@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     firebase_service_account_json: str = ""
 
     # --- Payments ------------------------------------------------------------
-    # "cashfree" takes real money. "mock" confirms every payment instantly
+    # "razorpay" takes real money. "mock" confirms every payment instantly
     # without contacting anybody, so the rest of the system - the stall's queue,
     # the push, assignment, the handover code - can be exercised before the
     # gateway credentials exist.
@@ -100,31 +100,47 @@ class Settings(BaseSettings):
     # There is no safe default but the real one, so this is not inferred from
     # anything. Mock mode is on only when somebody has typed it into an
     # environment variable, and the app logs a warning on every boot while it is.
-    payments_mode: str = "cashfree"
+    payments_mode: str = "razorpay"
 
-    # --- Cashfree (payments) -------------------------------------------------
-    # Empty secret means Cashfree is not configured: the checkout endpoint
-    # answers 503 and the webhook 404s rather than advertising a door it cannot
-    # verify anybody through.
+    # --- Razorpay (payments) -------------------------------------------------
+    # Was Cashfree until the gateway swap; see the Payments section of README.md
+    # for why.
     #
-    # The secret key is both the API credential and the key Cashfree signs
-    # webhooks with, so it never belongs anywhere near the browser bundle.
-    cashfree_app_id: str = ""
-    cashfree_secret_key: str = ""
-    cashfree_api_version: str = "2025-01-01"
-    # "sandbox" or "production". Sent to the browser with the payment session so
-    # the SDK opens against the same environment the session was minted in -
-    # hardcoding it into the bundle is how those two drift apart.
-    cashfree_env: str = "sandbox"
+    # Three values, not two, and the third is the one that is easy to get wrong.
+    # Razorpay signs webhooks with a secret you choose when registering the
+    # webhook in their dashboard, which is *not* the API key secret. Cashfree
+    # used one value for both, and collapsing them here would mean either
+    # checking forged webhooks against the API credential or refusing to boot
+    # without a webhook that may not be registered yet.
+    #
+    # key_id is handed to the browser with the payment session - it is Razorpay's
+    # publishable half and is meant to be public. The other two never leave this
+    # process.
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+    # No environment setting, deliberately: Razorpay serves test and live from
+    # one host and the key prefix (rzp_test_ / rzp_live_) decides which account
+    # the call lands in. There is nothing to keep in sync, so there is nothing to
+    # drift.
+
     # How long a customer has to finish paying. Must stay comfortably below the
-    # local sweep window, so we never give up on an order Cashfree would still
+    # local sweep window, so we never give up on an order the gateway would still
     # accept money for.
-    cashfree_order_expiry_minutes: int = 15
-    # Rejects a replayed webhook whose signature is still valid but whose
-    # timestamp is old.
-    cashfree_webhook_tolerance_seconds: int = 300
-    # Where the browser is sent back to after the hosted flow, and where Cashfree
-    # posts webhooks. Both must be the public URL of this deployment.
+    payment_window_minutes: int = 15
+
+    # --- Pay on delivery -----------------------------------------------------
+    # Riders collecting at the door, cash or UPI. On because it was asked for,
+    # but kept as one variable so it can be switched off in seconds if cash goes
+    # wrong on a launch day - a stall cooking food that is never paid for is the
+    # exposure this carries, and that is worth a kill switch.
+    #
+    # Delivery orders only. Dine-in is paid up front, because the student is
+    # standing at the counter and there is no rider to collect from them.
+    cod_enabled: bool = True
+
+    # Where Razorpay posts webhooks, and the base for any link we send out.
+    # Must be the public URL of this deployment.
     public_base_url: str = ""
 
     # Empty means send no CORS headers at all, which is correct in production:
@@ -192,8 +208,8 @@ class Settings(BaseSettings):
         away. Refusing to boot is the only outcome that is wrong in neither
         direction."""
         mode = value.strip().lower()
-        if mode not in ("cashfree", "mock"):
-            raise ValueError('PAYMENTS_MODE must be "cashfree" or "mock"')
+        if mode not in ("razorpay", "mock"):
+            raise ValueError('PAYMENTS_MODE must be "razorpay" or "mock"')
         return mode
 
     @property
@@ -202,30 +218,31 @@ class Settings(BaseSettings):
         return self.payments_mode == "mock"
 
     @property
-    def cashfree_configured(self) -> bool:
-        """Whether we hold credentials to talk to Cashfree and to verify what it
-        sends us.
+    def razorpay_configured(self) -> bool:
+        """Whether we hold credentials to ask Razorpay for money."""
+        return bool(self.razorpay_key_id and self.razorpay_key_secret)
 
-        Separate from payments_enabled below, and the distinction is load-bearing:
-        the webhook is gated on *this* one. The secret key is the HMAC key
-        webhook signatures are checked against, so a route that accepts webhooks
-        without it would verify every forgery against an empty key - and in mock
-        mode there is no secret, which is exactly when payments_enabled is true.
+    @property
+    def razorpay_webhook_configured(self) -> bool:
+        """Whether we can verify that a webhook really came from Razorpay.
+
+        The webhook route is gated on *this*, separately from the two above, and
+        the distinction is load-bearing. The signing secret is the only thing
+        standing between an open POST endpoint and anyone on the internet marking
+        any order paid. A route that accepted webhooks without it would check
+        every forgery against an empty HMAC key.
+
+        It is also why this is its own setting rather than a property of being
+        configured: credentials can be in place days before somebody registers
+        the webhook in the dashboard, and during that window the honest answer is
+        that we cannot verify anybody.
         """
-        return bool(self.cashfree_app_id and self.cashfree_secret_key)
+        return bool(self.razorpay_webhook_secret)
 
     @property
     def payments_enabled(self) -> bool:
         """Whether an order can be paid for at all, by any means."""
-        return self.payments_mock or self.cashfree_configured
-
-    @property
-    def cashfree_base_url(self) -> str:
-        return (
-            "https://api.cashfree.com/pg"
-            if self.cashfree_env == "production"
-            else "https://sandbox.cashfree.com/pg"
-        )
+        return self.payments_mock or self.razorpay_configured
 
     @property
     def push_enabled(self) -> bool:

@@ -37,33 +37,39 @@ async def _checkout(client, headers, vendor_id, item, **extra):
     order = await _place(client, headers, vendor_id, item, **extra)
     session = await client.post(f"/orders/{order['id']}/payment-session", headers=headers)
     assert session.status_code == 200, session.text
-    assert session.json()["cf_order_id"] == f"hb_{order['id']}"
-    # No amount is handed to the browser - there is nothing there to tamper with.
-    assert "amount" not in session.json()
+    body = session.json()
+    # Razorpay mints the order id, so unlike Cashfree there is no id to predict -
+    # the test has to carry back whatever the gateway gave, exactly as the
+    # browser does.
+    assert body["gateway_order_id"].startswith("order_")
+    assert body["key_id"].startswith("rzp_test_")
+    # Paise, and the server's figure. Checkout needs an amount, but Razorpay
+    # charges what it holds against the order rather than what the page asks for.
+    assert body["amount"] == 6000
+    order["gateway_order_id"] = body["gateway_order_id"]
     return order
 
 
-def _success_body(order_id, amount="60.00", cf_payment_id=None):
-    """The shape Cashfree actually posts on a successful payment.
+def _success_body(gateway_order_id, amount="60.00", payment_id=None):
+    """The shape Razorpay actually posts on a captured payment.
 
     The payment id is random per call because it is what the idempotency ledger
     keys on, and that ledger is a durable table - a fixed id would make every run
     after the first see its own events as replays.
     """
-    cf_payment_id = cf_payment_id or str(uuid.uuid4().int % 10**12)
     return {
-        "type": "PAYMENT_SUCCESS_WEBHOOK",
-        "data": {
-            "order": {
-                "order_id": f"hb_{order_id}",
-                "order_amount": float(amount),
-                "order_currency": "INR",
-            },
+        "event": "payment.captured",
+        "payload": {
             "payment": {
-                "cf_payment_id": cf_payment_id,
-                "payment_status": "SUCCESS",
-                "payment_amount": float(amount),
-            },
+                "entity": {
+                    "id": payment_id or f"pay_{uuid.uuid4().hex[:14]}",
+                    "entity": "payment",
+                    "order_id": str(gateway_order_id),
+                    "status": "captured",
+                    "amount": int(round(float(amount) * 100)),
+                    "currency": "INR",
+                }
+            }
         },
     }
 
@@ -138,45 +144,52 @@ async def test_an_unpaid_order_is_never_broadcast_to_the_stalls_queue(
 
 async def test_an_unsigned_webhook_is_refused(client, payments_on):
     r = await client.post(
-        "/payments/cashfree/webhook",
-        content=b'{"type":"PAYMENT_SUCCESS_WEBHOOK"}',
+        "/payments/razorpay/webhook",
+        content=b'{"event":"payment.captured"}',
         headers={"content-type": "application/json"},
     )
     assert r.status_code == 401
 
 
-async def test_a_tampered_webhook_is_refused(stub_cashfree, signed_webhook, customer, vendor, menu_item, client):
+async def test_a_tampered_webhook_is_refused(stub_razorpay, signed_webhook, customer, vendor, menu_item, client):
     user, cust_headers = customer
     v, _ = vendor
     order = await _checkout(client, cust_headers, v.id, menu_item)
 
-    r = await signed_webhook(_success_body(order["id"]), signature="not-the-right-signature")
+    r = await signed_webhook(_success_body(order["gateway_order_id"]), signature="not-the-right-signature")
     assert r.status_code == 401
 
 
-async def test_a_replayed_webhook_is_refused_once_it_is_stale(
-    stub_cashfree, signed_webhook, customer, vendor, menu_item, client
+async def test_a_webhook_signed_with_the_api_secret_is_refused(
+    stub_razorpay, signed_webhook, payments_on, customer, vendor, menu_item, client
 ):
-    """A captured body with a valid signature must not work forever."""
-    import time
+    """The replacement for Cashfree's stale-timestamp check.
 
+    Razorpay sends no timestamp, so there is no age to reject a replay by - that
+    job moved entirely to the event ledger. What is worth a test instead is the
+    mistake this gateway actually invites: signing with the API key secret rather
+    than the webhook signing secret. They are different values, both plausible,
+    and accepting either would mean anyone holding the publishable half of a
+    leaked key pair could mark orders paid.
+    """
     user, cust_headers = customer
     v, _ = vendor
-    order = await _place(client, cust_headers, v.id, menu_item)
+    order = await _checkout(client, cust_headers, v.id, menu_item)
 
-    old = str(int(time.time()) - 3600)
-    r = await signed_webhook(_success_body(order["id"]), timestamp=old)
+    r = await signed_webhook(
+        _success_body(order["gateway_order_id"]), secret=payments_on.razorpay_key_secret
+    )
     assert r.status_code == 401
 
 
 async def test_a_successful_payment_hands_the_order_to_the_stall(
-    stub_cashfree, signed_webhook, client, customer, vendor, menu_item
+    stub_razorpay, signed_webhook, client, customer, vendor, menu_item
 ):
     user, cust_headers = customer
     v, vendor_headers = vendor
     order = await _checkout(client, cust_headers, v.id, menu_item)
 
-    r = await signed_webhook(_success_body(order["id"]))
+    r = await signed_webhook(_success_body(order["gateway_order_id"]))
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "applied"
 
@@ -190,24 +203,34 @@ async def test_a_successful_payment_hands_the_order_to_the_stall(
 
 
 async def test_the_same_webhook_twice_changes_nothing_the_second_time(
-    stub_cashfree, signed_webhook, client, customer, vendor, menu_item
+    stub_razorpay, signed_webhook, client, customer, vendor, menu_item
 ):
-    """Cashfree retries anything it does not get a 2xx for."""
+    """Razorpay retries anything it does not get a 2xx for, for 24 hours.
+
+    The same X-Razorpay-Event-Id is sent twice on purpose: that header is now the
+    whole of the replay protection, because Razorpay signs no timestamp for a
+    stale body to be rejected by. If the ledger ever stopped keying on it, this
+    is the test that notices.
+    """
     user, cust_headers = customer
     v, _ = vendor
     order = await _checkout(client, cust_headers, v.id, menu_item)
-    body = _success_body(order["id"])
+    body = _success_body(order["gateway_order_id"])
+    # Unique per run, reused within the test. The ledger is a durable table, so a
+    # literal id would make every run after the first see its own event as a
+    # replay - the same trap the payment ids above avoid.
+    event_id = f"evt_{uuid.uuid4().hex}"
 
-    first = await signed_webhook(body)
+    first = await signed_webhook(body, event_id=event_id)
     assert first.json()["status"] == "applied"
 
-    second = await signed_webhook(body)
+    second = await signed_webhook(body, event_id=event_id)
     assert second.status_code == 200
     assert second.json()["status"] == "duplicate"
 
 
 async def test_a_payment_for_the_wrong_amount_is_not_accepted(
-    stub_cashfree, signed_webhook, client, db, customer, vendor, menu_item
+    stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
 ):
     """The one check standing between us and a forged amount."""
     from app.db.models.order import Order
@@ -216,7 +239,7 @@ async def test_a_payment_for_the_wrong_amount_is_not_accepted(
     v, _ = vendor
     order = await _checkout(client, cust_headers, v.id, menu_item)  # priced at 60.00
 
-    r = await signed_webhook(_success_body(order["id"], amount="1.00"))
+    r = await signed_webhook(_success_body(order["gateway_order_id"], amount="1.00"))
     assert r.status_code == 200
     assert r.json()["status"] == "amount_mismatch"
 
@@ -227,25 +250,29 @@ async def test_a_payment_for_the_wrong_amount_is_not_accepted(
 
 
 async def test_a_late_failure_cannot_unpay_a_paid_order(
-    stub_cashfree, signed_webhook, client, db, customer, vendor, menu_item
+    stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
 ):
-    """Cashfree does not promise an order, so this has to be designed for."""
+    """Razorpay does not promise an order of events, so this is designed for."""
     from app.db.models.order import Order
 
     user, cust_headers = customer
     v, _ = vendor
     order = await _checkout(client, cust_headers, v.id, menu_item)
 
-    assert (await signed_webhook(_success_body(order["id"]))).json()["status"] == "applied"
+    assert (await signed_webhook(_success_body(order["gateway_order_id"]))).json()["status"] == "applied"
 
     failed = {
-        "type": "PAYMENT_FAILED_WEBHOOK",
-        "data": {
-            "order": {"order_id": f"hb_{order['id']}", "order_amount": 60.0},
+        "event": "payment.failed",
+        "payload": {
             "payment": {
-                "cf_payment_id": str(uuid.uuid4().int % 10**12),
-                "payment_status": "FAILED",
-            },
+                "entity": {
+                    "id": f"pay_{uuid.uuid4().hex[:14]}",
+                    "order_id": order["gateway_order_id"],
+                    "status": "failed",
+                    "amount": 6000,
+                    "currency": "INR",
+                }
+            }
         },
     }
     r = await signed_webhook(failed)
@@ -261,33 +288,64 @@ async def test_a_webhook_for_an_order_we_do_not_have_is_shrugged_off(
     signed_webhook
 ):
     """200, not 500 - a retry cannot make an unknown order exist."""
-    r = await signed_webhook(_success_body(uuid.uuid4()))
+    r = await signed_webhook(_success_body("order_NotOneOfOurs"))
     assert r.status_code == 200
     assert r.json()["status"] == "ignored"
 
 
-async def test_the_webhook_does_not_exist_until_cashfree_is_configured(client, payments_off):
+async def test_the_webhook_does_not_exist_until_it_can_be_verified(client, payments_off):
     """Nothing can be verified, so the route must not accept anything."""
     r = await client.post(
-        "/payments/cashfree/webhook",
+        "/payments/razorpay/webhook",
         content=b"{}",
         headers={"content-type": "application/json"},
     )
     assert r.status_code == 404
 
 
+async def test_the_webhook_stays_closed_with_credentials_but_no_signing_secret(client):
+    """The window this gateway adds, and the reason it is its own setting.
+
+    API keys usually land days before somebody registers the webhook in the
+    Razorpay dashboard. During that window the honest answer is that we cannot
+    verify anybody, so the route must stay shut - gating it on the credentials
+    instead would open an unauthenticated endpoint checking every forgery against
+    an empty key.
+    """
+    from app.core.config import get_settings
+    from app.main import app
+
+    half = get_settings().model_copy(
+        update={
+            "razorpay_key_id": "rzp_test_FAKE",
+            "razorpay_key_secret": "test-key-secret",
+            "razorpay_webhook_secret": "",
+        }
+    )
+    app.dependency_overrides[get_settings] = lambda: half
+    try:
+        r = await client.post(
+            "/payments/razorpay/webhook",
+            content=b"{}",
+            headers={"content-type": "application/json"},
+        )
+        assert r.status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+
 # --- refunds ----------------------------------------------------------------
 
 
 async def test_rejecting_a_paid_order_starts_a_refund(
-    stub_cashfree, signed_webhook, client, db, customer, vendor, menu_item
+    stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
 ):
     from app.db.models.order import Order
 
     user, cust_headers = customer
     v, vendor_headers = vendor
     order = await _checkout(client, cust_headers, v.id, menu_item)
-    await signed_webhook(_success_body(order["id"]))
+    await signed_webhook(_success_body(order["gateway_order_id"]))
 
     r = await client.patch(
         f"/vendors/me/orders/{order['id']}/status",
@@ -302,8 +360,8 @@ async def test_rejecting_a_paid_order_starts_a_refund(
     assert row.payment_status.value == "refund_pending"
 
 
-async def test_a_stall_can_still_reject_while_cashfree_is_down(
-    stub_cashfree, signed_webhook, client, db, customer, vendor, menu_item, monkeypatch
+async def test_a_stall_can_still_reject_while_razorpay_is_down(
+    stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item, monkeypatch
 ):
     """The property the whole refund design exists to protect.
 
@@ -311,17 +369,17 @@ async def test_a_stall_can_still_reject_while_cashfree_is_down(
     happening at the payment provider.
     """
     from app.db.models.order import Order
-    from app.modules.payments import cashfree
+    from app.modules.payments import razorpay
 
     async def explode(**kwargs):
-        raise cashfree.CashfreeError("gateway down")
+        raise razorpay.RazorpayError("gateway down")
 
-    monkeypatch.setattr(cashfree, "refund", explode)
+    monkeypatch.setattr(razorpay, "refund", explode)
 
     user, cust_headers = customer
     v, vendor_headers = vendor
     order = await _checkout(client, cust_headers, v.id, menu_item)
-    await signed_webhook(_success_body(order["id"]))
+    await signed_webhook(_success_body(order["gateway_order_id"]))
 
     r = await client.patch(
         f"/vendors/me/orders/{order['id']}/status",
@@ -364,7 +422,7 @@ async def test_an_abandoned_checkout_is_written_off_eventually(
 
 
 async def test_the_sweep_leaves_a_paid_order_alone(
-    stub_cashfree, signed_webhook, client, db, customer, vendor, menu_item
+    stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
 ):
     """The predicate is load-bearing: a sweep must never touch real money."""
     from datetime import datetime, timedelta, timezone
@@ -374,7 +432,7 @@ async def test_the_sweep_leaves_a_paid_order_alone(
     user, cust_headers = customer
     v, _ = vendor
     order = await _checkout(client, cust_headers, v.id, menu_item)
-    await signed_webhook(_success_body(order["id"]))
+    await signed_webhook(_success_body(order["gateway_order_id"]))
 
     row = await db.get(Order, uuid.UUID(order["id"]))
     row.created_at = datetime.now(timezone.utc) - timedelta(days=3)
@@ -389,7 +447,7 @@ async def test_the_sweep_leaves_a_paid_order_alone(
 # --- configuration ----------------------------------------------------------
 
 
-async def test_no_orders_are_taken_until_cashfree_is_configured(
+async def test_no_orders_are_taken_until_the_gateway_is_configured(
     client, customer, vendor, menu_item, payments_off
 ):
     """Refused up front, rather than accepted and left unfinishable.

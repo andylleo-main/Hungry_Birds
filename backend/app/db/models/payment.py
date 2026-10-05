@@ -24,9 +24,23 @@ class PaymentStatus(StrEnum):
     PENDING = "pending"
     PAID = "paid"
     FAILED = "failed"
-    # Nobody completed the payment in time. Swept locally, after Cashfree's own
-    # order expiry has already closed the window.
+    # Nobody completed the payment in time. Swept locally, after the gateway's
+    # own payment window has already closed.
     EXPIRED = "expired"
+    # Pay on delivery: the food is being made and the money is owed at the door.
+    #
+    # Distinct from PENDING, and the distinction is what keeps cash orders alive.
+    # PENDING means a checkout nobody finished, which sweep_abandoned cancels
+    # after twenty minutes; a cash order would be killed mid-cook by that sweep
+    # if it shared the state. DUE says the opposite - this one is expected to go
+    # on, and settles at the door.
+    DUE = "due"
+    # Pay on delivery that ended without the money ever being taken: refused at
+    # the door, nobody home, cancelled before the rider arrived. Nothing is owed
+    # in either direction, which is what distinguishes it from FAILED (a payment
+    # that was attempted and did not work) and from REFUNDED (money that moved
+    # twice).
+    WAIVED = "waived"
     REFUND_PENDING = "refund_pending"
     REFUNDED = "refunded"
     # The refund call did not succeed. Holds real money, so it is a state
@@ -52,10 +66,10 @@ PaymentStatusType = Enum(
 class Payment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """The money side of one order.
 
-    One row per order, holding one Cashfree order that is created once and
-    reused. Cashfree allows several payment attempts against a single order, so
-    retries happen at the gateway rather than by us minting a new one - which is
-    what makes paying twice structurally impossible instead of merely unlikely.
+    One row per order, holding one gateway order that is created once and reused.
+    Razorpay allows several payment attempts against a single order, so retries
+    happen at the gateway rather than by us minting a new one - which is what
+    makes paying twice structurally impossible instead of merely unlikely.
     """
 
     __tablename__ = "payments"
@@ -67,13 +81,18 @@ class Payment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
 
-    # Our own id for the Cashfree order, derived from the order id so it can be
-    # recomputed rather than looked up.
-    cf_order_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    cf_payment_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The gateway's id for this order. **Razorpay mints it**, unlike Cashfree
+    # where we chose "hb_{order_id}" and could parse the order back out of it, so
+    # this is the lookup key every inbound webhook is matched on - hence unique
+    # and indexed rather than merely stored.
+    gateway_order_id: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
+    gateway_payment_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    # Snapshot of what we told Cashfree to collect. The webhook compares against
-    # this, so a payload claiming a different figure cannot mark an order paid.
+    # Snapshot of what we told the gateway to collect. The webhook compares
+    # against this, so a payload claiming a different figure cannot mark an order
+    # paid.
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
 
@@ -84,14 +103,14 @@ class Payment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # the gateway knows: its ids, what we asked it to collect, and the refund
     # bookkeeping.
 
-    # What the browser SDK needs to open the checkout. Transient - Cashfree
-    # expires it - but kept so a customer who closed the sheet can be handed the
-    # same session again rather than a second order.
-    payment_session_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # There is no payment_session_id any more. Cashfree handed the browser an
+    # opaque session; Razorpay Checkout takes the gateway order id and the
+    # publishable key, both of which are already known without storing anything.
 
-    # Generated once and reused across attempts. Cashfree's refund API is
-    # idempotent on this, so retrying can never refund twice; a fresh id per
-    # attempt is exactly the bug that would.
+    # Razorpay's id for the refund, recorded once it exists. Note it is written
+    # *after* the fact rather than chosen in advance: Cashfree accepted an id of
+    # ours and was idempotent on it, which is the guarantee attempt_refund now
+    # has to reconstruct by listing existing refunds before creating one.
     refund_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     refund_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

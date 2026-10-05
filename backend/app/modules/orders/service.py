@@ -92,6 +92,11 @@ DELIVERY_ONLY_STATUSES = frozenset({OrderStatus.OUT_FOR_DELIVERY})
 # value for every combination of the two.
 ALLOWED_PAYMENT_TRANSITIONS: dict[PaymentStatus, set[PaymentStatus]] = {
     PaymentStatus.PENDING: {PaymentStatus.PAID, PaymentStatus.FAILED, PaymentStatus.EXPIRED},
+    # Pay on delivery. PAID when the rider collects, WAIVED when the order ends
+    # without anybody collecting - refused at the door, or cancelled first.
+    # There is no route from DUE to the refund states, because money that was
+    # never taken cannot be given back.
+    PaymentStatus.DUE: {PaymentStatus.PAID, PaymentStatus.WAIVED},
     # A customer whose card was declined can try again on the same Cashfree
     # order, so a failure is not the end.
     PaymentStatus.FAILED: {PaymentStatus.PAID},

@@ -14,7 +14,7 @@ Students sign in with an `@bitmesra.ac.in` address; stall owners may register wi
 any address but can only sign in from the merchant app, and only once an admin has
 approved their stall. See [Who signs in where](#who-signs-in-where).
 
-Every order is paid online through Cashfree before any stall sees it. There is no
+Every order is paid online through Razorpay before any stall sees it. There is no
 cash on delivery. For testing before the gateway credentials exist, `PAYMENTS_MODE=mock`
 confirms payments without charging anything — see [Payments](#payments).
 
@@ -753,17 +753,38 @@ failures logged rather than raised.
 
 Every order is paid online before a stall ever sees it. There is no cash.
 
-**Set-up (yours to do).** From the Cashfree dashboard, set:
+The gateway is **Razorpay**. It was Cashfree until launch week, when that
+account's onboarding could not be completed in time; the swap is recorded here
+rather than quietly erased, because the two gateways differ in ways the code
+still carries — see *What changed with the gateway* below.
+
+**Set-up (yours to do).** From the Razorpay dashboard, set:
 
 | Variable | Notes |
 | --- | --- |
-| `CASHFREE_APP_ID` | Dashboard → Developers → API keys |
-| `CASHFREE_SECRET_KEY` | The same key signs webhooks, so it is backend-only — never in the web bundle |
-| `CASHFREE_ENV` | `sandbox` to test, `production` once Cashfree has passed your KYC |
-| `PUBLIC_BASE_URL` | This deployment's public address, used to build the webhook and return URLs |
+| `RAZORPAY_KEY_ID` | Dashboard → the key icon beside the Test/Live toggle. Public: it is handed to the browser |
+| `RAZORPAY_KEY_SECRET` | Backend only. Never in the web bundle |
+| `RAZORPAY_WEBHOOK_SECRET` | **A different secret.** You choose it when registering the webhook |
+| `PUBLIC_BASE_URL` | This deployment's public address |
 
-Then add the webhook in Cashfree's dashboard, pointing at
-`<PUBLIC_BASE_URL>/api/payments/cashfree/webhook`.
+There is no environment variable. Razorpay serves test and live from one host and
+the key prefix decides: `rzp_test_…` never touches real money, `rzp_live_…`
+always does. Going live is that one value — which is also why it is worth reading
+twice before a deploy.
+
+Then register the webhook in the Razorpay dashboard, pointing at
+`<PUBLIC_BASE_URL>/api/payments/razorpay/webhook`, for the events
+`payment.captured`, `payment.failed`, `refund.processed`, `refund.failed` and
+`qr_code.credited`. Put the signing secret you set there into
+`RAZORPAY_WEBHOOK_SECRET`.
+
+Two dashboard settings are not code and will fail silently if wrong:
+
+- **Auto-capture must be on** (it is the default). With it off, payments stop at
+  `authorized`, `payment.captured` never fires, and nothing is ever marked paid.
+- **QR Codes is activated on request.** Pay-on-delivery UPI needs it; without it
+  the rider's UPI button answers 503 telling them to take cash, and everything
+  else still works.
 
 > **Until these are set, no orders can be placed at all.** `POST /orders` answers
 > 503 with a message saying so. That is deliberate: payment is the only route out
@@ -775,13 +796,13 @@ Then add the webhook in Cashfree's dashboard, pointing at
 
 Set `PAYMENTS_MODE=mock` and every payment confirms instantly, charging nothing.
 It exists so the long tail after a payment — the stall's queue, the push, rider
-assignment, the handover code — can be walked end to end before the Cashfree
-credentials arrive. `PAYMENTS_MODE=cashfree` is the default and has to be
+assignment, the handover code — can be walked end to end before the gateway
+credentials arrive. `PAYMENTS_MODE=razorpay` is the default and has to be
 overridden by hand; nobody arrives here by omission.
 
-It is not a short-circuit. The mock builds the same webhook payload Cashfree
-would post and runs it through the same `apply_payment_success`, amount check
-included, and the same side effects. What gets exercised is the real settlement
+It is not a short-circuit. The mock builds the same payment entity Razorpay would
+send and runs it through the same `apply_payment_success`, amount check included,
+and the same side effects. What gets exercised is the real settlement
 path with a synthetic trigger — a mock that set `paid` directly would test
 nothing worth testing.
 
@@ -790,18 +811,17 @@ Three things stop it becoming free food in production:
 - **The route only exists in mock mode.** `POST /orders/{id}/mock-payment` 404s
   otherwise — not 403, because a disabled "mark as paid" endpoint that announces
   itself is an invitation to go looking for the switch.
-- **The Cashfree webhook closes.** Gated on `cashfree_configured`, not on
-  payments being enabled, and that distinction is the whole reason both
-  properties exist. In mock mode payments are on while the Cashfree secret is
-  empty — and that secret is the HMAC key signatures are verified against, so a
-  webhook gated the other way would check every forgery against an empty key and
-  mark orders paid for anyone who posted one.
+- **The real webhook closes.** Gated on `razorpay_webhook_configured` — the
+  signing secret specifically — not on payments being enabled, and that
+  distinction is the whole reason the properties are separate. In mock mode
+  payments are on while that secret is empty, and it is the HMAC key signatures
+  are verified against, so a webhook gated the other way would check every
+  forgery against an empty key and mark orders paid for anyone who posted one.
 - **Mock payments stay identifiable.** Every id is prefixed `mock_`, and each
-  confirmation writes a `payment_events` row of type `MOCK_PAYMENT_SUCCESS`. Once
-  real payments are live, orders that were never actually paid for can still be
-  found — otherwise reconciling the books is guesswork. `order_id_from_cf` strips
-  only `hb_`, so a real Cashfree webhook can never resolve to a mock payment row,
-  and vice versa.
+  confirmation writes a `payment_events` row of type `mock.payment.captured`.
+  Once real payments are live, orders that were never actually paid for can still
+  be found — otherwise reconciling the books is guesswork. No Razorpay id begins
+  with `mock_`, so a real webhook can never resolve to a mock payment row.
 
 While it is on, the checkout page shows a banner saying nothing is being charged
 (read from `GET /api/config`, so it cannot go stale against the bundle) and the
@@ -814,11 +834,25 @@ gets its session re-minted on the next attempt, because a session from the other
 mode is one the current gateway has never heard of.
 
 **The flow.** The customer places the order, which is created as
-`awaiting_payment` and is invisible to the stall. The browser is handed a payment
-session id — and nothing else, no amount, because the Cashfree SDK does not take
-one and so there is nothing client-side to tamper with. Cashfree's webhook is
-what moves the order to `placed`, and that is the moment the stall sees it, hears
-about it, and can start cooking.
+`awaiting_payment` and is invisible to the stall. The browser is handed the
+Razorpay order id, the publishable key and the amount in paise, and opens
+Checkout. The webhook is what moves the order to `placed`, and that is the moment
+the stall sees it, hears about it, and can start cooking.
+
+The amount reaching the browser is new with Razorpay — Checkout needs one — and
+is not a way in: Razorpay charges what *it* holds against the order, so editing
+the figure on the page changes the label on the sheet and nothing about the
+money.
+
+**There is a second door, deliberately.** `POST /orders/{id}/payment-callback`
+takes what Checkout hands back to the page and confirms the payment from it. It
+exists because of what a misconfigured webhook costs: a wrong URL or a mistyped
+signing secret means *no payment is ever confirmed*, every order sits unpaid and
+no stall sees anything — a silent, total failure, and a launch is exactly when it
+happens. It is held to the same standard as the webhook: the signature proves
+Razorpay issued that payment for that order, the amount and capture state are
+read from Razorpay's API rather than from the page, and it writes the same
+ledger, so whichever arrives second is a recorded no-op.
 
 Money state is its own field, `payment_status`, separate from the order's status.
 They are genuinely independent: paid-and-cooking, paid-and-rejected and
@@ -826,30 +860,53 @@ paid-and-refunded all exist.
 
 **Refunds are automatic.** A stall rejecting an order, or a customer cancelling
 before it is accepted, refunds in full. The state change commits inside the
-request and the call to Cashfree happens after the response, so a gateway outage
-can never leave a stall unable to refuse an order it cannot make. The refund id is
-derived from the order id and reused on every attempt, because Cashfree treats it
-as an idempotency key — a fresh id per retry is exactly how somebody gets refunded
-twice.
+request and the call to Razorpay happens after the response, so a gateway outage
+can never leave a stall unable to refuse an order it cannot make.
 
 **The webhook is the part worth reading twice.** It is unauthenticated by
-necessity, so everything it may change is gated four ways: an HMAC-SHA256
-signature over the timestamp and the raw bytes, a five-minute staleness window, an
-amount checked against what we told Cashfree to collect, and a transition the
-state table allows. Replays are caught by a unique row in `payment_events`
+necessity, so everything it may change is gated: an HMAC-SHA256 signature over the
+raw bytes keyed with the webhook secret, an amount checked in paise against what
+we told Razorpay to collect, and a transition the state table allows. Replays are
+caught by a unique row in `payment_events`, keyed on `X-Razorpay-Event-Id` and
 written in the same transaction as the change it authorises — so a rollback
-releases the guard too, rather than swallowing Cashfree's retry with the money
-unbooked.
+releases the guard too, rather than swallowing a retry with the money unbooked.
 
 Anything durably recorded answers 200, including events we decline to act on. A
-non-2xx tells Cashfree to retry, and a retry cannot fix a wrong amount.
+non-2xx tells Razorpay to retry — for 24 hours — and a retry cannot fix a wrong
+amount.
 
-**Abandoned checkouts.** Cashfree's own order expiry (15 minutes) closes the
-payment window. A sweep then writes those orders off locally, running
-opportunistically on the reads that would otherwise display them, since this
-project has no scheduler. The local window is deliberately longer than the
-gateway's, so an order Cashfree would still accept money for is never cancelled
-underneath it.
+**Abandoned checkouts.** A sweep writes unpaid orders off locally after
+`PAYMENT_WINDOW_MINUTES` plus five, running opportunistically on the reads that
+would otherwise display them, since this project has no scheduler. It only ever
+touches orders that are `awaiting_payment` with `payment_status = pending`, which
+is also why a pay-on-delivery order is placed straight into the stall's queue
+instead of parked in that state.
+
+### What changed with the gateway
+
+Four Cashfree guarantees did not survive the move, and each left something behind
+in the code:
+
+- **Razorpay mints the order id.** Cashfree let us choose `hb_{order_id}` and
+  parse the order back out of it; now a webhook is matched by querying the
+  uniquely-indexed `payments.gateway_order_id`. There is no longer any id shape
+  for a forged webhook to imitate.
+- **Razorpay mints the refund id.** Cashfree accepted one of ours and was
+  idempotent on it, so the retry drain could re-drive a refund freely. Without
+  that, a retry would create a *second* refund and pay a customer twice. Two
+  guards replace it: the payment row is claimed with `SELECT … FOR UPDATE SKIP
+  LOCKED` and the lock is **held across the gateway call**, so a second drain is
+  skipped by the database; and existing refunds are listed before one is created,
+  which covers an attempt that reached Razorpay and then died before recording
+  what came back. A compare-and-set on the attempt counter was tried first and is
+  not sufficient — a drain that reads after the first commits swaps the new value
+  quite legitimately and refunds again.
+- **Razorpay sends no webhook timestamp.** There is no staleness window to reject
+  a captured body by, so the `payment_events` row is now the *only* replay
+  protection rather than the second of two.
+- **The webhook secret is a different secret from the API key secret.** Cashfree
+  used one value for both. They are separate settings here, and mixing them up
+  fails closed in both directions.
 
 **Accepted risk, stated plainly.** An item can sell out between an order being
 created and the payment landing. The order is priced from a snapshot taken at

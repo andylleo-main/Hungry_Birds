@@ -46,9 +46,12 @@ def _test_settings():
 
     return get_settings().model_copy(
         update={
-            "cashfree_app_id": "TEST_APP_ID",
-            "cashfree_secret_key": "test-secret-key",
-            "cashfree_env": "sandbox",
+            "razorpay_key_id": "rzp_test_FAKE",
+            "razorpay_key_secret": "test-key-secret",
+            # Deliberately a different value from the key secret. The two are
+            # separate settings precisely because mixing them up fails closed,
+            # and a fixture that used one string for both would never catch it.
+            "razorpay_webhook_secret": "test-webhook-secret",
             "public_base_url": "https://testserver",
         }
     )
@@ -257,7 +260,11 @@ def payments_off(client):
     from app.main import app
 
     bare = get_settings().model_copy(
-        update={"cashfree_app_id": "", "cashfree_secret_key": ""}
+        update={
+            "razorpay_key_id": "",
+            "razorpay_key_secret": "",
+            "razorpay_webhook_secret": "",
+        }
     )
     app.dependency_overrides[get_settings] = lambda: bare
     yield bare
@@ -266,11 +273,11 @@ def payments_off(client):
 
 @pytest.fixture
 def mock_payments(client):
-    """Run one test with PAYMENTS_MODE=mock and no Cashfree credentials.
+    """Run one test with PAYMENTS_MODE=mock and no Razorpay credentials.
 
     Both halves matter. Mock mode is meant to work *without* a gateway, so a
     fixture that left the test keys in place would never catch a path that still
-    reaches for them - and the webhook's gate is the Cashfree secret
+    reaches for them - and the webhook's gate is the signing secret
     specifically, which only an empty one exercises.
     """
     from app.core.config import get_settings
@@ -279,8 +286,9 @@ def mock_payments(client):
     mocked = get_settings().model_copy(
         update={
             "payments_mode": "mock",
-            "cashfree_app_id": "",
-            "cashfree_secret_key": "",
+            "razorpay_key_id": "",
+            "razorpay_key_secret": "",
+            "razorpay_webhook_secret": "",
         }
     )
     app.dependency_overrides[get_settings] = lambda: mocked
@@ -290,34 +298,42 @@ def mock_payments(client):
 
 @pytest.fixture
 def signed_webhook(client, payments_on):
-    """POST a Cashfree webhook with a real signature over the exact bytes sent.
+    """POST a Razorpay webhook with a real signature over the exact bytes sent.
 
     Signing the serialised bytes - rather than letting httpx re-encode a dict -
-    is the point: the signature covers what Cashfree actually sent, and a test
+    is the point: the signature covers what Razorpay actually sent, and a test
     that lets the client re-serialise would pass while the production path
     failed.
+
+    Each call gets a fresh X-Razorpay-Event-Id, because that header is the
+    idempotency key. Razorpay sends no timestamp, so unlike the Cashfree webhook
+    this replaces there is no staleness window - the ledger row is the only
+    replay protection, which is why a test that wants a duplicate has to pass the
+    same event_id back deliberately.
     """
-    import base64
     import hashlib
     import hmac
     import json
-    import time
+    import uuid as _uuid
 
-    async def _post(body: dict, *, timestamp: str | None = None, signature: str | None = None):
+    async def _post(
+        body: dict,
+        *,
+        signature: str | None = None,
+        event_id: str | None = None,
+        secret: str | None = None,
+    ):
         raw = json.dumps(body, separators=(",", ":")).encode()
-        ts = timestamp if timestamp is not None else str(int(time.time()))
         if signature is None:
-            digest = hmac.new(
-                payments_on.cashfree_secret_key.encode(), ts.encode() + raw, hashlib.sha256
-            ).digest()
-            signature = base64.b64encode(digest).decode()
+            key = secret if secret is not None else payments_on.razorpay_webhook_secret
+            signature = hmac.new(key.encode(), raw, hashlib.sha256).hexdigest()
         return await client.post(
-            "/payments/cashfree/webhook",
+            "/payments/razorpay/webhook",
             content=raw,
             headers={
                 "content-type": "application/json",
-                "x-webhook-timestamp": ts,
-                "x-webhook-signature": signature,
+                "x-razorpay-signature": signature,
+                "x-razorpay-event-id": event_id or _uuid.uuid4().hex,
             },
         )
 
@@ -325,31 +341,93 @@ def signed_webhook(client, payments_on):
 
 
 @pytest.fixture
-def stub_cashfree(monkeypatch):
-    """Answer Cashfree's create-order call without leaving the machine.
+def stub_razorpay(monkeypatch):
+    """Answer Razorpay's calls without leaving the machine.
 
     Patching the client rather than inserting a payments row directly means the
     tests still go through the real /payment-session endpoint - its ownership
     check, its stall-still-open check, and the row it writes.
 
-    Returns the list of refund calls made, so a test can assert one was
-    attempted without reaching the network.
+    Returns a dict of the calls made, so a test can assert what was attempted
+    without reaching the network. `refunds` is the one that matters: Razorpay
+    mints refund ids rather than accepting ours, so "how many times was refund
+    called" is now a correctness question about money rather than a detail.
+
+    `existing_refunds` is what list_refunds will report. Leaving it empty is the
+    normal case; putting something in it is how a test stands in for an earlier
+    attempt that got through, which attempt_refund must adopt instead of creating
+    a second refund.
+
+    Every stub yields to the event loop before answering. That is not padding: a
+    stub that returns without awaiting never suspends its caller, so one worker
+    runs its whole transaction - row lock, gateway call and commit - before a
+    concurrent one's query even reaches Postgres. Tests about two workers racing
+    would then pass or fail on nothing, which is how the refund lock looked
+    broken when it was not.
     """
-    from app.modules.payments import cashfree
+    import asyncio
 
-    refunds: list[dict] = []
+    from app.modules.payments import razorpay
 
-    async def fake_create_order(*, cf_order_id, amount, **kwargs):
+    async def _like_a_network_call():
+        await asyncio.sleep(0.05)
+
+    calls: dict = {"refunds": [], "orders": [], "qrs": [], "existing_refunds": []}
+
+    async def fake_create_order(*, receipt, amount, notes, settings):
+        await _like_a_network_call()
+        calls["orders"].append({"receipt": receipt, "amount": amount, "notes": notes})
         return {
-            "cf_order_id": cf_order_id,
-            "order_status": "ACTIVE",
-            "payment_session_id": f"session_{cf_order_id}",
+            "id": f"order_{uuid.uuid4().hex[:14]}",
+            "entity": "order",
+            "amount": razorpay.to_paise(amount),
+            "currency": "INR",
+            "receipt": receipt,
+            "status": "created",
         }
 
-    async def fake_refund(**kwargs):
-        refunds.append(kwargs)
-        return {"refund_status": "PENDING"}
+    async def fake_list_refunds(payment_id, settings):
+        await _like_a_network_call()
+        return list(calls["existing_refunds"])
 
-    monkeypatch.setattr(cashfree, "create_order", fake_create_order)
-    monkeypatch.setattr(cashfree, "refund", fake_refund)
-    return refunds
+    async def fake_refund(*, payment_id, amount, notes, settings):
+        await _like_a_network_call()
+        calls["refunds"].append(
+            {"payment_id": payment_id, "amount": amount, "notes": notes}
+        )
+        return {
+            "id": f"rfnd_{uuid.uuid4().hex[:14]}",
+            "entity": "refund",
+            "amount": razorpay.to_paise(amount),
+            "payment_id": payment_id,
+            "status": "processed",
+        }
+
+    async def fake_order_payments(gateway_order_id, settings):
+        await _like_a_network_call()
+        return []
+
+    async def fake_create_upi_qr(*, amount, description, notes, settings):
+        await _like_a_network_call()
+        qr = {
+            "id": f"qr_{uuid.uuid4().hex[:14]}",
+            "entity": "qr_code",
+            "image_url": "https://rzp.io/i/testqr",
+            "payment_amount": razorpay.to_paise(amount),
+            "status": "active",
+            "notes": notes,
+        }
+        calls["qrs"].append(qr)
+        return qr
+
+    async def fake_close_upi_qr(qr_id, settings):
+        await _like_a_network_call()
+        return None
+
+    monkeypatch.setattr(razorpay, "create_order", fake_create_order)
+    monkeypatch.setattr(razorpay, "list_refunds", fake_list_refunds)
+    monkeypatch.setattr(razorpay, "refund", fake_refund)
+    monkeypatch.setattr(razorpay, "order_payments", fake_order_payments)
+    monkeypatch.setattr(razorpay, "create_upi_qr", fake_create_upi_qr)
+    monkeypatch.setattr(razorpay, "close_upi_qr", fake_close_upi_qr)
+    return calls
