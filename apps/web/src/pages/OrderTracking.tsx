@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { load as loadCashfree } from '@cashfreepayments/cashfree-js';
+import { CHECKOUT_THEME, openCheckout } from '../lib/razorpay';
 import { ApiError, api, orderSocketUrl } from '../lib/api';
 import type { FulfilmentType, Order, OrderStatus } from '../lib/types';
 import { paymentLabel, STATUS_LABEL, isActive, isMockPayment } from '../lib/types';
@@ -57,9 +57,9 @@ export default function OrderTracking() {
   }
 
   /**
-   * Re-open Cashfree for an order whose payment was never finished.
+   * Re-open Checkout for an order whose payment was never finished.
    *
-   * The same Cashfree order is reused rather than a new one being created, so a
+   * The same Razorpay order is reused rather than a new one being created, so a
    * customer who closed the sheet, lost signal or came back tomorrow cannot end
    * up with two payments against one plate of food.
    */
@@ -70,23 +70,42 @@ export default function OrderTracking() {
       const session = await api.paymentSession(orderId);
       if (isMockPayment(session)) {
         await api.confirmMockPayment(orderId);
-      } else {
-        const cashfree = await loadCashfree({ mode: session.mode as 'sandbox' | 'production' });
-        await cashfree.checkout({
-          paymentSessionId: session.payment_session_id,
-          redirectTarget: '_modal',
-        });
+        await load();
+        setPaying(false);
+        return;
       }
-      // The modal closing says nothing trustworthy about the outcome - only the
-      // webhook does - so re-read rather than assume.
-      await load();
+
+      // Re-read rather than assume, whichever way the sheet closes: paying is
+      // confirmed by the webhook, and dismissing says nothing at all.
+      const refresh = () => {
+        void load().finally(() => setPaying(false));
+      };
+
+      await openCheckout({
+        key: session.key_id,
+        amount: session.amount,
+        currency: session.currency,
+        name: 'Hungry Birds',
+        description: order ? `Order ${order.order_number}` : 'Your order',
+        order_id: session.gateway_order_id,
+        notes: { order_number: order?.order_number ?? '' },
+        theme: { color: CHECKOUT_THEME },
+        handler: (handback) => {
+          void api
+            .confirmPayment(orderId, handback)
+            .catch(() => undefined)
+            .finally(refresh);
+        },
+        modal: { ondismiss: refresh },
+      });
+      // Deliberately no setPaying(false) here: the sheet is open, not finished.
+      // Both callbacks above clear it.
     } catch (err) {
       setPayError(
         err instanceof ApiError
           ? err.message
           : "Couldn't reopen the payment. Nothing was charged.",
       );
-    } finally {
       setPaying(false);
     }
   }

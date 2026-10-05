@@ -8,7 +8,7 @@ import { keyOf, lineKey, unitPrice, useCart } from '../state/CartContext';
 import { isMockPayment } from '../lib/types';
 import type { CartLine } from '../state/CartContext';
 import type { DeliveryLocation, FulfilmentType, MenuItem } from '../lib/types';
-import { load as loadCashfree } from '@cashfreepayments/cashfree-js';
+import { CHECKOUT_THEME, openCheckout } from '../lib/razorpay';
 
 function Step({
   index,
@@ -234,25 +234,49 @@ export default function Checkout() {
       const session = await api.paymentSession(order.id);
       clear();
 
+      const track = () => navigate(`/orders/${order.id}`, { replace: true });
+
       if (isMockPayment(session)) {
         // The backend is running without a gateway. Confirm against our own API
         // instead of opening a sheet that would have nothing behind it.
         await api.confirmMockPayment(order.id);
-      } else {
-        const cashfree = await loadCashfree({ mode: session.mode as 'sandbox' | 'production' });
-        // Takes only the session id. No amount is passed, because the SDK does
-        // not accept one - which is what makes the figure impossible to tamper
-        // with from the browser.
-        await cashfree.checkout({
-          paymentSessionId: session.payment_session_id,
-          redirectTarget: '_modal',
-        });
+        track();
+        return;
       }
 
-      // The modal has closed. That tells us nothing reliable about whether the
-      // payment succeeded - only Cashfree's webhook does - so this just sends
-      // them somewhere that shows the live answer.
-      navigate(`/orders/${order.id}`, { replace: true });
+      await openCheckout({
+        key: session.key_id,
+        amount: session.amount,
+        currency: session.currency,
+        name: 'Hungry Birds',
+        description: vendor!.stall_name,
+        order_id: session.gateway_order_id,
+        prefill: { name: name.trim(), email: user?.email, contact: phone.trim() },
+        notes: { order_number: order.order_number },
+        // Set explicitly. Razorpay's default accent is a blue-violet, and there
+        // is no purple anywhere in this app.
+        theme: { color: CHECKOUT_THEME },
+        handler: (handback) => {
+          // Insurance against a webhook that never arrives. The server checks
+          // the signature and re-reads the amount from Razorpay, so this is only
+          // trusted to say that something happened - and if it fails, the
+          // webhook is still the real answer, which is why the error is
+          // swallowed rather than shown.
+          void api
+            .confirmPayment(order.id, handback)
+            .catch(() => undefined)
+            .finally(track);
+        },
+        modal: {
+          // Closed without paying. The order is still there and the tracking
+          // page is where it can be picked back up.
+          ondismiss: track,
+        },
+      });
+
+      // openCheckout resolves once the sheet is open, not once it is finished -
+      // the outcome arrives through the two callbacks above, so there is
+      // deliberately no navigation here.
     } catch (err) {
       const gone = unavailableItems(err);
       if (gone) {
@@ -433,7 +457,7 @@ export default function Checkout() {
             aside={
               <span className="badge">
                 <Icon name="lock" className="text-[12px]" />
-                Secured by Cashfree
+                Secured by Razorpay
               </span>
             }
           >

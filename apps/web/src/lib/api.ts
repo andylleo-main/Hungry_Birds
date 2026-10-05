@@ -1,3 +1,4 @@
+import type { RazorpayHandback } from './razorpay';
 import type {
   AppUser,
   FulfilmentType,
@@ -289,14 +290,28 @@ export const api = {
   }) => request<Order>('POST', '/orders', { body: payload }),
 
   /**
-   * Opens Cashfree checkout for an order the caller owns.
+   * Opens Razorpay Checkout for an order the caller owns.
    *
-   * Returns only a session id and the environment to open it against - no
-   * amount, because the SDK does not take one and there is therefore nothing
-   * client-side for anybody to tamper with.
+   * Returns the gateway's order id, the publishable key and the amount in paise.
+   * The amount is the server's figure; Razorpay charges what it holds against
+   * the order it minted, so there is nothing here worth tampering with.
    */
   paymentSession: (orderId: string) =>
     request<PaymentSession>('POST', `/orders/${orderId}/payment-session`),
+
+  /**
+   * Confirms a payment from what Checkout handed back to the page.
+   *
+   * The webhook remains authoritative. This exists because a misconfigured
+   * webhook is otherwise a silent, total failure - nothing confirmed, every
+   * order stuck unpaid - and a launch is exactly when that happens. The server
+   * verifies the signature and re-reads the amount from Razorpay, so the page is
+   * trusted only to say that something happened, never what.
+   */
+  confirmPayment: (orderId: string, handback: RazorpayHandback) =>
+    request<{ status: string }>('POST', `/orders/${orderId}/payment-callback`, {
+      body: handback,
+    }),
 
   /**
    * Server facts the bundle must not hardcode. Unauthenticated, and safe to

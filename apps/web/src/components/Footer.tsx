@@ -47,7 +47,7 @@ export default function Footer() {
           <span>© {new Date().getFullYear()} Hungry Birds · BIT Mesra</span>
           <span className="flex items-center gap-space-xs">
             <Icon name="lock" className="text-[18px] text-primary" />
-            Payments secured by Cashfree
+            Payments secured by Razorpay
           </span>
         </div>
       </div>

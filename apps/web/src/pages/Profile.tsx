@@ -216,7 +216,7 @@ export default function Profile() {
       <div className="card mt-space-md flex items-center gap-space-md p-space-md">
         <Icon name="lock" className="text-[24px] text-primary" />
         <p className="text-body-sm text-on-surface-variant">
-          Orders are paid online through Cashfree. We never see or store your card
+          Orders are paid online through Razorpay. We never see or store your card
           details, and a stall that declines your order refunds it automatically.
         </p>
       </div>

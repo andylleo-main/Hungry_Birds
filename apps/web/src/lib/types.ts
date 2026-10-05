@@ -108,16 +108,24 @@ export function paymentLabel(status: PaymentStatus | string): string {
   return PAYMENT_LABELS[status as PaymentStatus] ?? 'Updated';
 }
 
-/** What the browser needs to open Cashfree's sheet. Deliberately no amount. */
+/** What the browser needs to open Razorpay Checkout. */
 export interface PaymentSession {
-  payment_session_id: string;
-  cf_order_id: string;
+  /** Razorpay's own order id - it mints this, we do not choose it. */
+  gateway_order_id: string;
+  /** Razorpay's publishable key. Meant to reach the browser. */
+  key_id: string;
   /**
-   * 'sandbox' | 'production' | 'mock'. The first two are Cashfree environments
-   * and pick which one the SDK loads against; 'mock' means the backend is
-   * running without a gateway and the payment is confirmed by a call to our own
-   * API instead. Read from the session rather than the bundle so the two cannot
-   * disagree after a deploy.
+   * Integer paise, from the server. Checkout needs an amount, unlike the
+   * Cashfree sheet this replaces - but Razorpay charges what *it* holds against
+   * the order, so editing this changes the label on the sheet and nothing about
+   * the money.
+   */
+  amount: number;
+  currency: string;
+  /**
+   * 'razorpay' | 'mock'. 'mock' means the backend is running without a gateway
+   * and the payment is confirmed by a call to our own API instead. Read from the
+   * session rather than the bundle so the two cannot disagree after a deploy.
    */
   mode: string;
   order_id: string;
