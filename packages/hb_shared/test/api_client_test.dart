@@ -330,6 +330,84 @@ void main() {
       expect(storage.isLoggedIn, isFalse);
     });
   });
+
+  group('a stall owner signing in with a password', () {
+    Map<String, dynamic> vendorUser() => {
+          'id': 'u1',
+          'email': 'stall@example.com',
+          'full_name': 'Ravi',
+          'phone': '+919876543210',
+          'role': 'vendor',
+        };
+
+    test('signing in keeps the refresh token, unlike a rider', () async {
+      // The whole reason merchants use saveTokens and riders do not: the 401
+      // retry in _request only runs when a refresh token is present, so a
+      // merchant saved the rider way would be signed out on their first expiry.
+      final storage = AuthStorage();
+      await storage.load();
+      final (transport, seen) = recorder([
+        ok({
+          'access_token': 'merchant-access',
+          'refresh_token': 'merchant-refresh',
+          'user': vendorUser(),
+        }),
+      ]);
+
+      final result = await clientWith(transport, storage: storage)
+          .vendorLogin('stall@example.com', 'the-password');
+
+      expect(seen.single.url.path, endsWith('/auth/vendor/login'));
+      // Unauthenticated: there is no token yet to send.
+      expect(seen.single.headers.containsKey('Authorization'), isFalse);
+      expect(result.user.role, UserRole.vendor);
+      expect(storage.accessToken, 'merchant-access');
+      expect(storage.refreshToken, 'merchant-refresh');
+    });
+
+    test('setting a password adopts the session that replaces this one', () async {
+      // The subtle one. The server revokes every session on a change, including
+      // the caller's, and hands back a fresh pair. Not saving them would sign a
+      // merchant out as the direct result of setting a password - and it would
+      // look like the server rejecting them.
+      final storage = AuthStorage();
+      await storage.load();
+      await storage.saveTokens(accessToken: 'old-access', refreshToken: 'old-refresh');
+
+      final (transport, seen) = recorder([
+        ok({
+          'access_token': 'fresh-access',
+          'refresh_token': 'fresh-refresh',
+          'user': vendorUser(),
+        }),
+      ]);
+
+      await clientWith(transport, storage: storage).setVendorPassword('a-new-one');
+
+      expect(seen.single.method, 'PUT');
+      expect(seen.single.headers['Authorization'], 'Bearer old-access');
+      expect(storage.accessToken, 'fresh-access');
+      expect(storage.refreshToken, 'fresh-refresh');
+    });
+
+    test('an unknown password state reads as not set rather than throwing', () async {
+      // A server that predates this route, or one answering oddly. Defaulting to
+      // false asks a merchant to set a password they may already have, which is
+      // harmless; throwing would strand the app on a splash screen.
+      final (transport, _) = recorder([ok({})]);
+      expect(await clientWith(transport).vendorHasPassword(), isFalse);
+    });
+
+    test('a wrong password surfaces the server its own words', () async {
+      final (transport, _) = recorder([fail(401, 'Invalid email or password')]);
+      await expectLater(
+        clientWith(transport).vendorLogin('stall@example.com', 'wrong'),
+        throwsA(
+          isA<ApiException>().having((e) => e.message, 'message', 'Invalid email or password'),
+        ),
+      );
+    });
+  });
 }
 
 /// Stands in for a network failure without depending on dart:io in a test that

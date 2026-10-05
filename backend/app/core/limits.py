@@ -47,6 +47,12 @@ TOKEN_REFRESH_PER_IP = (Limit(20, MINUTE),)
 # endpoint refuses rather than becoming unlimited.
 ADMIN_LOGIN_PER_IP = (Limit(5, MINUTE), Limit(20, HOUR))
 
+# A stall owner signing in with their password. Fail-closed, like every other
+# password route: failing open on a login means letting an unlimited guesser
+# through, and a stall locked out for a minute can use the email-code path that
+# is on the same screen.
+VENDOR_LOGIN_PER_IP = (Limit(5, MINUTE), Limit(30, HOUR))
+
 # --- Profile ----------------------------------------------------------------
 PROFILE_READ = (Limit(120, MINUTE),)
 PROFILE_WRITE = (Limit(20, MINUTE),)

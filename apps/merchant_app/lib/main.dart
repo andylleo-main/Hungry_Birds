@@ -5,7 +5,9 @@ import 'package:provider/provider.dart';
 import 'app_config.dart';
 import 'screens/apply_screen.dart';
 import 'screens/dashboard_screen.dart';
+import 'screens/merchant_login_screen.dart';
 import 'screens/pending_approval_screen.dart';
+import 'screens/set_password_screen.dart';
 import 'services/printer.dart';
 import 'state/merchant_state.dart';
 
@@ -50,21 +52,48 @@ class MerchantApp extends StatelessWidget {
   }
 }
 
-class MerchantGate extends StatelessWidget {
+class MerchantGate extends StatefulWidget {
   const MerchantGate({super.key});
+
+  @override
+  State<MerchantGate> createState() => _MerchantGateState();
+}
+
+class _MerchantGateState extends State<MerchantGate> {
+  /// Which of the two sign-in screens the signed-out stage is showing.
+  ///
+  /// Held here rather than pushed as a route so the gate can still swap the
+  /// whole screen out the instant the stage changes, which is the reason the
+  /// shared login screen is a widget and not a route in the first place. It
+  /// resets on sign-out, so the next person starts at the password screen.
+  bool _useEmailCode = false;
 
   @override
   Widget build(BuildContext context) {
     final merchant = context.watch<MerchantState>();
+
+    if (merchant.stage != MerchantStage.loggedOut && _useEmailCode) {
+      // Signed in since. Reset so signing out later lands on the password screen
+      // rather than wherever the last person finished.
+      _useEmailCode = false;
+    }
+
     return switch (merchant.stage) {
       MerchantStage.loading => const SplashScreen(),
-      MerchantStage.loggedOut => HbLoginScreen(
-          api: context.read<ApiClient>(),
-          logo: Icons.storefront,
-          headline: 'Run your stall on Hungry Birds',
-          subtitle: "Sign in with any email address. We'll send you a 6-digit code.",
-          onVerified: merchant.onAuthenticated,
-        ),
+      MerchantStage.loggedOut => _useEmailCode
+          ? HbLoginScreen(
+              api: context.read<ApiClient>(),
+              logo: Icons.storefront,
+              headline: 'Run your stall on Hungry Birds',
+              subtitle: "Sign in with any email address. We'll send you a 6-digit code.",
+              onVerified: merchant.onAuthenticated,
+            )
+          : MerchantLoginScreen(
+              onUseEmailCode: () => setState(() => _useEmailCode = true),
+            ),
+      // Before needsApplication on purpose: a new stall picks a password first,
+      // so tomorrow does not start with waiting for an email.
+      MerchantStage.needsPassword => const SetPasswordScreen(),
       MerchantStage.needsApplication => const ApplyScreen(),
       MerchantStage.awaitingApproval => const PendingApprovalScreen(),
       MerchantStage.ready => const DashboardScreen(),

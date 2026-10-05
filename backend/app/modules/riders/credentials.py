@@ -14,9 +14,12 @@ sharing one password.
 
 import secrets
 
-import anyio
-
-from app.modules.auth.passwords import hash_password, verify_password
+from app.modules.auth.passwords import (  # noqa: F401  (re-exported, see below)
+    hash_password,
+    hash_password_async,
+    verify_password,
+    verify_password_async,
+)
 
 # Short, unambiguous, and nothing that reads as an insult when paired at random.
 _ADJECTIVES = (
@@ -57,17 +60,7 @@ def suggest_login_id(display_name: str) -> str:
     return f"{stem}-{secrets.randbelow(9000) + 1000}"
 
 
-async def hash_password_async(password: str) -> str:
-    """scrypt, off the event loop.
-
-    hash_password is ~33MB and tens of milliseconds of CPU by design. The admin
-    signs in rarely enough for that to be invisible, but riders sign in every
-    shift and mistype often, so on a single container it would stall every other
-    request in flight. anyio's worker thread is what FastAPI already uses for
-    sync endpoints.
-    """
-    return await anyio.to_thread.run_sync(hash_password, password)
-
-
-async def verify_password_async(password: str, encoded: str) -> bool:
-    return await anyio.to_thread.run_sync(verify_password, password, encoded)
+# hash_password_async and verify_password_async used to be defined here. They
+# moved to app.modules.auth.passwords, beside the sync pair they wrap, once stall
+# owners needed them too, and are re-exported above so every existing rider call
+# site keeps working unchanged.

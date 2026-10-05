@@ -7,13 +7,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import limits
 from app.core.config import Settings, get_settings
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_audience, require_role
 from app.core.ratelimit import limit_by_ip, limit_by_user
 from app.core.redis import get_redis
 from app.core.security import TokenAudience, create_access_token
+from app.db.models.merchant_credential import MerchantCredential
 from app.db.models.user import User, UserRole
 from app.db.session import get_db
-from app.modules.auth.passwords import verify_password, waste_time_like_a_verification
+from app.modules.auth.passwords import (
+    hash_password_async,
+    verify_password,
+    verify_password_async,
+    waste_time_like_a_verification,
+    waste_time_like_a_verification_async,
+)
 from app.modules.auth.schemas import (
     AccessTokenResponse,
     AdminLogin,
@@ -22,9 +29,12 @@ from app.modules.auth.schemas import (
     OTPVerify,
     RefreshRequest,
     SessionOut,
+    SetVendorPassword,
     TokenResponse,
     UpdateMe,
     UserOut,
+    VendorLogin,
+    VendorPasswordState,
 )
 from app.modules.auth.sessions import (
     SessionRejected,
@@ -212,6 +222,140 @@ async def vendor_otp_verify(
         refresh_token=refresh_token,
         user=UserOut.model_validate(user),
     )
+
+
+async def _merchant_session(
+    user: User, request: Request, db: AsyncSession, settings: Settings
+) -> TokenResponse:
+    """Issue a merchant session, exactly as the OTP route does.
+
+    Shared so the two ways in cannot drift apart. A password sign-in produces an
+    ordinary user_sessions row with a refresh token, not the bare access token
+    riders get - merchants already had refresh tokens, so the app's existing
+    401-and-retry path keeps working untouched.
+    """
+    _, refresh_token = await create_session(
+        user.id,
+        db,
+        lifetime_days=settings.refresh_token_expire_days,
+        user_agent=request.headers.get("user-agent"),
+        audience=TokenAudience.MERCHANT.value,
+    )
+    return TokenResponse(
+        access_token=create_access_token(str(user.id), TokenAudience.MERCHANT),
+        refresh_token=refresh_token,
+        user=UserOut.model_validate(user),
+    )
+
+
+@router.post(
+    "/vendor/login",
+    response_model=TokenResponse,
+    dependencies=[
+        Depends(limit_by_ip("vendor_login", *limits.VENDOR_LOGIN_PER_IP, fail_open=False))
+    ],
+)
+async def vendor_login(
+    payload: VendorLogin,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    """Sign a stall owner in with their email and password.
+
+    Three things must all hold, and failing any of them gives the same answer:
+    the account exists, it is a vendor, and it has a password that matches. One
+    message for all three, because telling them apart tells somebody which
+    addresses are worth attacking - and a stall's address is public on the
+    storefront.
+
+    The password alone grants nothing. A customer or admin account is refused
+    here even with the right password, the same way the admin route refuses a
+    non-admin: a role is not something a login may change.
+
+    There is no way to create a password from this route. The first one is set
+    after an email-code sign-in, through the route below - which is also what
+    makes "forgot password" need no machinery of its own.
+    """
+    email = normalize_email(payload.email)
+
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    credential = None
+    if user is not None and user.role is UserRole.VENDOR:
+        credential = (
+            await db.execute(
+                select(MerchantCredential).where(MerchantCredential.user_id == user.id)
+            )
+        ).scalar_one_or_none()
+
+    if credential is None:
+        # No account, not a stall, or no password set. Burn the same work a real
+        # verification costs, so a miss is not measurably faster than a wrong
+        # password.
+        await waste_time_like_a_verification_async()
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+
+    if not await verify_password_async(payload.password, credential.password_hash):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+
+    return await _merchant_session(user, request, db, settings)
+
+
+@router.get("/vendor/password", response_model=VendorPasswordState)
+async def vendor_password_state(
+    user: User = Depends(require_role(UserRole.VENDOR)),
+    _: None = Depends(require_audience(TokenAudience.MERCHANT)),
+    db: AsyncSession = Depends(get_db),
+) -> VendorPasswordState:
+    """Whether this stall has a password yet, so the app knows whether to ask."""
+    exists = (
+        await db.execute(
+            select(MerchantCredential.id).where(MerchantCredential.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    return VendorPasswordState(is_set=exists is not None)
+
+
+@router.put("/vendor/password", response_model=TokenResponse)
+async def set_vendor_password(
+    payload: SetVendorPassword,
+    request: Request,
+    user: User = Depends(require_role(UserRole.VENDOR)),
+    _: None = Depends(require_audience(TokenAudience.MERCHANT)),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    """Set or change this stall's password.
+
+    Authenticated, which is what makes "forgot password" need nothing new: the
+    way back in is the email code that already exists, and this route is what
+    follows it. No reset tokens, no emailed links, nothing extra to expire or
+    leak.
+
+    Every other session is revoked and a fresh one is issued and returned. A
+    password change has to end the sessions it was meant to end - otherwise
+    changing it after losing a phone achieves nothing - and revoking everything
+    then handing back a new pair keeps that rule simple, with no "except this
+    one" to get wrong.
+    """
+    password_hash = await hash_password_async(payload.password)
+
+    credential = (
+        await db.execute(
+            select(MerchantCredential).where(MerchantCredential.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+
+    if credential is None:
+        db.add(MerchantCredential(user_id=user.id, password_hash=password_hash))
+    else:
+        credential.password_hash = password_hash
+    await db.commit()
+
+    await revoke_all_for_user(user.id, db)
+    return await _merchant_session(user, request, db, settings)
 
 
 @router.post(

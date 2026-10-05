@@ -915,6 +915,50 @@ reject and the customer is refunded. Re-validating at webhook time would mean a
 webhook that can fail for a business reason, which is the one thing a webhook
 must not be.
 
+## Stall owners sign in with a password
+
+A merchant's first sign-in is an email code, same as before. They then pick a
+password, and every morning after that is email and password — no waiting on an
+inbox at the start of a shift, which is what this is for.
+
+The login id is their email. There is nothing new to issue, lose, or ask for
+again.
+
+**Forgetting it needs no reset flow, and that is the design.** The way back in is
+the email code they already have, and setting a new password is the authenticated
+route that follows it. So there are no reset tokens anywhere in this system,
+nothing extra to expire, and nothing to leak. The login screen says as much:
+*"Forgot it, or first time? Sign in with an email code."*
+
+**The password is in its own table, not on `users`.** `users` has deliberately
+never held one — the admin's hash lives in an environment variable precisely so
+credentials stay out of the table, and riders were given their own table rather
+than reverse that for every account in the system. `merchant_credentials` keeps
+that true: customers and admins have no column that could be set, read or leaked,
+and the arrangement fails closed, because an account with no row simply cannot
+sign in with a password.
+
+Three things the login route does, each for a reason:
+
+- **One message for every failure.** Unknown address, wrong password, and an
+  account that is not a stall all answer `401 "Invalid email or password"`, byte
+  for byte. A stall's address is public on its storefront, so anything else would
+  be a free check of which addresses are worth attacking.
+- **A matching password grants nothing on its own.** A customer or admin account
+  is refused here even holding the right one, exactly as the admin route refuses
+  a non-admin. The merchant audience reaches every stall endpoint; a role is not
+  something a login may change.
+- **A miss costs the same time as a hit.** `waste_time_like_a_verification` burns
+  the same scrypt work when there is no password to check against.
+
+Changing a password revokes every session and hands back a fresh one. That is the
+point rather than a side effect — a change that left a lost phone signed in
+achieves nothing — and the app saves the replacement tokens, so the merchant who
+made the change is not signed out by making it.
+
+Rate limited to 5 attempts a minute and 30 an hour per IP, fail-closed. A stall
+locked out for a minute still has the email-code button on the same screen.
+
 ## Admin sign-in without an OTP
 
 Admins can sign in with a password instead of waiting for a code. That matters

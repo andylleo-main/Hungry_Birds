@@ -10,6 +10,13 @@ import '../services/push.dart';
 enum MerchantStage {
   loading,
   loggedOut,
+  /// Signed in by email code, but with no password set yet.
+  ///
+  /// Sits before needsApplication deliberately: a brand-new stall sets a
+  /// password first, so that the next morning they can sign in without waiting
+  /// on an inbox. There is no skip - an optional prompt most people dismiss
+  /// leaves the feature doing nothing for the merchants it was built for.
+  needsPassword,
   needsApplication,
   awaitingApproval,
   ready,
@@ -28,6 +35,9 @@ class MerchantState extends ChangeNotifier {
   MerchantStage stage = MerchantStage.loading;
   AppUser? user;
   Vendor? vendor;
+
+  /// Whether this account has a password. Null until asked.
+  bool? hasPassword;
 
   Future<void> bootstrap() async {
     await api.authStorage.load();
@@ -49,6 +59,28 @@ class MerchantState extends ChangeNotifier {
     await refreshVendor();
   }
 
+  /// Signs in with an email and password, skipping the code entirely.
+  Future<void> loginWithPassword(String email, String password) async {
+    final result = await api.vendorLogin(email.trim(), password);
+    user = result.user;
+    // Reaching here means they have one, so there is nothing to ask and no
+    // round trip worth spending to confirm it.
+    hasPassword = true;
+    await refreshVendor();
+  }
+
+  /// Sets or replaces the password, and adopts the session that replaces this one.
+  ///
+  /// The server revokes every session on a change, including the one that made
+  /// the request; ApiClient saves the replacement tokens, so this just has to
+  /// move the stage on.
+  Future<void> setPassword(String password) async {
+    final result = await api.setVendorPassword(password);
+    user = result.user;
+    hasPassword = true;
+    await refreshVendor();
+  }
+
   /// Re-reads the vendor profile and recomputes which stage to show.
   ///
   /// The account is already a vendor by the time it gets here - the role is set
@@ -58,6 +90,24 @@ class MerchantState extends ChangeNotifier {
     if (user?.role != UserRole.vendor) {
       vendor = null;
       _set(MerchantStage.needsApplication);
+      return;
+    }
+
+    // Asked once per sign-in rather than on every refresh. A stall that has a
+    // password cannot lose it, and one that does not is about to be asked for
+    // one, so there is no state here worth re-reading on a vendor refresh.
+    if (hasPassword == null) {
+      try {
+        hasPassword = await api.vendorHasPassword();
+      } catch (_) {
+        // An older server, or a blip. Assume they have one rather than block
+        // the stall behind a screen it cannot get past - the password is a
+        // convenience, and the queue is the job.
+        hasPassword = true;
+      }
+    }
+    if (hasPassword == false) {
+      _set(MerchantStage.needsPassword);
       return;
     }
     try {
@@ -128,6 +178,9 @@ class MerchantState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Forgets the cached answer, so the next sign-in asks again.
+  void forgetPasswordState() => hasPassword = null;
+
   Future<void> logout() async {
     // Before api.logout(), while the access token still works - unregistering
     // needs an authenticated call, and a phone handed to somebody else must stop
@@ -136,6 +189,7 @@ class MerchantState extends ChangeNotifier {
     await api.logout();
     user = null;
     vendor = null;
+    hasPassword = null;
     _set(MerchantStage.loggedOut);
   }
 

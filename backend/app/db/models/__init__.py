@@ -1,5 +1,6 @@
 from app.db.models.device import RiderDevice, VendorDevice
 from app.db.models.menu import MenuCategory, MenuItem
+from app.db.models.merchant_credential import MerchantCredential
 from app.db.models.order import FulfilmentType, Order, OrderItem, OrderStatus
 from app.db.models.payment import Payment, PaymentEvent, PaymentStatus
 from app.db.models.rider import Rider
@@ -11,6 +12,7 @@ __all__ = [
     "User",
     "UserRole",
     "UserSession",
+    "MerchantCredential",
     "Rider",
     "Vendor",
     "VendorDisabledLocation",

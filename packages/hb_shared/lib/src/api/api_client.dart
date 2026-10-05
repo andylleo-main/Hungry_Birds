@@ -214,6 +214,54 @@ class ApiClient {
     return result;
   }
 
+  /// Signs a stall owner in with the password they set earlier.
+  ///
+  /// Returns the same full session as the code route - access token, refresh
+  /// token and user - so nothing downstream has to know which door was used.
+  /// Riders get a bare access token and no refresh; merchants deliberately do
+  /// not, because the 401-and-retry path in _request only works with one.
+  Future<AuthResult> vendorLogin(String email, String password) async {
+    final data = await _request(
+      'POST',
+      '/auth/vendor/login',
+      body: {'email': email, 'password': password},
+      auth: false,
+    ) as Map<String, dynamic>;
+    final result = AuthResult(
+      data['access_token'] as String,
+      data['refresh_token'] as String,
+      AppUser.fromJson(data['user'] as Map<String, dynamic>),
+    );
+    await authStorage.saveTokens(accessToken: result.accessToken, refreshToken: result.refreshToken);
+    return result;
+  }
+
+  /// Whether this stall has a password yet, so the app knows whether to ask.
+  Future<bool> vendorHasPassword() async {
+    final data = await _request('GET', '/auth/vendor/password') as Map<String, dynamic>;
+    return data['is_set'] as bool? ?? false;
+  }
+
+  /// Sets or replaces the password, and returns the session that replaces this one.
+  ///
+  /// The server revokes every session on a password change, including the one
+  /// that made the request, and hands back a fresh pair - so these tokens have
+  /// to be saved or the merchant is signed out by the act of setting a password.
+  Future<AuthResult> setVendorPassword(String password) async {
+    final data = await _request(
+      'PUT',
+      '/auth/vendor/password',
+      body: {'password': password},
+    ) as Map<String, dynamic>;
+    final result = AuthResult(
+      data['access_token'] as String,
+      data['refresh_token'] as String,
+      AppUser.fromJson(data['user'] as Map<String, dynamic>),
+    );
+    await authStorage.saveTokens(accessToken: result.accessToken, refreshToken: result.refreshToken);
+    return result;
+  }
+
   Future<AppUser> me() async {
     final data = await _request('GET', '/auth/me') as Map<String, dynamic>;
     return AppUser.fromJson(data);

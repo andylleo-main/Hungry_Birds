@@ -45,6 +45,36 @@ class AdminLogin(BaseModel):
     password: Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 
+class VendorLogin(BaseModel):
+    """A stall owner signing in without waiting for a code.
+
+    The login id is the email, so there is nothing new to issue, lose or ask for
+    again. Stall accounts are not restricted to the campus domain, which is why
+    this route does not call assert_allowed_domain.
+    """
+
+    email: EmailStr
+    password: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+
+
+class SetVendorPassword(BaseModel):
+    """Choosing or changing a stall password.
+
+    Eight characters rather than the twelve the admin script demands. This is
+    typed one-handed on a phone at the start of a shift, and it is paired with a
+    fail-closed rate limiter; a floor high enough to be resented is a floor that
+    gets written on the till.
+    """
+
+    password: Annotated[str, StringConstraints(min_length=8, max_length=256)]
+
+
+class VendorPasswordState(BaseModel):
+    """Whether this account has a password yet, so the app knows to ask."""
+
+    is_set: bool
+
+
 class UserOut(BaseModel):
     id: uuid.UUID
     email: str

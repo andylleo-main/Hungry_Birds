@@ -8,6 +8,7 @@ import '../services/printer.dart';
 import '../state/merchant_state.dart';
 import 'fulfilment_screen.dart';
 import 'printer_screen.dart';
+import 'set_password_screen.dart';
 
 class StallTab extends StatefulWidget {
   const StallTab({super.key});
@@ -255,6 +256,21 @@ class _StallTabState extends State<StallTab> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.lock_outline),
+              title: const Text('Change password', style: TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: const Text(
+                'Signs every other phone out of this stall',
+                style: TextStyle(fontSize: 13),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SetPasswordScreen(canCancel: true)),
               ),
             ),
           ),
