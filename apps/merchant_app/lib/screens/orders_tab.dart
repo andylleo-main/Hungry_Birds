@@ -329,18 +329,12 @@ class _OrderCardState extends State<_OrderCard> {
               padding: EdgeInsets.symmetric(vertical: 10),
               child: Divider(height: 1),
             ),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    // Already paid online before this order reached the queue -
-                    // a stall asking for cash as well would be charging twice.
-                    '₹${order.totalAmount.toStringAsFixed(0)} paid online',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ],
-            ),
+            // Used to say "paid online" unconditionally, with a comment that a
+            // stall asking for cash as well would be charging twice. That was
+            // true while every order was prepaid; pay on delivery is the design
+            // being reversed, so the card has to show which of the two this is
+            // rather than assert either.
+            _PaymentLine(order: order),
             if (order.customerPhone != null) ...[
               const SizedBox(height: 10),
               _CustomerContact(name: order.customerName, phone: order.customerPhone!),
@@ -766,6 +760,70 @@ class _CustomerContact extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+
+/// What the stall is owed, and whether anybody has it yet.
+///
+/// Three states, and the loud one is deliberate: an order the rider still has to
+/// collect for is the one a stall needs to notice, because it is the one where
+/// they have cooked food that is not yet paid for.
+class _PaymentLine extends StatelessWidget {
+  const _PaymentLine({required this.order});
+
+  final Order order;
+
+  @override
+  Widget build(BuildContext context) {
+    final amount = '₹${order.totalAmount.toStringAsFixed(0)}';
+
+    if (order.isAwaitingCollection) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.warning.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: const Border(left: BorderSide(color: AppTheme.warning, width: 4)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.payments_outlined, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '$amount to collect on delivery',
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final collected = switch (order.collectedVia) {
+      'cash' => 'collected in cash',
+      'upi' => 'collected by UPI',
+      _ => 'paid online',
+    };
+
+    return Row(
+      children: [
+        Icon(
+          order.isPaid ? Icons.check_circle_outline : Icons.info_outline,
+          size: 18,
+          color: order.isPaid ? AppTheme.success : AppTheme.textSecondary,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            order.isPaid ? '$amount $collected' : amount,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -4,6 +4,7 @@ import type {
   FulfilmentType,
   Order,
   OrderStatus,
+  PaymentMethod,
   PaymentSession,
   Vendor,
   VendorDetail,
@@ -287,6 +288,11 @@ export const api = {
     fulfilment_type: FulfilmentType;
     /** Required for a delivery, must be absent for a dine-in. */
     delivery_location?: string;
+    /**
+     * Omitted means online. "cod" is refused on a dine-in order - there is
+     * nobody to collect from somebody standing at the counter.
+     */
+    payment_method?: PaymentMethod;
   }) => request<Order>('POST', '/orders', { body: payload }),
 
   /**

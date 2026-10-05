@@ -16,6 +16,7 @@ import 'package:merchant_app/services/receipt.dart';
 /// dish name silently loses its tail is a ticket that gets the wrong food made.
 void main() {
   Order order({
+    PaymentStatus paymentStatus = PaymentStatus.paid,
     List<OrderLineItem> items = const [],
     String? note,
     int? token = 7,
@@ -31,7 +32,8 @@ void main() {
         vendorId: 'v1',
         customerId: 'c1',
         status: OrderStatus.accepted,
-        paymentMethod: 'cashfree',
+        paymentMethod: paymentStatus == PaymentStatus.due ? 'cod' : 'online',
+        paymentStatus: paymentStatus,
         totalAmount: total,
         note: note,
         createdAt: DateTime(2026, 1, 1, 13, 42),
@@ -143,6 +145,35 @@ void main() {
       // line rather than wrapping.
       expect(total, startsWith('TOTAL'));
       expect(total, endsWith('Rs.150'));
+    });
+  });
+
+  group('money the stall still has to collect', () {
+    test('a pay-on-delivery ticket says COLLECT, loudly', () {
+      // The one line that changes what the person packing the bag does. A
+      // prepaid order is handed over; a cash one is handed over and money comes
+      // back.
+      final lines = printed(order(paymentStatus: PaymentStatus.due, total: 150));
+      expect(lines, contains('COLLECT Rs.150'));
+      expect(lines, contains('ON DELIVERY'));
+    });
+
+    test('a prepaid ticket says nothing about collecting', () {
+      final lines = printed(order(total: 150));
+      expect(lines.any((l) => l.contains('COLLECT')), isFalse);
+    });
+
+    test('the amount to collect matches the total', () {
+      final lines = printed(order(paymentStatus: PaymentStatus.due, total: 1250));
+      expect(lines.firstWhere((l) => l.startsWith('TOTAL')), endsWith('Rs.1250'));
+      expect(lines, contains('COLLECT Rs.1250'));
+    });
+
+    test('it still fits 58mm paper', () {
+      final lines = printed(order(paymentStatus: PaymentStatus.due, total: 123456));
+      for (final l in lines) {
+        expect(l.length, lessThanOrEqualTo(32), reason: '"$l" is ${l.length} chars');
+      }
     });
   });
 

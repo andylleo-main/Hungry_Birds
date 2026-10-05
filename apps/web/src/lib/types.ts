@@ -80,6 +80,8 @@ export type PaymentStatus =
   | 'paid'
   | 'failed'
   | 'expired'
+  | 'due'
+  | 'waived'
   | 'refund_pending'
   | 'refunded'
   | 'refund_failed';
@@ -89,10 +91,23 @@ const PAYMENT_LABELS: Record<PaymentStatus, string> = {
   paid: 'Paid',
   failed: 'Payment failed',
   expired: 'Payment window closed',
+  due: 'Pay the rider on delivery',
+  // Ended before anybody collected. Nothing is owed in either direction, which
+  // is why this is not "cancelled" or "refunded" - no money ever moved.
+  waived: 'Nothing was charged',
   refund_pending: 'Refund on its way',
   refunded: 'Refunded',
   refund_failed: 'Refund needs attention',
 };
+
+/**
+ * How an order is being paid for.
+ *
+ * Not the gateway's name: the column has held "cashfree" and now holds
+ * "razorpay" for historical rows, so anything reading it asks whether it *is*
+ * cod rather than whether it is some particular gateway.
+ */
+export type PaymentMethod = 'online' | 'cod';
 
 /**
  * What to show for an order's money state.
@@ -178,6 +193,8 @@ export interface Order {
   status: OrderStatus;
   payment_method: string;
   payment_status: PaymentStatus;
+  /** "cash" or "upi" once a rider has collected at the door; null otherwise. */
+  collected_via?: string | null;
   total_amount: string;
   note: string | null;
   created_at: string;

@@ -1,5 +1,7 @@
+import logging
 import secrets
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -9,11 +11,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import limits
+from app.core.config import Settings, get_settings
 from app.core.deps import get_current_rider
 from app.core.ratelimit import Limit, consume, limit_by_ip, limit_by_user
 from app.core.redis import get_redis
 from app.core.security import create_rider_access_token
 from app.db.models.order import Order, OrderStatus
+from app.db.models.payment import PaymentStatus
 from app.db.models.device import RiderDevice
 from app.db.models.rider import Rider
 from app.db.models.vendor import Vendor
@@ -23,6 +27,7 @@ from app.modules.auth.service import normalize_phone
 from app.modules.notifications.schemas import DeviceOut, DeviceRegister
 from app.modules.notifications.service import register_rider_device
 from app.modules.orders.schemas import OrderOut, RiderStatusUpdate
+from app.modules.payments import razorpay
 from app.modules.orders.service import (
     DELIVERY_CODE_ATTEMPT_WINDOW_SECONDS,
     MAX_DELIVERY_CODE_ATTEMPTS,
@@ -39,12 +44,14 @@ from app.modules.riders.credentials import (
     verify_password_async,
 )
 from app.modules.riders.schemas import (
+    CollectCash,
     RiderCreate,
     RiderCredentials,
     RiderLogin,
     RiderOut,
     RiderTokenResponse,
     RiderUpdate,
+    UpiQrOut,
 )
 from app.modules.vendors.deps import get_own_vendor
 
@@ -54,6 +61,20 @@ from app.modules.vendors.deps import get_own_vendor
 router = APIRouter(prefix="/vendors/me/riders", tags=["riders"])
 
 # Where the rider app signs in.
+logger = logging.getLogger(__name__)
+
+
+async def close_upi_qr_later(qr_id: str) -> None:
+    """Shut a QR that is no longer collectable, without failing the request.
+
+    Awaited rather than backgrounded because it is one bounded call and the
+    rider is standing in front of a customer - but razorpay.close_upi_qr
+    swallows its own failures, because a code that refuses to close is a
+    nuisance, not a reason to refuse the collection that just succeeded.
+    """
+    await razorpay.close_upi_qr(qr_id, get_settings())
+
+
 auth_router = APIRouter(prefix="/auth/rider", tags=["riders"])
 
 # What the rider app uses once signed in.
@@ -376,6 +397,131 @@ async def rider_orders(
     return [OrderOut.model_validate(o) for o in result.scalars().all()]
 
 
+async def _collectable(order_id: uuid.UUID, rider: Rider, db: AsyncSession) -> Order:
+    """The rider's own out-for-delivery order that still owes money."""
+    result = await db.execute(order_query(Order.id == order_id, Order.rider_id == rider.id))
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    if order.payment_status is PaymentStatus.PAID:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This order is already paid for")
+    if order.payment_status is not PaymentStatus.DUE:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "There is nothing to collect on this order")
+    if order.status is not OrderStatus.OUT_FOR_DELIVERY:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Collect when you are with the customer, after picking the order up.",
+        )
+    return order
+
+
+@rider_router.post(
+    "/orders/{order_id}/collect",
+    response_model=OrderOut,
+    dependencies=[Depends(limit_by_ip("rider_write", *limits.RIDER_WRITE))],
+)
+async def collect_cash(
+    order_id: uuid.UUID,
+    payload: CollectCash,
+    rider: Rider = Depends(get_current_rider),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> OrderOut:
+    """A rider says they have the cash.
+
+    Taken on the rider's word, which is the honest description of cash: nobody
+    else was there. The accountability is that the order is theirs, it is
+    recorded against them, and the stall can see both the figure and that it was
+    collected in cash rather than online.
+
+    Only cash goes through here. UPI is marked paid by Razorpay's webhook, never
+    by a rider tapping a button - that difference is the entire reason the QR is
+    minted at the gateway rather than being the stall's own printed code.
+    """
+    order = await _collectable(order_id, rider, db)
+
+    order.payment_status = PaymentStatus.PAID
+    order.collected_via = payload.method
+    if order.cod_qr_id:
+        # Paid in cash after a QR was shown. Close it so the same order cannot
+        # also be paid by somebody scanning a code that is still live.
+        qr_id, order.cod_qr_id = order.cod_qr_id, None
+        await close_upi_qr_later(qr_id)
+    await db.commit()
+
+    order = await load_order(order.id, db)
+    await publish_order_event(redis, order)
+    return OrderOut.model_validate(order)
+
+
+@rider_router.post(
+    "/orders/{order_id}/upi-qr",
+    response_model=UpiQrOut,
+    dependencies=[Depends(limit_by_ip("rider_write", *limits.RIDER_WRITE))],
+)
+async def upi_qr(
+    order_id: uuid.UUID,
+    rider: Rider = Depends(get_current_rider),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> UpiQrOut:
+    """A single-use QR for exactly this order's total.
+
+    `single_use` closes it the moment one payment lands and `fixed_amount` locks
+    it to the total, so it cannot be underpaid or reused for the next delivery.
+    Razorpay then tells us it was paid through qr_code.credited, and the order
+    marks itself - the rider never has to be believed.
+
+    QR Codes is a product Razorpay activates on request, so a perfectly good
+    account can still be unable to mint one. That answers 503 with something a
+    rider can act on rather than a stack trace: take the cash instead.
+    """
+    order = await _collectable(order_id, rider, db)
+
+    try:
+        qr = await razorpay.create_upi_qr(
+            amount=order.total_amount,
+            description=f"Hungry Birds order {order.order_number}",
+            notes={"order_id": str(order.id), "order_number": order.order_number},
+            settings=settings,
+        )
+    except razorpay.RazorpayError as exc:
+        if exc.is_feature_not_enabled:
+            logger.error("razorpay QR codes are not enabled on this account: %s", exc)
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "UPI collection isn't available right now. Please collect cash.",
+            )
+        logger.error("could not create a UPI QR for order %s: %s", order_id, exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Couldn't make a QR just now. Try again, or collect cash.",
+        )
+
+    image_url = str(qr.get("image_url") or "")
+    if not image_url:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Couldn't make a QR just now. Try again, or collect cash.",
+        )
+
+    # Replacing an earlier QR for the same order: close the old one, so two live
+    # codes cannot both take money for one delivery.
+    previous = order.cod_qr_id
+    order.cod_qr_id = str(qr.get("id") or "")[:32] or None
+    await db.commit()
+    if previous and previous != order.cod_qr_id:
+        await close_upi_qr_later(previous)
+
+    return UpiQrOut(
+        image_url=image_url,
+        amount=order.total_amount,
+        expires_at=datetime.fromtimestamp(int(qr["close_by"]), tz=timezone.utc)
+        if qr.get("close_by")
+        else datetime.now(timezone.utc) + timedelta(minutes=razorpay.QR_WINDOW_MINUTES),
+    )
+
+
 @rider_router.patch(
     "/orders/{order_id}/status",
     response_model=OrderOut,
@@ -413,8 +559,18 @@ async def rider_update_status(
         )
     assert_transition(order, payload.status)
 
-    if payload.status is OrderStatus.COMPLETED and order.delivery_code:
-        await _check_delivery_code(order, payload.delivery_code, redis)
+    if payload.status is OrderStatus.COMPLETED:
+        if order.payment_status is PaymentStatus.DUE:
+            # The single control that makes pay on delivery safe. Without it a
+            # rider can close an order having collected nothing, and the stall
+            # has cooked food that is never paid for - which is the exposure the
+            # no-cash rule existed to avoid.
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Collect ₹{order.total_amount:.0f} before marking this delivered.",
+            )
+        if order.delivery_code:
+            await _check_delivery_code(order, payload.delivery_code, redis)
 
     order.status = payload.status
     await db.commit()

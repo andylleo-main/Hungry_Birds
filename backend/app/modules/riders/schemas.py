@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
-from typing import Annotated
+from decimal import Decimal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, StringConstraints, field_validator
 
@@ -80,3 +81,22 @@ class RiderTokenResponse(BaseModel):
     token_type: str = "bearer"
     rider: RiderOut
     stall_name: str
+
+
+class CollectCash(BaseModel):
+    """A rider saying they took the money at the door.
+
+    Cash only. UPI is not a thing a rider gets to assert - Razorpay says when a
+    QR was paid, through qr_code.credited, which is the whole reason the QR goes
+    through a gateway rather than being the stall's own static code.
+    """
+
+    method: Literal["cash"] = "cash"
+
+
+class UpiQrOut(BaseModel):
+    """A single-use QR for exactly this order's total."""
+
+    image_url: str
+    amount: Decimal
+    expires_at: datetime

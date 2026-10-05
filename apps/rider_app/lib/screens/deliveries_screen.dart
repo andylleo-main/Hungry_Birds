@@ -192,6 +192,179 @@ class _DeliveryCardState extends State<_DeliveryCard> {
     }
   }
 
+  /// Takes the cash, after asking once.
+  ///
+  /// Confirmed because it is the rider asserting money changed hands and there
+  /// is no way to take it back from the app - a stray tap while the phone is in
+  /// a pocket would mark an order paid that nobody paid for.
+  Future<void> _collectCash(Order order) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Collected \u20b9${order.totalAmount.toStringAsFixed(0)}?'),
+        content: const Text(
+          'Only tap yes once the customer has handed you the cash. '
+          'This marks the order paid.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not yet')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Got it')),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      await context.read<RiderState>().collectCash(order);
+    } on ApiException catch (e) {
+      _say(e.message);
+    } catch (_) {
+      _say("Couldn't reach the server. Try again.");
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Shows a QR for exactly this order's total.
+  ///
+  /// Nothing is marked paid here, and the sheet says so: Razorpay tells the
+  /// server when the money lands, and the order updates itself on the next poll.
+  /// A rider who taps "Delivered" too early is refused by the server, which is
+  /// the point.
+  Future<void> _showUpiQr(Order order) async {
+    setState(() => _busy = true);
+    UpiQr qr;
+    try {
+      qr = await context.read<RiderState>().upiQr(order);
+    } on ApiException catch (e) {
+      // Including Razorpay not having QR codes switched on for this account,
+      // which the server phrases as "please collect cash".
+      _say(e.message);
+      return;
+    } catch (_) {
+      _say("Couldn't make a QR. Collect cash instead.");
+      return;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '\u20b9${qr.amount.toStringAsFixed(0)}',
+                style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Ask the customer to scan with any UPI app',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              // Razorpay renders and hosts the image, so there is no QR package
+              // in this app and nothing here has to encode a payment string.
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 280),
+                child: Image.network(
+                  qr.imageUrl,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text("Couldn't load the QR. Collect cash instead."),
+                  ),
+                  loadingBuilder: (_, child, progress) => progress == null
+                      ? child
+                      : const Padding(
+                          padding: EdgeInsets.all(40),
+                          child: CircularProgressIndicator(),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'It marks itself paid once the money arrives. '
+                'You do not need to confirm anything.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _say(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// The amount still owed, and the two ways to take it.
+  Widget _collect(Order order) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.warning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: const Border(left: BorderSide(color: AppTheme.warning, width: 4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.payments_outlined, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'COLLECT \u20b9${order.totalAmount.toStringAsFixed(0)}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _busy ? null : () => _collectCash(order),
+                  icon: const Icon(Icons.currency_rupee, size: 16),
+                  label: const Text('Cash'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _busy ? null : () => _showUpiQr(order),
+                  icon: const Icon(Icons.qr_code_2, size: 18),
+                  label: const Text('UPI QR'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _move(OrderStatus status, {String? deliveryCode}) async {
     setState(() => _busy = true);
     try {
@@ -329,6 +502,10 @@ class _DeliveryCardState extends State<_DeliveryCard> {
                   ),
                 ],
               ),
+            if (order.isAwaitingCollection) ...[
+              const SizedBox(height: 10),
+              _collect(order),
+            ],
             const SizedBox(height: 10),
             _action(order),
           ],

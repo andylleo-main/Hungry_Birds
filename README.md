@@ -14,9 +14,10 @@ Students sign in with an `@bitmesra.ac.in` address; stall owners may register wi
 any address but can only sign in from the merchant app, and only once an admin has
 approved their stall. See [Who signs in where](#who-signs-in-where).
 
-Every order is paid online through Razorpay before any stall sees it. There is no
-cash on delivery. For testing before the gateway credentials exist, `PAYMENTS_MODE=mock`
-confirms payments without charging anything — see [Payments](#payments).
+Orders are paid online through Razorpay before any stall sees them, or — for
+deliveries — in cash or by UPI when the rider arrives. For testing before the
+gateway credentials exist, `PAYMENTS_MODE=mock` confirms payments without
+charging anything — see [Payments](#payments).
 
 ## Repository layout
 
@@ -751,7 +752,8 @@ failures logged rather than raised.
 
 ## Payments
 
-Every order is paid online before a stall ever sees it. There is no cash.
+Most orders are paid online before a stall ever sees them. A delivery can
+instead be paid at the door — see [Pay on delivery](#pay-on-delivery).
 
 The gateway is **Razorpay**. It was Cashfree until launch week, when that
 account's onboarding could not be completed in time; the swap is recorded here
@@ -914,6 +916,60 @@ creation, so the figure never changes — and if the stall cannot make it, they
 reject and the customer is refunded. Re-validating at webhook time would mean a
 webhook that can fail for a business reason, which is the one thing a webhook
 must not be.
+
+## Pay on delivery
+
+A delivery can be paid at the door instead of up front: cash in the rider's hand,
+or a UPI QR the customer scans. Dine-in is always prepaid — there is no rider to
+collect from somebody standing at the counter, and the stall handling money
+itself is a different feature.
+
+**This reverses a rule the project held on purpose.** Every order used to be paid
+before a stall saw it, because a stall that cooks food which is never paid for
+eats the loss. That exposure is back. Three things bound it:
+
+- **A rider cannot mark an order delivered while the money is owed.** The status
+  route refuses with the figure in the message. This is the control; the rest is
+  convenience.
+- **A UPI collection is confirmed by Razorpay, not by the rider.** The QR is
+  minted at the gateway (`single_use`, `fixed_amount`) and `qr_code.credited`
+  marks the order paid. A stall's own printed code would need the rider's word.
+- **`COD_ENABLED=false` turns it off everywhere**, without a deploy. Worth
+  knowing where that switch is before a service you are nervous about.
+
+Cash itself is taken on the rider's word, which is the honest description of
+cash — nobody else was there. What the system gets is that the order is theirs,
+the collection is recorded against them, and the stall sees `collected in cash`
+rather than `paid online`.
+
+**A cash order is placed straight into the stall's queue** with its token number,
+rather than waiting in `awaiting_payment`. That is not a shortcut: `sweep_abandoned`
+cancels `awaiting_payment` + `pending` after twenty minutes, so an order parked
+there would be cancelled mid-cook with a rider already assigned.
+
+Money state is `payment_status`, and pay on delivery adds two values to it:
+
+| State | Meaning |
+| --- | --- |
+| `due` | Being made, money owed at the door |
+| `waived` | Ended with nobody collecting — refused, nobody home, cancelled first |
+
+`waived` is deliberately not `failed` (a payment that was attempted and did not
+work) or `refunded` (money that moved twice). Nothing was taken, so nothing is
+owed in either direction.
+
+**A failed delivery can now be cancelled.** `out_for_delivery` previously had
+completion as its only exit, so a customer who refused the food left the order
+stuck forever. The rider reports it and the stall cancels — `RIDER_ALLOWED_TARGETS`
+is unchanged on purpose, because ending somebody's order is not a rider's call.
+
+**Cancelling a cash order starts no refund.** A `due` order is marked `waived`;
+a collected one is left alone, because there is no gateway payment to reverse —
+the money is in the till, and handing it back is a human doing it.
+
+**The UPI QR needs Razorpay to activate QR Codes** on the account; it is on
+request, not by default. Without it the rider's UPI button answers 503 with
+"please collect cash", and everything else works.
 
 ## Stall owners sign in with a password
 
@@ -1087,7 +1143,8 @@ XML on API 26+ and to the PNGs below that.
   addresses is unaffected. DNS propagation is the slow part; start it early.
 - **Customers must add a phone number** before their first order — the backend
   rejects an order without one, and the app prompts for it at checkout. It's
-  how a stall calls about a ready order, since everything is cash on pickup.
+  how a stall calls about a ready order, and how a rider reaches somebody whose
+  food is at their door.
 - **Distributing the apps** is not covered here. Android can be sideloaded as
   an APK; iOS requires an Apple Developer account ($99/yr) even for TestFlight.
 - **No ratings or reviews** — deliberately out of scope for the first version.

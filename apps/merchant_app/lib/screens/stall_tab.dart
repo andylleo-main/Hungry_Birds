@@ -250,7 +250,8 @@ class _StallTabState extends State<StallTab> {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Students pay online before you see the order, so there is no cash to collect. '
+                      'Most orders are paid online before you see them. A delivery can be paid '
+                      'at the door instead - the card says which, and your rider collects. '
                       'Rejecting an order refunds it automatically.',
                       style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
                     ),

@@ -40,11 +40,18 @@ Dart packages `hb_shared`, Firebase project `hungrybirds-7779f`.
 - **Another session works in this repo.** Fetch before committing, keep commits
   scoped, never force-push a shared branch.
 - Merchants cannot do their work in the web app. Android only.
-- No cash on delivery. Every order is paid up front through Cashfree.
-  `PAYMENTS_MODE=mock` confirms payments without charging, for testing before the
-  gateway credentials exist. It is not COD and not a fallback: on a deployment
-  students can reach it is free food, so it stays off unless somebody has
-  deliberately set it.
+- **Pay on delivery exists now, for delivery orders only.** This reverses a
+  standing rule. The rule was "no cash on delivery, every order paid up front",
+  and the reason was real: a stall can cook food that is never paid for. The user
+  asked for it in launch week and that exposure is back, bounded by three things
+  — a rider cannot mark an order delivered while the money is still owed, a UPI
+  collection is confirmed by Razorpay rather than by the rider, and `COD_ENABLED`
+  switches the whole thing off in one variable. Dine-in is still prepaid: there
+  is no rider to collect from somebody standing at the counter.
+- `PAYMENTS_MODE=mock` confirms payments without charging, for testing before the
+  gateway credentials exist. It is **not** the same thing as pay on delivery and
+  not a fallback: on a deployment students can reach it is free food, so it stays
+  off unless somebody has deliberately set it.
 
 ## Deployment
 

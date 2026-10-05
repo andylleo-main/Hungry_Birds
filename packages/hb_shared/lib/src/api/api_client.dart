@@ -25,6 +25,14 @@ class AuthResult {
   const AuthResult(this.accessToken, this.refreshToken, this.user);
 }
 
+/// A QR a rider holds up for one order, for one amount, for a few minutes.
+class UpiQr {
+  final String imageUrl;
+  final double amount;
+  final DateTime expiresAt;
+  const UpiQr(this.imageUrl, this.amount, this.expiresAt);
+}
+
 class UploadSignature {
   final String cloudName;
   final String apiKey;
@@ -648,6 +656,36 @@ class ApiClient {
       },
     ) as Map<String, dynamic>;
     return Order.fromJson(data);
+  }
+
+  /// Records that the rider took cash at the door.
+  ///
+  /// Cash only, deliberately. A UPI collection is marked paid by Razorpay's
+  /// webhook rather than by a rider tapping a button - which is the whole reason
+  /// the QR is minted at the gateway instead of being the stall's own printed
+  /// code.
+  Future<Order> riderCollectCash(String orderId) async {
+    final data = await _request(
+      'POST',
+      '/rider/orders/$orderId/collect',
+      body: {'method': 'cash'},
+    ) as Map<String, dynamic>;
+    return Order.fromJson(data);
+  }
+
+  /// A single-use QR for exactly this order's total.
+  ///
+  /// Throws an [ApiException] carrying the server's own words when Razorpay has
+  /// not activated QR codes for this account - which reads, correctly, as "take
+  /// cash instead".
+  Future<UpiQr> riderUpiQr(String orderId) async {
+    final data = await _request('POST', '/rider/orders/$orderId/upi-qr')
+        as Map<String, dynamic>;
+    return UpiQr(
+      data['image_url'] as String,
+      double.parse(data['amount'].toString()),
+      DateTime.parse(data['expires_at'] as String),
+    );
   }
 
   /// Tells the server where to notify this rider about new deliveries.

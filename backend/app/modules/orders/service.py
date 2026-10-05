@@ -65,7 +65,16 @@ ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     # A dine-in order is handed across the counter, so READY -> COMPLETED
     # directly. A delivery goes out with somebody first.
     OrderStatus.READY: {OrderStatus.OUT_FOR_DELIVERY, OrderStatus.COMPLETED},
-    OrderStatus.OUT_FOR_DELIVERY: {OrderStatus.COMPLETED},
+    # CANCELLED as well as COMPLETED, because a delivery can fail at the door:
+    # nobody home, the customer refuses it, or the cash never appears. Until pay
+    # on delivery there was no way to end one of these at all - out_for_delivery
+    # had completion as its only exit, so a failed handover had nowhere to go.
+    #
+    # Needs no ALTER TYPE: cancelled already exists, and TERMINAL_STATUSES is
+    # derived from this dict's keys, so adding a target to an existing row moves
+    # nothing. Note RIDER_ALLOWED_TARGETS is deliberately unchanged - the rider
+    # reports, the stall decides.
+    OrderStatus.OUT_FOR_DELIVERY: {OrderStatus.COMPLETED, OrderStatus.CANCELLED},
 }
 
 # Nothing moves out of these. Derived from the table rather than restated, so

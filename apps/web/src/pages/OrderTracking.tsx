@@ -193,6 +193,21 @@ export default function OrderTracking() {
         All orders
       </Link>
 
+      {order.payment_status === 'due' && (
+        <div className="card mb-space-lg flex flex-wrap items-center gap-space-md border-[1.5px] border-outline-variant p-space-md">
+          <Icon name="payments" className="text-[26px] text-on-surface-variant" />
+          <div className="min-w-0 flex-1">
+            <p className="text-label-lg text-on-surface">
+              Pay {rupees(order.total_amount)} when it arrives
+            </p>
+            <p className="text-body-sm text-on-surface-variant">
+              Cash, or scan the rider's UPI code at the door. The stall is already
+              making this - nothing is owed until it reaches you.
+            </p>
+          </div>
+        </div>
+      )}
+
       {order.status === 'awaiting_payment' && (
         <div className="card mb-space-lg flex flex-wrap items-center gap-space-md border-[1.5px] border-primary bg-primary-tint/40 p-space-md">
           <Icon name="credit_card" className="text-[26px] text-primary" />

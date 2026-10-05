@@ -108,6 +108,40 @@ class OrderLineItem {
       );
 }
 
+/// Where the money is. A separate axis from [OrderStatus], which is the food.
+///
+/// Carries an [unknown] fallback for the same reason OrderStatus does: a value
+/// this build has never heard of must render as something vague rather than
+/// throw and blank a whole screen. That has happened once here already.
+enum PaymentStatus {
+  pending,
+  paid,
+  failed,
+  expired,
+  /// Pay on delivery: the food is being made and the money is owed at the door.
+  due,
+  /// Pay on delivery that ended with nobody collecting. Nothing is owed either
+  /// way - distinct from [failed], which is a payment that was tried.
+  waived,
+  refundPending,
+  refunded,
+  refundFailed,
+  unknown;
+
+  static PaymentStatus fromJson(String? value) => switch (value) {
+        'pending' => PaymentStatus.pending,
+        'paid' => PaymentStatus.paid,
+        'failed' => PaymentStatus.failed,
+        'expired' => PaymentStatus.expired,
+        'due' => PaymentStatus.due,
+        'waived' => PaymentStatus.waived,
+        'refund_pending' => PaymentStatus.refundPending,
+        'refunded' => PaymentStatus.refunded,
+        'refund_failed' => PaymentStatus.refundFailed,
+        _ => PaymentStatus.unknown,
+      };
+}
+
 class Order {
   final String id;
 
@@ -129,7 +163,21 @@ class Order {
   final String vendorId;
   final String customerId;
   final OrderStatus status;
+
+  /// "online" or "cod". Historical rows say "cashfree", from before the gateway
+  /// swap, which is why [isCod] asks whether it *is* cash rather than whether it
+  /// is online - the online value has had two spellings and may have a third.
   final String paymentMethod;
+
+  /// Where the money is. Decoded leniently: a server that predates this field
+  /// leaves it null, and treating that as "paid" would tell a rider to collect
+  /// nothing on an order that owes money, so it reads as [PaymentStatus.unknown]
+  /// and every caller asks a specific question of it rather than assuming.
+  final PaymentStatus paymentStatus;
+
+  /// "cash" or "upi" once a rider has collected at the door. Null otherwise.
+  final String? collectedVia;
+
   final double totalAmount;
   final String? note;
   final DateTime createdAt;
@@ -176,6 +224,8 @@ class Order {
     required this.customerId,
     required this.status,
     required this.paymentMethod,
+    this.paymentStatus = PaymentStatus.unknown,
+    this.collectedVia,
     required this.totalAmount,
     required this.note,
     required this.createdAt,
@@ -196,6 +246,15 @@ class Order {
   /// True once somebody is carrying it, whether a rider or the merchant.
   bool get hasCourier => riderId != null || selfDelivery;
 
+  /// Paid at the door rather than up front.
+  bool get isCod => paymentMethod == 'cod';
+
+  /// Money the rider still has to collect before this can be marked delivered.
+  bool get isAwaitingCollection => paymentStatus == PaymentStatus.due;
+
+  /// Whether the stall has actually been paid for this one.
+  bool get isPaid => paymentStatus == PaymentStatus.paid;
+
   bool get isDelivery => fulfilmentType == FulfilmentType.delivery;
 
   factory Order.fromJson(Map<String, dynamic> json) => Order(
@@ -209,6 +268,8 @@ class Order {
         customerId: json['customer_id'] as String,
         status: OrderStatus.fromJson(json['status'] as String),
         paymentMethod: json['payment_method'] as String,
+        paymentStatus: PaymentStatus.fromJson(json['payment_status'] as String?),
+        collectedVia: json['collected_via'] as String?,
         totalAmount: double.parse(json['total_amount'].toString()),
         note: json['note'] as String?,
         createdAt: DateTime.parse(json['created_at'] as String),

@@ -64,6 +64,16 @@ export default function Checkout() {
   // hostel they were going to pick. This is the last moment before the order is
   // sent, so it is the right moment to ask.
   const [fulfilment, setFulfilment] = useState<FulfilmentType | null>(null);
+  /**
+   * Defaults to paying now, unlike the fulfilment picker above which starts
+   * unselected on purpose.
+   *
+   * The two are not the same decision. Nobody can guess which way a customer
+   * wants their food handed over, but paying up front is the safe default for
+   * both sides - the stall is not cooking on trust - so cash is an explicit
+   * opt-in rather than a question everybody has to answer.
+   */
+  const [payLater, setPayLater] = useState(false);
   const [locations, setLocations] = useState<DeliveryLocation[] | null>(null);
   const [location, setLocation] = useState('');
   const [dineInOk, setDineInOk] = useState(vendor?.dine_in_enabled ?? true);
@@ -158,6 +168,11 @@ export default function Checkout() {
     setError(null);
   }
 
+  /// Cash is a delivery-only option, so switching back to dine-in must not leave
+  /// a stale choice behind - the server would refuse the order and the customer
+  /// would have no idea why.
+  const cashAtTheDoor = payLater && fulfilment === 'delivery';
+
   const modes = useMemo(
     () =>
       [
@@ -226,7 +241,16 @@ export default function Checkout() {
         // Sent only for a delivery: the server rejects a dine-in that carries
         // one rather than ignoring it, so a stray value is not harmless.
         delivery_location: fulfilment === 'delivery' ? location : undefined,
+        payment_method: cashAtTheDoor ? 'cod' : 'online',
       });
+
+      if (cashAtTheDoor) {
+        // Already placed and already in the queue - there is no payment session
+        // to open, so the cart is done with.
+        clear();
+        navigate(`/orders/${order.id}`, { replace: true });
+        return;
+      }
 
       // The order exists but no stall has seen it yet - it is invisible until
       // the payment webhook lands. So the cart is cleared only now, and the
@@ -375,6 +399,54 @@ export default function Checkout() {
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {fulfilment === 'delivery' && (
+              <div className="mt-space-md">
+                <span className="text-label-md text-on-surface-medium">How you'll pay</span>
+                <div className="mt-space-xs grid gap-space-sm sm:grid-cols-2">
+                  {([
+                    {
+                      later: false,
+                      label: 'Pay now',
+                      blurb: 'Card, UPI or netbanking',
+                      icon: 'credit_card',
+                    },
+                    {
+                      later: true,
+                      label: 'Pay on delivery',
+                      blurb: 'Cash or UPI when it arrives',
+                      icon: 'payments',
+                    },
+                  ] as const).map((option) => {
+                    const selected = payLater === option.later;
+                    return (
+                      <button
+                        key={option.label}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => setPayLater(option.later)}
+                        className={`flex items-start gap-space-sm rounded-lg border-[1.5px] p-space-md text-left transition-colors ${
+                          selected
+                            ? 'border-primary bg-primary-tint/40'
+                            : 'border-outline-variant bg-surface-container hover:bg-surface-container-high'
+                        }`}
+                      >
+                        <Icon
+                          name={option.icon}
+                          className={`text-[22px] ${selected ? 'text-primary' : 'text-on-surface-variant'}`}
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-label-lg text-on-surface">{option.label}</span>
+                          <span className="block text-body-sm text-on-surface-variant">
+                            {option.blurb}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -585,6 +657,11 @@ export default function Checkout() {
               <Spinner />
             ) : fulfilment === null ? (
               'Choose dine in or delivery'
+            ) : cashAtTheDoor ? (
+              <>
+                Place order &middot; pay {rupees(subtotal)} on delivery
+                <Icon name="arrow_forward" className="text-[18px]" />
+              </>
             ) : (
               <>
                 Pay {rupees(subtotal)}

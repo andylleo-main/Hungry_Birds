@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
@@ -21,6 +22,19 @@ class OrderItemIn(BaseModel):
     quantity: int = Field(ge=1, le=50)
 
 
+class PaymentMethod(StrEnum):
+    """How an order will be paid for.
+
+    "online" rather than the gateway's name, deliberately. The column has already
+    held "cashfree" and now holds "razorpay" for historical rows, and clients
+    branch on this value - so the only question anything asks is whether it *is*
+    cod, never whether it is some particular gateway.
+    """
+
+    ONLINE = "online"
+    COD = "cod"
+
+
 class OrderCreate(BaseModel):
     vendor_id: uuid.UUID
     # Bounded at both ends: an empty order is meaningless, and every line costs
@@ -34,6 +48,27 @@ class OrderCreate(BaseModel):
     # instead of failing validation on a field it has never heard of.
     fulfilment_type: FulfilmentType = FulfilmentType.DINE_IN
     delivery_location: str | None = Field(default=None, max_length=MAX_LOCATION_CODE_LENGTH)
+
+    # Defaults to online for the same reason fulfilment defaults to dine-in: an
+    # older client that has never heard of this field keeps working, and the
+    # default is the conservative one - money up front.
+    payment_method: PaymentMethod = PaymentMethod.ONLINE
+
+    @model_validator(mode="after")
+    def cash_is_for_deliveries(self) -> "OrderCreate":
+        """Pay on delivery means a rider collecting at a door.
+
+        There is nobody to collect from a dine-in customer: they are standing at
+        the counter, where the stall would have to handle the money and mark it
+        collected itself. That is a different feature, and refusing here is
+        better than silently charging them online instead.
+
+        Whether cash is allowed at all is a deployment setting, checked in the
+        route - this is only about the shape being coherent.
+        """
+        if self.payment_method is PaymentMethod.COD and self.fulfilment_type is not FulfilmentType.DELIVERY:
+            raise ValueError("Pay on delivery is only available for delivery orders")
+        return self
 
     @model_validator(mode="after")
     def location_must_match_fulfilment(self) -> "OrderCreate":
@@ -113,6 +148,10 @@ class OrderOut(BaseModel):
     status: OrderStatus
     payment_method: str
     payment_status: PaymentStatus
+    # "cash" or "upi" once a rider has collected at the door; null on anything
+    # paid online, and on a cash order nobody has collected yet. A stall
+    # counting its till at close wants exactly this.
+    collected_via: str | None = None
     total_amount: Decimal
     note: str | None
     created_at: datetime

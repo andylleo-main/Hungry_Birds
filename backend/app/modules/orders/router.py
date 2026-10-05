@@ -22,6 +22,7 @@ from app.modules.orders.schemas import (
     OrderCreate,
     OrderStatusUpdate,
     OrderWithCodeOut,
+    PaymentMethod,
 )
 from app.modules.auth.service import assert_allowed_domain
 from app.core.tasks import fire_and_log
@@ -31,6 +32,7 @@ from app.modules.payments import service as payments
 from app.modules.orders.service import (
     REFUNDABLE_ENDINGS,
     TERMINAL_STATUSES,
+    allocate_token,
     assert_transition,
     generate_delivery_code,
     generate_order_number,
@@ -81,14 +83,26 @@ async def place_order(
     """
     assert_allowed_domain(user.email, settings, action="place an order")
 
+    paying_now = payload.payment_method is PaymentMethod.ONLINE
+
     # Refuse up front rather than creating something that can never complete.
-    # Payment is the only route out of awaiting_payment, so without a configured
-    # gateway an accepted order would sit forever: the customer gets a
+    # Paying online is the only route out of awaiting_payment, so without a
+    # configured gateway such an order would sit forever: the customer gets a
     # confirmation, the stall never sees it, and nothing anywhere says why.
-    if not settings.payments_enabled:
+    #
+    # Conditional now that cash exists. A pay-on-delivery order never enters
+    # awaiting_payment and needs no gateway at all, so refusing it here would be
+    # refusing an order this deployment can perfectly well take.
+    if paying_now and not settings.payments_enabled:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Online payments are not set up yet, so orders can't be taken. Please try later.",
+        )
+
+    if not paying_now and not settings.cod_enabled:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Paying the rider isn't available right now. Please pay online.",
         )
 
     vendor = await db.get(Vendor, payload.vendor_id)
@@ -127,6 +141,13 @@ async def place_order(
             if payload.fulfilment_type is FulfilmentType.DELIVERY
             else None
         ),
+        payment_method=payload.payment_method.value,
+        # A cash order is placed straight into the stall's queue. There is no
+        # payment step to wait for, and parking it in awaiting_payment/pending
+        # would hand it to sweep_abandoned, which cancels exactly that pair after
+        # twenty minutes - mid-cook, with the rider already assigned.
+        status=OrderStatus.PLACED if not paying_now else OrderStatus.AWAITING_PAYMENT,
+        payment_status=PaymentStatus.DUE if not paying_now else PaymentStatus.PENDING,
     )
     # One query for every line, rather than one per line. Two reasons beyond the
     # round trips: the stall's own items are fetched whether or not they are
@@ -223,13 +244,30 @@ async def place_order(
 
     order.total_amount = total
     db.add(order)
+
+    if not paying_now:
+        # The equivalent of what apply_payment_success does for an online order,
+        # at the equivalent moment: this is when the stall first sees it, so this
+        # is when it earns the number they will call out. Flushed first because
+        # allocate_token needs the row to exist.
+        await db.flush()
+        await allocate_token(order, db)
+
     await db.commit()
 
     order = await _load_order_with_items(order.id, db)
-    # Published to the customer's own channel only - publish_order_event will not
-    # touch the stall's queue for an unpaid order, and nobody is notified yet.
-    # The stall first hears about this when the payment webhook lands.
     await publish_order_event(redis, order)
+
+    if not paying_now:
+        # A cash order is in the queue already, so the stall is told now. An
+        # online one is announced by the payment webhook instead, which is the
+        # moment it becomes visible to them at all.
+        background.add_task(
+            fire_and_log,
+            "notify_new_order",
+            lambda: notify_new_order(order.id, order.vendor_id, settings),
+        )
+
     return OrderWithCodeOut.model_validate(order)
 
 
@@ -351,18 +389,31 @@ async def update_order_status(
     # cancelled on a paid order therefore closed it and kept the money, silently
     # and with nothing in any log to say so. Asking REFUNDABLE_ENDINGS instead of
     # naming statuses is what stops the next terminal status repeating it.
-    if payload.status in REFUNDABLE_ENDINGS and order.payment_status is PaymentStatus.PAID:
-        reason = (
-            "stall could not make this order"
-            if payload.status is OrderStatus.REJECTED
-            else "stall cancelled this order"
-        )
-        await payments.start_refund(order.id, reason, db)
-        background.add_task(
-            fire_and_log,
-            "refund_refused_order",
-            lambda: payments.attempt_refund(order.id, reason, settings),
-        )
+    if payload.status in REFUNDABLE_ENDINGS:
+        if order.payment_status is PaymentStatus.DUE:
+            # A pay-on-delivery order that ended before anybody collected.
+            # Nothing was taken, so nothing is owed in either direction - which
+            # is what WAIVED says, and why it is not FAILED (a payment that was
+            # attempted) or REFUNDED (money that moved twice).
+            order.payment_status = PaymentStatus.WAIVED
+            await db.commit()
+        elif order.payment_status is PaymentStatus.PAID and order.payment_method != "cod":
+            reason = (
+                "stall could not make this order"
+                if payload.status is OrderStatus.REJECTED
+                else "stall cancelled this order"
+            )
+            await payments.start_refund(order.id, reason, db)
+            background.add_task(
+                fire_and_log,
+                "refund_refused_order",
+                lambda: payments.attempt_refund(order.id, reason, settings),
+            )
+        # A collected cash order that is then cancelled falls through
+        # deliberately. There is no gateway payment to reverse - the money is in
+        # the stall's till or the rider's pocket - so the refund is a human
+        # handing notes back, and start_refund would only log that it has nothing
+        # to work with.
 
     order = await _load_order_with_items(order.id, db)
     await publish_order_event(redis, order)

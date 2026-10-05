@@ -128,6 +128,28 @@ class RiderState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Records cash taken at the door, and swaps the order in place.
+  ///
+  /// Separate from setStatus because collecting is not a status change: the food
+  /// has not moved, the money has. The server refuses to complete a delivery
+  /// that still owes money, so this is the step that unlocks "Delivered".
+  Future<void> collectCash(Order order) async {
+    final updated = await api.riderCollectCash(order.id);
+    _replace(updated);
+  }
+
+  /// Mints a single-use QR for this order's total.
+  ///
+  /// Nothing is marked paid here. Razorpay tells the server when the money
+  /// lands, and the order arrives back through the ordinary poll - which is the
+  /// point of routing it through a gateway rather than trusting the screen.
+  Future<UpiQr> upiQr(Order order) => api.riderUpiQr(order.id);
+
+  void _replace(Order updated) {
+    orders = [for (final o in orders) if (o.id == updated.id) updated else o];
+    notifyListeners();
+  }
+
   /// Orders still to hand over.
   List<Order> get active => [
         for (final o in orders)

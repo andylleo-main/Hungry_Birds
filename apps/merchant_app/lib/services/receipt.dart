@@ -151,6 +151,22 @@ class Receipt {
     bytes.addAll(_line(_spread('TOTAL', 'Rs.${order.totalAmount.toStringAsFixed(0)}')));
     bytes.addAll(_bold(false));
 
+    // The one line that changes what somebody does with the bag. A prepaid order
+    // is handed over; a cash one is handed over *and* money comes back. Printing
+    // it big, rather than as a note, because this is read at a counter during
+    // service by whoever is packing - not by whoever took the order.
+    if (order.isAwaitingCollection) {
+      bytes.addAll(_line(''));
+      bytes.addAll(_align(1));
+      bytes.addAll(_size(1, 1));
+      bytes.addAll(_bold(true));
+      bytes.addAll(_line('COLLECT Rs.${order.totalAmount.toStringAsFixed(0)}'));
+      bytes.addAll(_size(0, 0));
+      bytes.addAll(_line('ON DELIVERY'));
+      bytes.addAll(_bold(false));
+      bytes.addAll(_align(0));
+    }
+
     if (order.note != null && order.note!.isNotEmpty) {
       bytes.addAll(_line(''));
       bytes.addAll(_bold(true));
