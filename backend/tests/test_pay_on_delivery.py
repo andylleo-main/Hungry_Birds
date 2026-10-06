@@ -878,7 +878,7 @@ async def test_a_stall_cannot_collect_on_an_order_a_rider_is_carrying(
     client, db, customer, vendor, menu_item, rider
 ):
     """Two people able to mark the same cash collected is how it gets marked by
-    whoever is *not* holding the money. Self-delivery is the whole gate."""
+    whoever is *not* holding the money. Having a rider is the whole gate."""
     _, headers = customer
     v, vendor_headers = vendor
     order = (await _cash_order(client, headers, v.id, menu_item)).json()
@@ -982,3 +982,76 @@ async def test_a_stall_cannot_collect_on_an_order_paid_online(
         json={"method": "cash"},
     )
     assert r.status_code in (400, 404), r.text
+
+
+async def test_an_order_sent_out_with_nobody_assigned_is_still_collectable(
+    client, db, customer, vendor, menu_item
+):
+    """The hole that gating on the self_delivery flag left open.
+
+    Nothing requires an assignment before out_for_delivery, so a stall can send
+    an order out having touched neither the rider picker nor "I'll take it".
+    That order has rider_id null and self_delivery false, and while the stall's
+    routes asked for the flag it was collectable by nobody at all - the rider
+    routes refuse it because it is not theirs, and the stall's refused it
+    because the flag was not set. The money was unreachable, which on a cash
+    order means the stall cannot close it either.
+    """
+    from app.db.models.order import Order
+    from app.db.models.payment import PaymentStatus
+
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+
+    for status_value in ("accepted", "preparing", "ready", "out_for_delivery"):
+        r = await client.patch(
+            f"/vendors/me/orders/{order['id']}/status",
+            headers=vendor_headers,
+            json={"status": status_value},
+        )
+        assert r.status_code == 200, r.text
+
+    row = await db.get(Order, uuid.UUID(order["id"]))
+    await db.refresh(row)
+    assert row.rider_id is None
+    assert row.self_delivery is False, "the state this test exists for"
+
+    collected = await client.post(
+        f"/vendors/me/orders/{order['id']}/collect",
+        headers=vendor_headers,
+        json={"method": "cash"},
+    )
+    assert collected.status_code == 200, collected.text
+
+    await db.refresh(row)
+    assert row.payment_status is PaymentStatus.PAID
+
+    done = await client.patch(
+        f"/vendors/me/orders/{order['id']}/status",
+        headers=vendor_headers,
+        json={"status": "completed"},
+    )
+    assert done.status_code == 200, done.text
+
+
+async def test_the_qr_route_is_open_to_an_unassigned_order_too(
+    stub_razorpay, client, db, customer, vendor, menu_item
+):
+    """The same relaxation, for the button beside it."""
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+
+    for status_value in ("accepted", "preparing", "ready", "out_for_delivery"):
+        assert (
+            await client.patch(
+                f"/vendors/me/orders/{order['id']}/status",
+                headers=vendor_headers,
+                json={"status": status_value},
+            )
+        ).status_code == 200
+
+    r = await client.post(f"/vendors/me/orders/{order['id']}/upi-qr", headers=vendor_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["image_url"]

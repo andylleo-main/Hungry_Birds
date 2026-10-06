@@ -552,17 +552,28 @@ async def assign_order(
 async def _stall_collectable(
     order_id: uuid.UUID, vendor: Vendor, db: AsyncSession
 ) -> Order:
-    """The stall's own order that they are delivering themselves, still owing money.
+    """The stall's own order with no rider on it, still owing money.
 
-    Self-delivery is the whole gate. When a rider is carrying the order, the
-    rider collects: two people able to mark the same cash collected is how an
-    order gets marked paid by somebody who is not holding the money. The 404 on
-    an order that is not this stall's matches the rest of the vendor namespace.
+    The gate is "no rider is carrying this", not the `self_delivery` flag, and
+    that difference is a hole rather than a nicety. A stall can move an order to
+    out_for_delivery without assigning anybody - nothing requires an assignment -
+    and such an order has `rider_id` null with `self_delivery` false. Gating on
+    the flag left that order collectable by nobody at all: the rider routes
+    refuse it because it is not theirs, and the stall's refused it because the
+    flag was not set. The money was simply unreachable.
+
+    Asking who is carrying it answers the real question and keeps the property
+    that matters: exactly one party can ever collect, because `rider_id` is
+    either null or it is not. Two people able to mark the same cash collected is
+    how an order gets marked paid by somebody who is not holding the money.
+
+    The 404 on an order that is not this stall's matches the rest of the vendor
+    namespace.
     """
     order = await _load_order_with_items(order_id, db)
     if order is None or order.vendor_id != vendor.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
-    if not order.self_delivery:
+    if order.rider_id is not None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Your rider collects on this order. Take it on yourself to collect here.",

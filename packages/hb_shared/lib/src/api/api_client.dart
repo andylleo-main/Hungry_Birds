@@ -737,10 +737,10 @@ class ApiClient {
 
   /// Records that the stall owner took cash at the door on their own round.
   ///
-  /// The stall's half of [riderCollectCash], and refused unless the order is
-  /// marked self-delivery - when a rider is carrying it, the rider collects.
-  /// Two people able to mark the same cash collected is how an order ends up
-  /// marked paid by somebody who is not holding the money.
+  /// The stall's half of [riderCollectCash], and refused when a rider is on the
+  /// order - then the rider collects. Two people able to mark the same cash
+  /// collected is how an order ends up marked paid by somebody who is not
+  /// holding the money.
   Future<Order> collectCashAtDoor(String orderId) async {
     final data = await _request(
       'POST',

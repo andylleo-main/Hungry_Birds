@@ -282,6 +282,21 @@ class _OrderCardState extends State<_OrderCard> {
                   DateFormat('d MMM, h:mm a').format(order.createdAt.toLocal()),
                   style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
                 ),
+                // Printing lives here, in the header, because it is not a step
+                // in the order's life - it is something a stall does to an
+                // order, at any point, as often as they need.
+                //
+                // It used to sit inside the "accepted" branch of _actions,
+                // which made it reachable only between tapping Accept and
+                // tapping Start preparing. The natural flow is to do those two
+                // things together, so in practice the button was gone before
+                // anybody looked for it - and a jammed or lost ticket could
+                // never be printed again, which the comment on _print claimed
+                // was the whole reason printing is a separate tap.
+                //
+                // Past orders get it too: "print me that receipt again" is a
+                // thing customers ask for after the fact.
+                _PrintButton(order: order, onPrint: _print, busy: _printing),
               ],
             ),
             // The long number, for when a customer rings up about this order.
@@ -400,13 +415,16 @@ class _OrderCardState extends State<_OrderCard> {
             // being reversed, so the card has to show which of the two this is
             // rather than assert either.
             _PaymentLine(order: order),
-            // Only when the owner is the one carrying it. A rider's order is
-            // collected for in the rider app, and two people able to mark the
-            // same cash collected is how an order gets marked paid by whoever
-            // is not holding the money.
+            // Only when no rider is carrying it, which is the same question the
+            // server asks. Not the selfDelivery flag: an order can go out with
+            // nobody assigned, and gating on the flag hid the buttons on
+            // exactly the orders where the stall is the only person who can
+            // collect. A rider's order is collected for in the rider app, and
+            // two people able to mark the same cash collected is how an order
+            // gets marked paid by whoever is not holding the money.
             if (widget.live &&
                 order.isAwaitingCollection &&
-                order.selfDelivery &&
+                order.riderId == null &&
                 order.status == OrderStatus.outForDelivery) ...[
               const SizedBox(height: 10),
               _CollectActions(order: order),
@@ -664,21 +682,7 @@ class _OrderCardState extends State<_OrderCard> {
                 child: const Text('Cancel'),
               ),
             ),
-            const SizedBox(width: 8),
-            // Icon-only so the two decisions keep their full width; this is a
-            // utility beside them, not a third choice.
-            IconButton.outlined(
-              onPressed: _printing ? null : () => _print(order),
-              icon: _printing
-                  ? const SizedBox(
-                      height: 18,
-                      width: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
-                    )
-                  : const Icon(Icons.print_outlined),
-              tooltip: 'Print ticket',
-            ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 10),
             Expanded(
               flex: 2,
               child: ElevatedButton(
@@ -728,6 +732,41 @@ class _OrderCardState extends State<_OrderCard> {
           : _Waiting(text: '${order.riderName ?? 'Your rider'} is on the way'),
       _ => const SizedBox.shrink(),
     };
+  }
+}
+
+/// Print this order's ticket. Available at every status, including past orders.
+///
+/// Quiet on purpose: a small icon in the header rather than a button competing
+/// with Accept and Start preparing, because during service the decisions matter
+/// more than the paper. It is always *there*, though, which is the point - the
+/// previous version appeared for one status only.
+class _PrintButton extends StatelessWidget {
+  const _PrintButton({required this.order, required this.onPrint, required this.busy});
+
+  final Order order;
+  final Future<void> Function(Order) onPrint;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    // Shown even with no printer set up, rather than hidden: _print answers
+    // with where to set one up, which is more use than a button that silently
+    // is not there on a phone whose owner is looking for it.
+    return IconButton(
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      onPressed: busy ? null : () => onPrint(order),
+      icon: busy
+          ? const SizedBox(
+              height: 16,
+              width: 16,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            )
+          : const Icon(Icons.print_outlined, size: 20, color: AppTheme.textSecondary),
+      tooltip: 'Print ticket',
+    );
   }
 }
 
