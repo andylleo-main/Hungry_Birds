@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:hb_shared/hb_shared.dart';
-import 'package:provider/provider.dart';
-
-import '../state/orders_state.dart';
 
 /// The full-screen interruption when an order lands.
 ///
@@ -11,23 +8,46 @@ import '../state/orders_state.dart';
 /// toast or a banner would be missable across a counter during service, which is
 /// the one moment this exists for.
 ///
-/// Raised through a navigator key rather than a BuildContext, because the thing
-/// that knows an order arrived is a ChangeNotifier listening to a socket and it
-/// holds no context of its own.
+/// **Dismissal is a callback, not a Provider lookup, and that is a bug fix.**
+///
+/// This dialog used to call `context.read<OrdersState>()` from its button.
+/// OrdersState is created inside DashboardScreen, but showDialog defaults to
+/// `useRootNavigator: true`, so the dialog is built in the *root* Overlay -
+/// above DashboardScreen in the tree. The lookup walked up past MaterialApp,
+/// never passed the provider, and threw.
+///
+/// It threw before `Navigator.pop()`, so "Got it" did nothing: the only button
+/// on a full-screen dialog with `barrierDismissible: false`, on a phone with no
+/// way back. Tapping it simply froze the app, and a stall could not reach its
+/// own queue.
+///
+/// Taking the callback instead means the dialog cannot care where it is pushed.
 class NewOrderDialog extends StatelessWidget {
-  const NewOrderDialog({super.key, required this.order});
+  const NewOrderDialog({
+    super.key,
+    required this.order,
+    required this.onAcknowledge,
+  });
 
   final Order order;
+
+  /// Clears the alert and stops the chime. Supplied by the watcher, which sits
+  /// below the provider and can read it safely.
+  final VoidCallback onAcknowledge;
 
   /// Shows the dialog, and stops the chime whichever way it is dismissed.
   ///
   /// Barrier dismissal is off on purpose: a stray tap while wiping a counter
   /// should not silently clear an order nobody has read.
-  static Future<void> show(BuildContext context, Order order) {
+  static Future<void> show(
+    BuildContext context,
+    Order order, {
+    required VoidCallback onAcknowledge,
+  }) {
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => NewOrderDialog(order: order),
+      builder: (_) => NewOrderDialog(order: order, onAcknowledge: onAcknowledge),
     );
   }
 
@@ -156,8 +176,10 @@ class NewOrderDialog extends StatelessWidget {
                 height: 54,
                 child: ElevatedButton(
                   onPressed: () {
-                    context.read<OrdersState>().acknowledge(order);
+                    // Pop first. Whatever acknowledging does, the one button on
+                    // a dialog nobody can dismiss any other way has to close it.
                     Navigator.of(context).pop();
+                    onAcknowledge();
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white,

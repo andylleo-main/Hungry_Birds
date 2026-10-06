@@ -104,9 +104,19 @@ class _NewOrderWatcherState extends State<_NewOrderWatcher> {
       // After this frame: showing a dialog during build throws, and the
       // notification that brings us here arrives mid-build often enough that
       // this is not a theoretical concern.
+      // Read here rather than inside the dialog. This widget sits below the
+      // ChangeNotifierProvider that creates OrdersState; the dialog, pushed on
+      // the root navigator, does not - see NewOrderDialog.
+      final orders = context.read<OrdersState>();
+      final order = pending.first;
+
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        await NewOrderDialog.show(context, pending.first);
+        await NewOrderDialog.show(
+          context,
+          order,
+          onAcknowledge: () => orders.acknowledge(order),
+        );
         if (mounted) setState(() => _showing = false);
       });
     }

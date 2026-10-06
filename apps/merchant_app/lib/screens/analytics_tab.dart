@@ -3,6 +3,8 @@ import 'package:hb_shared/hb_shared.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import 'order_history_screen.dart';
+
 /// What this stall sold, when its rush is, and what it turned away.
 ///
 /// Four questions a stall owner actually has, which the service-wide admin
@@ -124,7 +126,21 @@ class _AnalyticsTabState extends State<AnalyticsTab> {
               ),
             ),
             const SizedBox(width: 10),
-            Expanded(child: _Stat(label: 'Orders', value: '${d.totals.orders}')),
+            Expanded(
+              child: _Stat(
+                label: 'Orders',
+                value: '${d.totals.orders}',
+                // The figure invites the next question - which days were they?
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => OrderHistoryScreen(
+                      days: d.ordersByDay,
+                      rangeDays: d.rangeDays,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 10),
@@ -303,24 +319,45 @@ String _hourLabel(int hour) {
 }
 
 class _Stat extends StatelessWidget {
-  const _Stat({required this.label, required this.value, this.tone, this.footnote});
+  const _Stat({
+    required this.label,
+    required this.value,
+    this.tone,
+    this.footnote,
+    this.onTap,
+  });
 
   final String label;
   final String value;
   final Color? tone;
   final String? footnote;
 
+  /// Makes the card open something. A chevron appears when it does, so a
+  /// tappable card is visibly different from the four that are not.
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: Padding(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              label,
-              style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+            Row(
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                ),
+                if (onTap != null) ...[
+                  const SizedBox(width: 2),
+                  const Icon(Icons.chevron_right, size: 14, color: AppTheme.textSecondary),
+                ],
+              ],
             ),
             const SizedBox(height: 4),
             Text(
@@ -337,6 +374,7 @@ class _Stat extends StatelessWidget {
                 style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
               ),
           ],
+        ),
         ),
       ),
     );
