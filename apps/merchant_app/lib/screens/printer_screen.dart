@@ -23,6 +23,8 @@ class _PrinterScreenState extends State<PrinterScreen> {
   String? _error;
   bool _loading = true;
   bool _printing = false;
+  List<PrinterCheck>? _checks;
+  bool _checking = false;
 
   @override
   void initState() {
@@ -90,6 +92,36 @@ class _PrinterScreenState extends State<PrinterScreen> {
     } finally {
       if (mounted) setState(() => _printing = false);
     }
+  }
+
+  Future<void> _plain() async {
+    final service = context.read<PrinterService>();
+    setState(() => _printing = true);
+    try {
+      await service.printPlainTest();
+      if (mounted) _say('Sent plain text. Check the paper.');
+    } on PrinterException catch (e) {
+      if (mounted) _say(e.message);
+    } catch (_) {
+      if (mounted) _say("Couldn't send the plain test.");
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
+  Future<void> _diagnose() async {
+    final service = context.read<PrinterService>();
+    setState(() {
+      _checking = true;
+      _checks = null;
+    });
+    // diagnose() never throws, so there is deliberately nothing to catch here.
+    final checks = await service.diagnose();
+    if (!mounted) return;
+    setState(() {
+      _checks = checks;
+      _checking = false;
+    });
   }
 
   @override
@@ -186,6 +218,63 @@ class _PrinterScreenState extends State<PrinterScreen> {
             ),
 
           const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Not printing?',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    // Said plainly because it is true, and because a stall owner
+                    // reading a list of ticks is doing the work a developer
+                    // cannot do from somewhere else.
+                    'This walks the whole path and shows exactly where it stops. '
+                    'Every step fails the same way from the outside, so this is '
+                    'the only way to tell them apart.',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _checking ? null : _diagnose,
+                      icon: const Icon(Icons.troubleshoot, size: 18),
+                      label: Text(_checking ? 'Checking…' : 'Run the check'),
+                    ),
+                  ),
+                  if (_checks != null) ...[
+                    const SizedBox(height: 12),
+                    for (final check in _checks!) _CheckRow(check: check),
+                  ],
+                  const SizedBox(height: 10),
+                  const Divider(height: 1),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Plain text, with no formatting commands at all. If this '
+                    'prints but the test page does not, the connection is fine '
+                    'and the formatting is the problem — tell me that.',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _printing ? null : _plain,
+                      icon: const Icon(Icons.text_fields, size: 18),
+                      label: const Text('Print plain text'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
           const Text('Paper width', style: TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
           const Text(
@@ -256,6 +345,48 @@ class _PrinterScreenState extends State<PrinterScreen> {
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// One line of the self-check: what was tried, and what happened.
+class _CheckRow extends StatelessWidget {
+  const _CheckRow({required this.check});
+
+  final PrinterCheck check;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            check.ok ? Icons.check_circle : Icons.cancel,
+            size: 16,
+            color: check.ok ? AppTheme.success : AppTheme.primaryRed,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  check.step,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                if (check.detail != null)
+                  Text(
+                    check.detail!,
+                    style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );

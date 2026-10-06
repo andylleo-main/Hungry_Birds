@@ -206,6 +206,37 @@ class Receipt {
     return Uint8List.fromList(bytes);
   }
 
+  /// The smallest thing that could possibly print: text and newlines, nothing
+  /// else.
+  ///
+  /// No reset, no alignment, no bold, no size, no feed command and no cut -
+  /// every one of those is an escape sequence a given firmware may not
+  /// implement, and a printer that meets a command it does not know can clear
+  /// its buffer and print nothing at all.
+  ///
+  /// So this is the control case. If this prints and [testPage] does not, the
+  /// problem is one of those commands and not the Bluetooth connection, which
+  /// is a different fix and otherwise indistinguishable from the outside: both
+  /// look like "it said it printed and nothing came out".
+  Uint8List plainTest() {
+    final bytes = <int>[];
+    for (final line in [
+      'HUNGRY BIRDS',
+      'plain text test',
+      '1234567890',
+      'If you can read this, the',
+      'connection works.',
+    ]) {
+      bytes.addAll(_text(line));
+      bytes.add(0x0A);
+    }
+    // Blank lines rather than ESC d, for the same reason: a line feed is the
+    // one byte every printer honours, and some of the paper has to clear the
+    // tear bar or there is nothing to read.
+    bytes.addAll([0x0A, 0x0A, 0x0A, 0x0A, 0x0A]);
+    return Uint8List.fromList(bytes);
+  }
+
   /// A short slip for checking the printer works, with no order needed.
   Uint8List testPage({String stallName = 'Hungry Birds'}) {
     final bytes = <int>[];

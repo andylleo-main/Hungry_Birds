@@ -603,6 +603,48 @@ keeps on, and an order naming any other is refused. A stall cannot switch both
 dine-in and delivery off - that would read as open while rejecting everything, and
 there is already a switch for being closed.
 
+**Accepting an order is the commitment.** A stall says yes or no while the order
+is `placed` - Accept or Reject - and after that it is theirs to make. There is no
+cancel button past that point, on the user's instruction, and that is worth
+stating plainly because of what it closes off: the customer cannot cancel either,
+and there is no admin route that cancels an order, so an accepted order has no
+exit but completion. A student who ordered at the wrong counter has to be sorted
+out in person. `ACCEPTED -> CANCELLED` is still in `ALLOWED_TRANSITIONS`, so the
+API can do it; it is the button that is gone.
+
+## The kitchen ticket printer
+
+58mm Bluetooth thermal, paired in Android's own settings and then picked under
+**Your stall → Ticket printer**. The ESC/POS is hand-written in
+`merchant_app/lib/services/receipt.dart` and unit-tested byte for byte; the
+transport sits behind `PrinterTransport` so the connection logic is testable too.
+
+**None of it can be verified without the hardware**, which is why the screen
+carries its own diagnostics. "It said it printed and nothing came out" is the
+failure mode, and permission, Bluetooth, pairing, connecting and writing all
+produce it identically from the outside. **Run the check** walks the path one
+step at a time and names the step that stops, and **Print plain text** sends a
+payload with no escape sequences at all - if that prints and the test page does
+not, the connection is fine and a formatting command is the problem, which is a
+different fix.
+
+Two things about the plugin are worked around rather than trusted:
+
+- **`connectionStatus` lies.** It probes by writing a space to the socket, so it
+  prints a stray character, and a buffered write to a printer that has slept
+  does not throw - it answers "connected" for a socket going nowhere. We judge
+  the connection ourselves: trusted for four minutes after a write the printer
+  accepted, rebuilt otherwise, and a refused write is retried on a *fresh*
+  socket rather than the one that just failed.
+- **`disconnect` closes the stream, not the `BluetoothSocket`**, so every
+  connect leaks one. That is why reconnecting is bounded to idle periods and
+  failures rather than done per job, which would be simpler and would leak one
+  socket per ticket.
+
+There is also a 400ms settle after connecting. These printers bring the serial
+profile up a moment after the socket reports connected, and bytes sent into that
+gap are accepted by the socket and dropped by the firmware.
+
 ## Riders
 
 Riders belong to the stall, not to the platform. A merchant hires and manages

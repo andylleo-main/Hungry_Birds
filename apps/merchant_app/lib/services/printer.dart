@@ -23,6 +23,15 @@ class PrinterException implements Exception {
   String toString() => message;
 }
 
+/// One step of the printer self-check, and how it went.
+class PrinterCheck {
+  const PrinterCheck(this.step, this.ok, {this.detail});
+
+  final String step;
+  final bool ok;
+  final String? detail;
+}
+
 /// Talks to the kitchen ticket printer over Bluetooth.
 ///
 /// Remembers one printer, because a stall has one. The MAC and the paper width
@@ -168,6 +177,12 @@ class PrinterService extends ChangeNotifier {
       );
     }
     _connectedTo = mac;
+
+    // A beat before writing. These printers bring up the serial profile a
+    // moment after the socket reports connected, and bytes sent into that gap
+    // are accepted by the socket and dropped by the firmware - which looks
+    // exactly like a successful print that produced no paper.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
   }
 
   /// Sends bytes, rebuilding the connection when it cannot be trusted.
@@ -204,6 +219,110 @@ class PrinterService extends ChangeNotifier {
     throw const PrinterException(
       'The printer would not take the job. Check the paper, then try again.',
     );
+  }
+
+  /// Walk the whole path one step at a time and report where it stops.
+  ///
+  /// Here because three attempts at fixing "it says it printed and nothing came
+  /// out" were made without ever knowing which step failed. Permission,
+  /// Bluetooth, pairing, connecting and writing all fail the same way from the
+  /// outside - one message, or none - and guessing between them from a
+  /// description is how a day gets spent on the wrong one.
+  ///
+  /// Never throws. Every step is reported, including the ones that did not run,
+  /// because "we never got that far" is itself the answer.
+  Future<List<PrinterCheck>> diagnose() async {
+    final checks = <PrinterCheck>[];
+
+    Future<bool> step(String name, Future<String?> Function() run) async {
+      try {
+        final problem = await run();
+        checks.add(PrinterCheck(name, problem == null, detail: problem));
+        return problem == null;
+      } catch (e) {
+        checks.add(PrinterCheck(name, false, detail: '$e'));
+        return false;
+      }
+    }
+
+    final permitted = await step('Bluetooth permission', () async {
+      return await _bt.permissionGranted()
+          ? null
+          : 'Android has not granted it. Allow "Nearby devices" for this app in '
+              'Settings.';
+    });
+    if (!permitted) {
+      checks.add(const PrinterCheck('Everything after this', false,
+          detail: 'Not attempted - permission is the first gate.'));
+      return checks;
+    }
+
+    final on = await step('Bluetooth switched on', () async {
+      return await _bt.bluetoothOn() ? null : 'Turn Bluetooth on and run this again.';
+    });
+    if (!on) return checks;
+
+    final mac = _mac;
+    final chosen = await step('A printer is chosen', () async {
+      return mac == null ? 'Pick one from the list below first.' : null;
+    });
+    if (!chosen || mac == null) return checks;
+
+    final stillPaired = await step('Still paired with the phone', () async {
+      final devices = await _bt.paired();
+      final match = devices.where((d) => d.mac == mac);
+      if (match.isEmpty) {
+        return 'Android no longer lists $mac as paired. Re-pair it in Bluetooth '
+            'settings, then pick it again here.';
+      }
+      return null;
+    });
+    if (!stillPaired) return checks;
+
+    final reached = await step('Connects', () async {
+      await _bt.disconnect();
+      _forgetConnection();
+      if (await _bt.connect(mac)) {
+        _connectedTo = mac;
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        return null;
+      }
+      return 'The socket would not open. Check it is switched on, in range, and '
+          'not connected to another phone.';
+    });
+    if (!reached) return checks;
+
+    final took = await step('Accepts a line of text', () async {
+      if (await _bt.write(Receipt(columns: _columns).plainTest())) {
+        _lastAccepted = DateTime.now();
+        return null;
+      }
+      return 'The printer refused the bytes.';
+    });
+
+    checks.add(PrinterCheck(
+      'Paper came out',
+      took,
+      detail: took
+          ? 'Only you can answer this one. If every step above passed and no '
+              'paper moved, the connection is fine and the problem is the '
+              'formatting commands - tell me and that is a different fix.'
+          : 'Nothing was sent, so nothing can have printed.',
+    ));
+
+    return checks;
+  }
+
+  /// Print the plainest possible thing, as a control for the formatted ticket.
+  Future<void> printPlainTest() async {
+    try {
+      await _send(Receipt(columns: _columns).plainTest(), reconnect: true);
+    } on PrinterException {
+      rethrow;
+    } catch (e) {
+      debugPrint('printer: $e');
+      throw const PrinterException('Could not send the plain test. Try again.');
+    }
   }
 
   Future<void> printOrder(Order order, {String stallName = 'Hungry Birds'}) async {

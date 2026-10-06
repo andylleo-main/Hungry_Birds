@@ -140,35 +140,6 @@ class _OrderCardState extends State<_OrderCard> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Cancelling refunds a paid order, so it asks first.
-  ///
-  /// Rejecting at `placed` needs no confirmation - the stall has not committed
-  /// to anything yet. By `accepted` the customer has been told their food is
-  /// being made, so a mis-tap here is worth one extra step.
-  Future<void> _confirmCancel() async {
-    final go = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancel this order?'),
-        content: const Text(
-          'The customer gets their money back and is told you could not make '
-          "it. This cannot be undone.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep it'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Cancel order'),
-          ),
-        ],
-      ),
-    );
-    if (go == true && mounted) await _move(OrderStatus.cancelled);
-  }
-
   /// Accepts, after asking how long it will take.
   ///
   /// The field is pre-filled with what the stall's own menu times worked out, so
@@ -669,28 +640,23 @@ class _OrderCardState extends State<_OrderCard> {
             ),
           ],
         ),
-      // Cancel sits beside "start preparing" because the customer can no longer
-      // cancel for themselves, and accepted -> cancelled is the last point where
-      // anybody can stop an order. Without it, a student who ordered at the
-      // wrong counter has no way out at all and the stall has no way to give it
-      // to them. Cancelling refunds, same as rejecting.
-      OrderStatus.accepted => Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: _confirmCancel,
-                child: const Text('Cancel'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              flex: 2,
-              child: ElevatedButton(
-                onPressed: () => _move(OrderStatus.preparing),
-                child: const Text('Start preparing'),
-              ),
-            ),
-          ],
+      // No cancel here, on the user's instruction. Accepting is the commitment:
+      // the stall says yes at `placed` by accepting or no by rejecting, and
+      // after that the order is theirs to make.
+      //
+      // Worth knowing what that closes off, because it is deliberate rather
+      // than overlooked. The customer cannot cancel either, and there is no
+      // admin route that cancels an order, so an accepted order now has no exit
+      // but completion - a student who ordered at the wrong counter has to be
+      // sorted out in person. The transition itself is still in
+      // ALLOWED_TRANSITIONS, so the API can still do it; it is this button that
+      // is gone.
+      OrderStatus.accepted => SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: () => _move(OrderStatus.preparing),
+            child: const Text('Start preparing'),
+          ),
         ),
       OrderStatus.preparing => SizedBox(
           width: double.infinity,
