@@ -151,6 +151,59 @@ class _AnalyticsTabState extends State<AnalyticsTab> {
           ],
         ),
 
+        const SizedBox(height: 22),
+        _SectionTitle(
+          'Where it came from',
+          subtitle: 'Of the ₹${money.format(d.totals.revenue.round())} taken. '
+              'Each pair adds up to that.',
+        ),
+        _SplitRow(
+          left: _SplitStat(
+            label: 'Dine in',
+            icon: Icons.restaurant,
+            split: d.totals.dineIn,
+            total: d.totals.revenue,
+            money: money,
+          ),
+          right: _SplitStat(
+            label: 'Delivery',
+            icon: Icons.delivery_dining,
+            split: d.totals.delivery,
+            total: d.totals.revenue,
+            money: money,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _SplitRow(
+          left: _SplitStat(
+            label: 'Prepaid',
+            icon: Icons.account_balance,
+            split: d.totals.prepaid,
+            total: d.totals.revenue,
+            money: money,
+          ),
+          right: _SplitStat(
+            label: 'Cash in hand',
+            icon: Icons.payments_outlined,
+            split: d.totals.cash,
+            total: d.totals.revenue,
+            // The number to count the till against, so it gets the emphasis.
+            tone: AppTheme.success,
+            money: money,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 2),
+          child: Text(
+            // The one rule nobody would guess, and the one that decides whether
+            // the till adds up: a doorstep UPI payment is not cash.
+            'A pay-on-delivery order paid by UPI counts as prepaid — that '
+            'money is with Razorpay, not in your cash box.',
+            style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+          ),
+        ),
+
         if (d.pendingPriceChanges > 0) ...[
           const SizedBox(height: 12),
           Container(
@@ -266,6 +319,93 @@ class _Stat extends StatelessWidget {
                 footnote!,
                 style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Two slices side by side, sized equally so the pair reads as one row.
+class _SplitRow extends StatelessWidget {
+  const _SplitRow({required this.left, required this.right});
+
+  final Widget left;
+  final Widget right;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: left),
+        const SizedBox(width: 10),
+        Expanded(child: right),
+      ],
+    );
+  }
+}
+
+/// One slice: what it came to, how many orders, and what share of the total.
+///
+/// The share is the part a stall actually uses. An absolute figure says little
+/// without knowing the total; "62% of takings" is the thing worth noticing when
+/// it moves.
+class _SplitStat extends StatelessWidget {
+  const _SplitStat({
+    required this.label,
+    required this.icon,
+    required this.split,
+    required this.total,
+    required this.money,
+    this.tone,
+  });
+
+  final String label;
+  final IconData icon;
+  final MoneySplit split;
+  final double total;
+  final NumberFormat money;
+  final Color? tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final share = split.shareOf(total);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 14, color: AppTheme.textSecondary),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '₹${money.format(split.revenue.round())}',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: tone ?? AppTheme.textPrimary,
+              ),
+            ),
+            Text(
+              // An em dash rather than "0%" when nothing has sold: a quiet day
+              // should read as quiet, not as a real zero share.
+              share == null
+                  ? '—'
+                  : '${(share * 100).round()}% · '
+                      '${split.orders} ${split.orders == 1 ? 'order' : 'orders'}',
+              style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+            ),
           ],
         ),
       ),

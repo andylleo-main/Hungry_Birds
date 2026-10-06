@@ -25,7 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.menu import MenuItem
-from app.db.models.order import Order, OrderStatus
+from app.db.models.order import FulfilmentType, Order, OrderStatus
 from app.db.models.payment import PaymentStatus
 from app.modules.admin.analytics import ACTIVE_STATUSES, EARNING_STATUSES
 
@@ -42,6 +42,19 @@ def _local(column):
     return func.timezone(IST, column)
 
 
+class MoneySplit(BaseModel):
+    """One slice of the takings.
+
+    `orders` counts the *paid* orders in this slice, not every order placed, so
+    the four slices add up to `revenue` exactly. A stall reads this against a
+    cash box and a bank statement; a split whose parts did not sum to the whole
+    would be worse than no split at all.
+    """
+
+    orders: int
+    revenue: float
+
+
 class VendorTotals(BaseModel):
     orders: int
     revenue: float
@@ -52,6 +65,24 @@ class VendorTotals(BaseModel):
     # it has no way to see that.
     refused_orders: int
     refused_value: float
+
+    # Where the money came from, two ways. Each pair sums to `revenue`.
+    #
+    # The stall asked for this because "taken" answers nothing they can act on:
+    # dine-in and delivery are different amounts of work for the same rupee, and
+    # cash is the half they have to physically count.
+    dine_in: MoneySplit
+    delivery: MoneySplit
+
+    # Cash is the narrow one: a pay-on-delivery order somebody handed notes for.
+    #
+    # Everything else paid is "prepaid", and that deliberately includes a
+    # pay-on-delivery order settled by scanning the QR. It was placed as cash
+    # but it did not arrive as cash - Razorpay has it, it lands in the same
+    # settlement as an order paid up front, and it is not in the till. Counting
+    # it as cash would have a stall hunting for money that was never there.
+    cash: MoneySplit
+    prepaid: MoneySplit
 
 
 class DayPoint(BaseModel):
@@ -119,6 +150,50 @@ async def build_vendor_analytics(
     refused_value = await db.scalar(
         select(func.coalesce(func.sum(Order.total_amount), 0)).where(mine, window, refused)
     )
+
+    # --- where the money came from --------------------------------------------
+    #
+    # One query with FILTER rather than eight scalars: the four slices are two
+    # partitions of the same set of rows, and computing them together is both
+    # cheaper and the only way they cannot drift out of agreement with each
+    # other or with `revenue`.
+    #
+    # coalesce on collected_via rather than a bare `== "cash"` because that
+    # column is null on everything paid online, and in SQL `null = 'cash'` is
+    # null, not false - which would drop those rows out of *both* slices and
+    # quietly lose their revenue from the split.
+    in_cash = (Order.payment_method == "cod") & (
+        func.coalesce(Order.collected_via, "") == "cash"
+    )
+    is_dine_in = Order.fulfilment_type == FulfilmentType.DINE_IN
+
+    def _slice(condition):
+        return (
+            func.count().filter(condition).label("orders"),
+            func.coalesce(
+                func.sum(func.coalesce(Order.total_amount, 0)).filter(condition), 0
+            ).label("revenue"),
+        )
+
+    dine_orders, dine_revenue = _slice(is_dine_in)
+    delivery_orders, delivery_revenue = _slice(~is_dine_in)
+    cash_orders, cash_revenue = _slice(in_cash)
+    prepaid_orders, prepaid_revenue = _slice(~in_cash)
+
+    split = (
+        await db.execute(
+            select(
+                dine_orders.label("dine_orders"),
+                dine_revenue.label("dine_revenue"),
+                delivery_orders.label("delivery_orders"),
+                delivery_revenue.label("delivery_revenue"),
+                cash_orders.label("cash_orders"),
+                cash_revenue.label("cash_revenue"),
+                prepaid_orders.label("prepaid_orders"),
+                prepaid_revenue.label("prepaid_revenue"),
+            ).where(mine, window, earning)
+        )
+    ).one()
 
     # --- orders per local day -------------------------------------------------
     day_col = func.date_trunc("day", _local(Order.created_at))
@@ -211,6 +286,22 @@ async def build_vendor_analytics(
             active_orders=active_orders or 0,
             refused_orders=refused_orders or 0,
             refused_value=float(refused_value or Decimal(0)),
+            dine_in=MoneySplit(
+                orders=split.dine_orders or 0,
+                revenue=float(split.dine_revenue or 0),
+            ),
+            delivery=MoneySplit(
+                orders=split.delivery_orders or 0,
+                revenue=float(split.delivery_revenue or 0),
+            ),
+            cash=MoneySplit(
+                orders=split.cash_orders or 0,
+                revenue=float(split.cash_revenue or 0),
+            ),
+            prepaid=MoneySplit(
+                orders=split.prepaid_orders or 0,
+                revenue=float(split.prepaid_revenue or 0),
+            ),
         ),
         orders_by_day=orders_by_day,
         hours=hours,

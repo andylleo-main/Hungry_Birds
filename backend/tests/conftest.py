@@ -424,10 +424,22 @@ def stub_razorpay(monkeypatch):
         await _like_a_network_call()
         return None
 
+    async def fake_fetch_qr_image(image_url):
+        """The QR picture, without leaving the machine.
+
+        Stubbed because the real one would otherwise make a genuine outbound
+        request to the fake image_url above on every test that mints a QR -
+        slow, dependent on the network, and it logged a 403 into the output of
+        tests that had nothing to do with it.
+        """
+        await _like_a_network_call()
+        return b"\x89PNG\r\n\x1a\n-stub"
+
     monkeypatch.setattr(razorpay, "create_order", fake_create_order)
     monkeypatch.setattr(razorpay, "list_refunds", fake_list_refunds)
     monkeypatch.setattr(razorpay, "refund", fake_refund)
     monkeypatch.setattr(razorpay, "order_payments", fake_order_payments)
     monkeypatch.setattr(razorpay, "create_upi_qr", fake_create_upi_qr)
     monkeypatch.setattr(razorpay, "close_upi_qr", fake_close_upi_qr)
+    monkeypatch.setattr(razorpay, "fetch_qr_image", fake_fetch_qr_image)
     return calls

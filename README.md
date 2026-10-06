@@ -1010,6 +1010,14 @@ eats the loss. That exposure is back. Three things bound it:
   `due` forever in the ledger, with no refund path and no record of who owed
   what. A customer who refuses the order at the door is a cancellation, which
   waives the amount properly.
+- **A doorstep UPI payment counts as prepaid, not as cash.** The stall's
+  finance screen splits its takings two ways - dine-in vs delivery, and cash vs
+  prepaid - and `cash` is narrowly `payment_method = 'cod' AND collected_via =
+  'cash'`. Everything else paid is prepaid, including a pay-on-delivery order
+  settled by scanning the QR: that money is with Razorpay, settles with every
+  other online order, and is not in the till. Counting it as cash would have a
+  stall hunting for notes that were never there. Each pair sums to the revenue
+  total, so the screen reconciles against a cash box.
 - **The QR picture comes down with the response, not from Razorpay's host.**
   `UpiQrOut` carries `image_png` (base64, fetched server-side) as well as
   `image_url`, and `UpiQrImage` in `hb_shared` prefers the bytes. Loading

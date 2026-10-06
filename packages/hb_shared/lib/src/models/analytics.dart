@@ -3,6 +3,31 @@
 /// Mirrors VendorAnalyticsOut. Deliberately carries none of the platform-wide
 /// figures the admin dashboard has - a merchant's app has no business holding a
 /// competitor's revenue even if nothing drew it.
+/// One slice of the takings.
+///
+/// [orders] counts the paid orders in this slice, not every order placed, so
+/// the slices add up to [VendorTotals.revenue] exactly. A stall reads these
+/// against a cash box; parts that did not sum to the whole would be worse than
+/// no breakdown at all.
+class MoneySplit {
+  final int orders;
+  final double revenue;
+
+  const MoneySplit({required this.orders, required this.revenue});
+
+  /// What share of the takings this slice is, or null when nothing was taken.
+  double? shareOf(double total) => total <= 0 ? null : revenue / total;
+
+  factory MoneySplit.fromJson(Map<String, dynamic> json) => MoneySplit(
+        orders: json['orders'] as int,
+        revenue: double.parse(json['revenue'].toString()),
+      );
+
+  /// For a server too old to send a breakdown. Zeroes read as "nothing here"
+  /// rather than crashing a screen the merchant opened.
+  static const empty = MoneySplit(orders: 0, revenue: 0);
+}
+
 class VendorTotals {
   final int orders;
   final double revenue;
@@ -10,12 +35,30 @@ class VendorTotals {
   final int refusedOrders;
   final double refusedValue;
 
+  /// Dine-in and delivery. Same rupee, very different amount of work.
+  final MoneySplit dineIn;
+  final MoneySplit delivery;
+
+  /// Cash is the narrow one: a pay-on-delivery order somebody handed notes for.
+  ///
+  /// [prepaid] is everything else, and that includes a pay-on-delivery order
+  /// settled by scanning the rider's QR. It was placed as cash but it did not
+  /// arrive as cash - it lands in the same Razorpay settlement as an order paid
+  /// up front and it is not in the till, so counting it as cash would have a
+  /// stall hunting for money that was never there.
+  final MoneySplit cash;
+  final MoneySplit prepaid;
+
   const VendorTotals({
     required this.orders,
     required this.revenue,
     required this.activeOrders,
     required this.refusedOrders,
     required this.refusedValue,
+    this.dineIn = MoneySplit.empty,
+    this.delivery = MoneySplit.empty,
+    this.cash = MoneySplit.empty,
+    this.prepaid = MoneySplit.empty,
   });
 
   /// What share of orders this stall turned away. Null when there is nothing to
@@ -28,7 +71,18 @@ class VendorTotals {
         activeOrders: json['active_orders'] as int,
         refusedOrders: json['refused_orders'] as int,
         refusedValue: double.parse(json['refused_value'].toString()),
+        dineIn: _split(json['dine_in']),
+        delivery: _split(json['delivery']),
+        cash: _split(json['cash']),
+        prepaid: _split(json['prepaid']),
       );
+
+  /// Decoded nullably, following the convention the order model already uses:
+  /// an app newer than the server it is pointed at should show a screen with a
+  /// gap in it, not a crash.
+  static MoneySplit _split(Object? raw) => raw == null
+      ? MoneySplit.empty
+      : MoneySplit.fromJson(raw as Map<String, dynamic>);
 }
 
 class DayPoint {

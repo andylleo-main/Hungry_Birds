@@ -273,3 +273,177 @@ class TestTheCalendarIsLocal:
         # revert to UTC.
         assert "date_trunc(\"day\", _local(" in source
         assert 'func.extract("hour", _local(' in source
+
+
+class TestWhereTheMoneyCameFrom:
+    """Dine-in vs delivery, and cash vs prepaid.
+
+    The rule worth pinning is the counter-intuitive one: a pay-on-delivery
+    order settled by scanning the rider's QR counts as **prepaid**, not cash.
+    It was placed as cash but it did not arrive as cash - Razorpay has it, it
+    settles with every other online order, and it is not in the till. A stall
+    counting its cash box against this screen would otherwise go looking for
+    money that was never there.
+    """
+
+    async def _totals(self, client, vendor_headers):
+        r = await client.get("/vendors/me/analytics", headers=vendor_headers)
+        assert r.status_code == 200, r.text
+        return r.json()["totals"]
+
+    async def _cod_delivery(self, client, headers, vendor_id, item):
+        r = await client.post(
+            "/orders",
+            headers=headers,
+            json={
+                "vendor_id": str(vendor_id),
+                "items": _lines(item),
+                "fulfilment_type": "delivery",
+                "delivery_location": "hostel_3",
+                "payment_method": "cod",
+            },
+        )
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    async def _to_the_door(self, client, order_id, vendor_headers):
+        for status_value in ("accepted", "preparing", "ready", "out_for_delivery"):
+            r = await client.patch(
+                f"/vendors/me/orders/{order_id}/status",
+                headers=vendor_headers,
+                json={"status": status_value},
+            )
+            assert r.status_code == 200, r.text
+
+    async def test_a_dine_in_prepaid_order_lands_in_both_right_slices(
+        self, client, customer, vendor, menu_item, pay
+    ):
+        _, headers = customer
+        v, vendor_headers = vendor
+        await _paid_order(client, headers, v.id, menu_item, pay)
+
+        totals = await self._totals(client, vendor_headers)
+        assert totals["dine_in"]["orders"] == 1
+        assert totals["delivery"]["orders"] == 0
+        assert totals["prepaid"]["orders"] == 1
+        assert totals["cash"]["orders"] == 0
+        assert totals["dine_in"]["revenue"] == totals["revenue"]
+        assert totals["prepaid"]["revenue"] == totals["revenue"]
+
+    async def test_cash_taken_at_the_door_is_cash(
+        self, client, customer, vendor, menu_item
+    ):
+        _, headers = customer
+        v, vendor_headers = vendor
+        order = await self._cod_delivery(client, headers, v.id, menu_item)
+        await self._to_the_door(client, order["id"], vendor_headers)
+
+        collected = await client.post(
+            f"/vendors/me/orders/{order['id']}/collect",
+            headers=vendor_headers,
+            json={"method": "cash"},
+        )
+        assert collected.status_code == 200, collected.text
+
+        totals = await self._totals(client, vendor_headers)
+        assert totals["cash"]["orders"] == 1
+        assert totals["prepaid"]["orders"] == 0
+        assert totals["delivery"]["orders"] == 1
+        assert totals["dine_in"]["orders"] == 0
+        assert totals["cash"]["revenue"] == totals["revenue"]
+
+    async def test_a_cod_order_paid_by_qr_counts_as_prepaid(
+        self, stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
+    ):
+        """The whole point of this change.
+
+        Placed as pay-on-delivery, settled by UPI at the door. The money is
+        with Razorpay and the cash box is empty, so it belongs with the
+        prepaid takings even though the order was never prepaid.
+        """
+        from decimal import Decimal as D
+
+        from app.modules.payments import razorpay
+
+        _, headers = customer
+        v, vendor_headers = vendor
+        order = await self._cod_delivery(client, headers, v.id, menu_item)
+        await self._to_the_door(client, order["id"], vendor_headers)
+
+        await client.post(
+            f"/vendors/me/orders/{order['id']}/upi-qr", headers=vendor_headers
+        )
+        qr_id = stub_razorpay["qrs"][-1]["id"]
+
+        credited = await signed_webhook(
+            {
+                "event": "qr_code.credited",
+                "payload": {
+                    "qr_code": {"entity": {"id": qr_id}},
+                    "payment": {
+                        "entity": {
+                            "id": f"pay_{uuid.uuid4().hex[:12]}",
+                            "status": "captured",
+                            "amount": razorpay.to_paise(D(order["total_amount"])),
+                            "currency": "INR",
+                        }
+                    },
+                },
+            }
+        )
+        assert credited.status_code == 200, credited.text
+        assert credited.json()["status"] == "applied"
+
+        totals = await self._totals(client, vendor_headers)
+        assert totals["prepaid"]["orders"] == 1, "UPI at the door is not cash"
+        assert totals["cash"]["orders"] == 0
+        assert totals["cash"]["revenue"] == 0
+        assert totals["prepaid"]["revenue"] == totals["revenue"]
+        # And it is still a delivery, because the two splits are independent.
+        assert totals["delivery"]["orders"] == 1
+
+    async def test_each_pair_adds_up_to_the_takings(
+        self, stub_razorpay, client, db, customer, vendor, menu_item, pay
+    ):
+        """A split whose parts do not sum to the whole is worse than none.
+
+        Three orders of three different shapes, so both partitions have to
+        reconcile against the same total rather than against one easy case.
+        """
+        _, headers = customer
+        v, vendor_headers = vendor
+
+        await _paid_order(client, headers, v.id, menu_item, pay)
+
+        cash_order = await self._cod_delivery(client, headers, v.id, menu_item)
+        await self._to_the_door(client, cash_order["id"], vendor_headers)
+        await client.post(
+            f"/vendors/me/orders/{cash_order['id']}/collect",
+            headers=vendor_headers,
+            json={"method": "cash"},
+        )
+
+        # And one left uncollected, which is in neither slice because it is not
+        # revenue yet - nobody has been paid.
+        owed = await self._cod_delivery(client, headers, v.id, menu_item)
+        await self._to_the_door(client, owed["id"], vendor_headers)
+
+        totals = await self._totals(client, vendor_headers)
+        assert totals["dine_in"]["revenue"] + totals["delivery"]["revenue"] == pytest.approx(
+            totals["revenue"]
+        )
+        assert totals["cash"]["revenue"] + totals["prepaid"]["revenue"] == pytest.approx(
+            totals["revenue"]
+        )
+        # Three orders placed, two of them paid for.
+        assert totals["orders"] == 3
+        assert totals["dine_in"]["orders"] + totals["delivery"]["orders"] == 2
+
+    async def test_the_slices_are_empty_rather_than_absent_on_a_quiet_day(
+        self, client, vendor
+    ):
+        _, vendor_headers = vendor
+        totals = await self._totals(client, vendor_headers)
+
+        for slice_name in ("dine_in", "delivery", "cash", "prepaid"):
+            assert totals[slice_name] == {"orders": 0, "revenue": 0.0}
