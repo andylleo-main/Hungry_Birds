@@ -1055,3 +1055,125 @@ async def test_the_qr_route_is_open_to_an_unassigned_order_too(
     r = await client.post(f"/vendors/me/orders/{order['id']}/upi-qr", headers=vendor_headers)
     assert r.status_code == 200, r.text
     assert r.json()["image_url"]
+
+
+# --- the QR picture itself --------------------------------------------------
+
+
+async def test_the_qr_response_carries_the_image_not_just_a_link(
+    stub_razorpay, monkeypatch, client, db, customer, vendor, menu_item
+):
+    """So a phone showing a QR needs only the API it is already talking to.
+
+    Both apps used to load Razorpay's hosted image_url directly, which makes
+    the one screen where a customer is waiting to pay depend on reaching
+    rzp.io over whatever wifi the stall is on. It failed in the merchant app
+    with "Couldn't load the QR" while the order behind it was fine.
+    """
+    import base64
+
+    from app.modules.payments import razorpay
+
+    png = b"\x89PNG\r\n\x1a\n-pretend-this-is-a-qr"
+
+    async def fake_fetch(image_url):
+        assert image_url, "should be asked for the url razorpay gave us"
+        return png
+
+    monkeypatch.setattr(razorpay, "fetch_qr_image", fake_fetch)
+
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+    await _self_delivered(client, order["id"], vendor_headers)
+
+    r = await client.post(f"/vendors/me/orders/{order['id']}/upi-qr", headers=vendor_headers)
+    assert r.status_code == 200, r.text
+    assert base64.b64decode(r.json()["image_png"]) == png
+    # The link stays, because an older app build only knows about that one.
+    assert r.json()["image_url"]
+
+
+async def test_a_qr_whose_image_cannot_be_fetched_still_returns_the_link(
+    stub_razorpay, monkeypatch, client, db, customer, vendor, menu_item
+):
+    """Best-effort means the worst case is the old behaviour, not no QR."""
+    from app.modules.payments import razorpay
+
+    async def no_image(image_url):
+        return None
+
+    monkeypatch.setattr(razorpay, "fetch_qr_image", no_image)
+
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+    await _self_delivered(client, order["id"], vendor_headers)
+
+    r = await client.post(f"/vendors/me/orders/{order['id']}/upi-qr", headers=vendor_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["image_png"] is None
+    assert r.json()["image_url"]
+
+
+async def test_the_image_fetch_refuses_something_that_is_not_an_image(monkeypatch):
+    """A redirect to a login page or an error document is not a QR.
+
+    Without this the bytes of an HTML page would be handed to a phone as a png,
+    which renders as a broken image - the same symptom, harder to explain.
+    """
+    import httpx
+
+    from app.modules.payments import razorpay
+
+    class FakeResponse:
+        headers = {"content-type": "text/html; charset=utf-8"}
+        content = b"<html>nope</html>"
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    assert await razorpay.fetch_qr_image("https://rzp.io/i/whatever") is None
+
+
+async def test_the_image_fetch_swallows_a_network_failure(monkeypatch):
+    """rzp.io being unreachable from the API must not fail the whole request."""
+    import httpx
+
+    from app.modules.payments import razorpay
+
+    class FailingClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):
+            raise httpx.ConnectError("no route to host")
+
+    monkeypatch.setattr(httpx, "AsyncClient", FailingClient)
+    assert await razorpay.fetch_qr_image("https://rzp.io/i/whatever") is None
+
+
+async def test_an_empty_image_url_is_not_fetched():
+    from app.modules.payments import razorpay
+
+    assert await razorpay.fetch_qr_image("") is None

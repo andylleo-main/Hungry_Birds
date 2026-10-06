@@ -782,30 +782,28 @@ Then register the webhook in the Razorpay dashboard, pointing at
 `payments/router.py`; anything else is acknowledged and dropped, so subscribing
 to more than this list is harmless.
 
-> **`qr_code.credited` is the one that is easy to miss, and missing it has no
-> symptom at the gateway.** The dashboard groups the QR events together, so
-> ticking `qr_code.created` and `qr_code.closed` without `credited` is an easy
-> slip - and it leaves a system that mints QR codes perfectly, shows them, and
-> never once confirms a payment. The customer pays, the money arrives in the
-> Razorpay account, and the order sits on "waiting for the payment" forever,
-> which looks like a bug in the app.
+> **`qr_code.credited` is the one that is easy to miss**, because the dashboard
+> groups the QR events together and a subscription without it mints QR codes
+> perfectly and never confirms one: the customer pays, the money arrives in the
+> Razorpay account, and the order sits on "waiting for the payment" forever.
 >
-> This happened on this deployment. What told us was the API log: `qr_code.created`
-> and `qr_code.closed` arriving on every mint with no `qr_code.credited` ever.
-> That is the check - the presence of its siblings is what proves delivery and
-> signing are fine and the subscription is the problem.
+> **Do not try to diagnose that from the logs by searching for the event name.**
+> The handler logs nothing on success, so `qr_code.credited` appears in the log
+> *only when it fails*. Its absence means the happy path, or means it never
+> arrived, and the two look identical. (`qr_code.created` and `qr_code.closed`
+> show up for a different reason - they are unhandled types, see
+> `HANDLED_EVENTS` - so their presence says nothing about `credited` either.)
+> Read `payment_events` instead: every delivery is a row there with its type and
+> outcome, which is what that table is for.
 
-Three dashboard settings are not code and will fail silently if wrong:
+Two dashboard settings are not code and will fail silently if wrong:
 
 - **Auto-capture must be on** (it is the default). With it off, payments stop at
   `authorized`, `payment.captured` never fires, and nothing is ever marked paid.
 - **QR Codes is activated on request.** Pay-on-delivery UPI needs it; without it
   the UPI button in either app answers 503 telling them to take cash, and everything
   else still works.
-- **`qr_code.credited` must be ticked**, per the note above. Activation and
-  subscription are separate: an activated account mints QRs over a webhook that
-  never reports them paid, and the only difference the apps can see is a
-  collection that never lands.
+
 
 > **Until these are set, no orders can be placed at all.** `POST /orders` answers
 > 503 with a message saying so. That is deliberate: payment is the only route out
@@ -1012,6 +1010,14 @@ eats the loss. That exposure is back. Three things bound it:
   `due` forever in the ledger, with no refund path and no record of who owed
   what. A customer who refuses the order at the door is a cancellation, which
   waives the amount properly.
+- **The QR picture comes down with the response, not from Razorpay's host.**
+  `UpiQrOut` carries `image_png` (base64, fetched server-side) as well as
+  `image_url`, and `UpiQrImage` in `hb_shared` prefers the bytes. Loading
+  Razorpay's hosted link meant a phone with a working API connection could still
+  answer "Couldn't load the QR" because it could not reach `rzp.io` over the
+  stall's wifi - on the one screen where a customer is waiting to pay. The link
+  is kept as the fallback for when that server-side fetch fails, so the worst
+  case is the old behaviour rather than no QR.
 - **A UPI collection is confirmed by Razorpay, not by whoever is holding the
   phone.** The QR is minted at the gateway (`single_use`, `fixed_amount`) and
   `qr_code.credited` marks the order paid. A stall's own printed code would need

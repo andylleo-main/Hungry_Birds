@@ -658,25 +658,10 @@ class UpiQrSheetState extends State<UpiQrSheet> {
           style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
         ),
         const SizedBox(height: 16),
-        // Razorpay renders and hosts the image, so there is no QR package in
-        // this app and nothing here has to encode a payment string.
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 280),
-          child: Image.network(
-            widget.qr.imageUrl,
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => const Padding(
-              padding: EdgeInsets.all(24),
-              child: Text("Couldn't load the QR. Collect cash instead."),
-            ),
-            loadingBuilder: (_, child, progress) => progress == null
-                ? child
-                : const Padding(
-                    padding: EdgeInsets.all(40),
-                    child: CircularProgressIndicator(),
-                  ),
-          ),
-        ),
+        // Razorpay renders the image; our API fetches it and sends the bytes,
+        // so showing a code needs nothing of this phone but the API it is
+        // already talking to. UpiQrImage picks bytes over link.
+        UpiQrImage(qr: widget.qr),
         const SizedBox(height: 16),
         const Row(
           mainAxisAlignment: MainAxisAlignment.center,

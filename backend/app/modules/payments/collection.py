@@ -13,6 +13,7 @@ no way to take the money and no guard stopping them from closing the order
 anyway. One copy is the fix for that, not a tidy-up.
 """
 
+import base64
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -42,9 +43,17 @@ class CollectCash(BaseModel):
 
 
 class UpiQrOut(BaseModel):
-    """A single-use QR for exactly this order's total."""
+    """A single-use QR for exactly this order's total.
+
+    Carries the image two ways on purpose. `image_png` is the picture itself,
+    base64, fetched server-side so a phone that can reach this API can always
+    show a code. `image_url` is Razorpay's own link, kept as the fallback for
+    when that fetch did not work and for older app builds that only know about
+    the URL. An app should prefer the bytes and fall back to the link.
+    """
 
     image_url: str
+    image_png: str | None = None
     amount: Decimal
     expires_at: datetime
 
@@ -168,8 +177,14 @@ async def mint_upi_qr(order: Order, db: AsyncSession, settings: Settings) -> Upi
     if previous and previous != order.cod_qr_id:
         await close_upi_qr_later(previous, settings)
 
+    # Fetched here rather than by the phone. See razorpay.fetch_qr_image: a
+    # stall's wifi reaching our API says nothing about it reaching rzp.io, and
+    # the failure lands on the one screen where a customer is waiting to pay.
+    png = await razorpay.fetch_qr_image(image_url)
+
     return UpiQrOut(
         image_url=image_url,
+        image_png=base64.b64encode(png).decode() if png else None,
         amount=order.total_amount,
         expires_at=datetime.fromtimestamp(int(qr["close_by"]), tz=timezone.utc)
         if qr.get("close_by")

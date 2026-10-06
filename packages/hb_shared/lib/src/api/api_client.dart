@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -25,12 +26,41 @@ class AuthResult {
   const AuthResult(this.accessToken, this.refreshToken, this.user);
 }
 
-/// A QR a rider holds up for one order, for one amount, for a few minutes.
+/// A QR held up for one order, for one amount, for a few minutes.
 class UpiQr {
+  /// Razorpay's own link to the image. The fallback, not the first choice.
   final String imageUrl;
+
+  /// The image itself, fetched by our API and sent down with the rest.
+  ///
+  /// Preferred over [imageUrl] because loading that makes a phone showing a QR
+  /// depend on reaching rzp.io, a different host from the API, on whatever wifi
+  /// the stall is on. When that failed the sheet said "Couldn't load the QR"
+  /// with a perfectly good order behind it and a customer waiting to pay.
+  ///
+  /// Null when the server could not fetch it, or when talking to a server old
+  /// enough not to send it - hence [image], which picks for you.
+  final Uint8List? pngBytes;
+
   final double amount;
   final DateTime expiresAt;
-  const UpiQr(this.imageUrl, this.amount, this.expiresAt);
+
+  const UpiQr(this.imageUrl, this.amount, this.expiresAt, {this.pngBytes});
+
+  /// Which of the two to show is decided by UpiQrImage, so the two apps cannot
+  /// disagree about the preference - the kind of thing that gets fixed in one
+  /// and stays broken in the other.
+  factory UpiQr.fromJson(Map<String, dynamic> json) {
+    final encoded = json['image_png'] as String?;
+    return UpiQr(
+      json['image_url'] as String,
+      double.parse(json['amount'].toString()),
+      DateTime.parse(json['expires_at'] as String),
+      pngBytes: (encoded == null || encoded.isEmpty)
+          ? null
+          : base64Decode(encoded),
+    );
+  }
 }
 
 class UploadSignature {
@@ -693,11 +723,7 @@ class ApiClient {
   Future<UpiQr> riderUpiQr(String orderId) async {
     final data = await _request('POST', '/rider/orders/$orderId/upi-qr')
         as Map<String, dynamic>;
-    return UpiQr(
-      data['image_url'] as String,
-      double.parse(data['amount'].toString()),
-      DateTime.parse(data['expires_at'] as String),
-    );
+    return UpiQr.fromJson(data);
   }
 
   /// Tells the server where to notify this rider about new deliveries.
@@ -758,11 +784,7 @@ class ApiClient {
   Future<UpiQr> stallUpiQr(String orderId) async {
     final data = await _request('POST', '/vendors/me/orders/$orderId/upi-qr')
         as Map<String, dynamic>;
-    return UpiQr(
-      data['image_url'] as String,
-      double.parse(data['amount'].toString()),
-      DateTime.parse(data['expires_at'] as String),
-    );
+    return UpiQr.fromJson(data);
   }
 
   /// Ends this device's session on the server, then forgets it locally.

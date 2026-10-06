@@ -13,3 +13,4 @@ export 'src/theme/app_theme.dart';
 export 'src/widgets/empty_state.dart';
 export 'src/widgets/login_screen.dart';
 export 'src/widgets/splash_screen.dart';
+export 'src/widgets/upi_qr_image.dart';

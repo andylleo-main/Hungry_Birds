@@ -255,6 +255,59 @@ async def create_upi_qr(
     return response.json()
 
 
+# A QR png from Razorpay is a few kilobytes. The cap is not about them sending
+# something huge - it is so a surprise (an HTML error page, a redirect loop) can
+# never be pulled into memory and handed to a phone as if it were an image.
+_QR_IMAGE_MAX_BYTES = 256 * 1024
+_QR_IMAGE_TIMEOUT = httpx.Timeout(6.0)
+
+
+async def fetch_qr_image(image_url: str) -> bytes | None:
+    """Download the QR Razorpay rendered, so the app never has to.
+
+    The apps used to load `image_url` directly with Image.network, which makes
+    every phone showing a QR depend on reaching rzp.io - a different host from
+    the API, on whatever wifi a stall happens to be on. When that fails the
+    sheet says "Couldn't load the QR" while the order is perfectly fine, and the
+    money cannot be collected the one way the customer was about to pay.
+
+    Fetching it here means a phone that can reach our API can show a QR, full
+    stop, and that is already a precondition for having one to show.
+
+    Best-effort by design. A failure here returns None and the caller still
+    hands back `image_url`, so the worst case is exactly the old behaviour
+    rather than no QR at all.
+    """
+    if not image_url:
+        return None
+    try:
+        async with httpx.AsyncClient(
+            timeout=_QR_IMAGE_TIMEOUT, follow_redirects=True
+        ) as client:
+            response = await client.get(image_url)
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if not content_type.startswith("image/"):
+                logger.warning(
+                    "razorpay QR image at %s came back as %r, not an image",
+                    image_url,
+                    content_type,
+                )
+                return None
+            if len(response.content) > _QR_IMAGE_MAX_BYTES:
+                logger.warning(
+                    "razorpay QR image at %s is %d bytes, over the cap",
+                    image_url,
+                    len(response.content),
+                )
+                return None
+            return response.content
+    except (httpx.HTTPError, httpx.StreamError) as exc:
+        # Not an error for the caller: they fall back to the URL.
+        logger.warning("could not fetch the QR image at %s: %s", image_url, exc)
+        return None
+
+
 async def close_upi_qr(qr_id: str, settings: Settings) -> None:
     """Shut a QR that is no longer collectable.
 
