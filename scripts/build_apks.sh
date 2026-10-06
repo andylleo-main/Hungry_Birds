@@ -142,8 +142,14 @@ for app in "${APPS[@]}"; do
   flutter clean >/dev/null
   flutter pub get >/dev/null
 
+  # Read before building, not after: it is compiled in, so the app can show
+  # which build it is. A bug report against the wrong APK wastes a whole round.
+  full_version="$(sed -n 's/^version: *\([^ ]*\).*/\1/p' pubspec.yaml)"
+  note "$app ${full_version:-unknown}"
+
   flutter build apk --release --split-per-abi \
-    --dart-define=API_BASE_URL="$API_BASE_URL"
+    --dart-define=API_BASE_URL="$API_BASE_URL" \
+    --dart-define=APP_VERSION="${full_version:-unknown}"
 
   apk="build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
   [[ -f "$apk" ]] || die "expected $apk but it is not there"

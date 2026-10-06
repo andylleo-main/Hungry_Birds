@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:merchant_app/app_config.dart';
 import 'package:merchant_app/services/printer.dart';
 import 'package:merchant_app/services/receipt.dart';
 import 'package:merchant_app/services/printer_transport.dart';
@@ -185,6 +186,7 @@ void main() {
 
   _diagnostics();
   _byteEncoding();
+  _buildIdentity();
 
   test('no printer chosen says where to choose one', () async {
     final service = PrinterService(transport: FakeTransport());
@@ -393,5 +395,20 @@ void _byteEncoding() {
     for (final b in asPlatformList(const Receipt().testPage())) {
       expect(b, inInclusiveRange(0, 255));
     }
+  });
+}
+
+/// Knowing which build you are looking at.
+void _buildIdentity() {
+  test('a build with no version flag says so rather than claiming a number', () {
+    // The release scripts pass APP_VERSION from pubspec.yaml, which they
+    // already read to name the APK, so it cannot drift from the real version.
+    // This pins the other half: without the flag - a `flutter run`, or this
+    // test - it must not claim a release number it is not.
+    //
+    // That the flag itself arrives is verified by running this suite with
+    // --dart-define=APP_VERSION=9.9.9+99, which makes this expectation fail
+    // with that value.
+    expect(AppConfig.version, 'dev build');
   });
 }

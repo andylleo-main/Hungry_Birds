@@ -165,7 +165,17 @@ foreach ($app in $Apps) {
         flutter clean | Out-Null
         flutter pub get | Out-Null
 
-        flutter build apk --release --split-per-abi "--dart-define=API_BASE_URL=$ApiBaseUrl"
+        # Read before building, not after: it is compiled in, so that the app
+        # can show which build it is. A bug report against the wrong APK wastes
+        # a whole round, and this is what stops that being guesswork.
+        $fullVersion = (Select-String -Path 'pubspec.yaml' -Pattern '^version:\s*(\S+)' |
+            Select-Object -First 1).Matches.Groups[1].Value
+        if (-not $fullVersion) { $fullVersion = 'unknown' }
+        Write-Note "$app $fullVersion"
+
+        flutter build apk --release --split-per-abi `
+            "--dart-define=API_BASE_URL=$ApiBaseUrl" `
+            "--dart-define=APP_VERSION=$fullVersion"
         if ($LASTEXITCODE -ne 0) { Stop-Build "flutter build apk failed for $app (exit $LASTEXITCODE)" }
 
         $apk = 'build\app\outputs\flutter-apk\app-arm64-v8a-release.apk'

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hb_shared/hb_shared.dart';
 import 'package:provider/provider.dart';
 
+import '../app_config.dart';
 import '../services/printer.dart';
 import '../state/merchant_state.dart';
 
@@ -237,6 +238,19 @@ class _PrinterScreenState extends State<PrinterScreen> {
                     'Every step fails the same way from the outside, so this is '
                     'the only way to tell them apart.',
                     style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 6),
+                  // The build, right where somebody is about to report what
+                  // this screen told them. Testing a fix against the previous
+                  // APK and reporting it as still broken has happened, and this
+                  // is the line that makes that impossible to do by accident.
+                  Text(
+                    'App ${AppConfig.version}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppTheme.textSecondary,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
                   ),
                   const SizedBox(height: 10),
                   SizedBox(

@@ -25,4 +25,20 @@ class AppConfig {
     'API_BASE_URL',
     defaultValue: 'https://www.hungrybirds.food/api',
   );
+
+  /// Which build this is, as pubspec spells it - "1.4.1+9".
+  ///
+  /// Passed in by the build scripts, which already read it from pubspec.yaml to
+  /// name the APK, so it cannot drift from the real version and there is no
+  /// second place to remember to bump.
+  ///
+  /// Shown in the app because not knowing cost a whole round of debugging: a
+  /// fix shipped, was tested against the previous APK, and reported as still
+  /// broken. The build number is the one fact that makes a bug report mean
+  /// something, and nobody should have to remember it.
+  static const version = String.fromEnvironment(
+    'APP_VERSION',
+    // A build run straight from `flutter run` has no flag and is not a release.
+    defaultValue: 'dev build',
+  );
 }

@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../services/cloudinary_uploader.dart';
+import '../app_config.dart';
 import '../services/printer.dart';
 import '../state/merchant_state.dart';
 import 'fulfilment_screen.dart';
@@ -276,6 +277,16 @@ class _StallTabState extends State<StallTab> {
             ),
           ),
           const SizedBox(height: 24),
+          // Quiet, at the bottom, where an About line belongs. Worth having at
+          // all because "which version are you on?" is the first question of
+          // every bug report and nobody knows the answer without it.
+          Center(
+            child: Text(
+              'Hungry Birds Partner · ${AppConfig.version}',
+              style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+            ),
+          ),
+
           OutlinedButton.icon(
             onPressed: () => context.read<MerchantState>().logout(),
             icon: const Icon(Icons.logout, size: 18),
