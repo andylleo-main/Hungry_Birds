@@ -572,3 +572,123 @@ async def test_out_for_delivery_to_cancelled_is_allowed_in_the_table():
         OrderStatus.REJECTED,
         OrderStatus.CANCELLED,
     }
+
+
+# --- what the stall is entitled to see --------------------------------------
+
+
+async def _heard(pubsub, *, seconds: float = 2.0):
+    """Read the next real message off a subscription, or None.
+
+    Reads repeatedly rather than once. `ignore_subscribe_messages=True` does not
+    skip the subscribe confirmation so much as consume it and hand back None, so
+    a single call right after subscribing reliably returns nothing whatever was
+    published - which looks exactly like the broadcast being broken.
+    """
+    import asyncio
+
+    deadline = asyncio.get_event_loop().time() + seconds
+    while asyncio.get_event_loop().time() < deadline:
+        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.2)
+        if message is not None:
+            return message
+    return None
+
+
+class TestTheStallsQueue:
+    """The rule that drifted, and the bug it caused.
+
+    Entitlement used to be written twice: the HTTP list asked "is this past
+    awaiting_payment" and the socket broadcast asked "is this paid". The two
+    agreed perfectly until cash arrived - a pay-on-delivery order is PLACED and
+    still *owed*, so it passed one test and failed the other. It appeared when
+    the merchant app refreshed and never arrived live, which also meant the
+    new-order alarm never fired for it.
+
+    Both halves are pinned here, because a single predicate can still be
+    bypassed by the next person who writes the condition out by hand.
+    """
+
+    async def test_a_cash_order_reaches_the_stall_live(
+        self, client, db, customer, vendor, menu_item
+    ):
+        from app.core.redis import get_redis
+        from app.modules.orders.service import load_order, publish_order_event, vendor_channel
+
+        redis = get_redis()
+
+        _, headers = customer
+        v, _ = vendor
+
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(vendor_channel(v.id))
+        try:
+            order = (await _cash_order(client, headers, v.id, menu_item)).json()
+            await publish_order_event(redis, await load_order(uuid.UUID(order["id"]), db))
+
+            assert await _heard(pubsub) is not None, (
+                "a cash order never reached the stall's queue live - it is owed, not unpaid"
+            )
+        finally:
+            await pubsub.unsubscribe(vendor_channel(v.id))
+            await pubsub.aclose()
+
+    async def test_an_unfinished_checkout_still_does_not(
+        self, stub_razorpay, client, db, customer, vendor, menu_item
+    ):
+        """The half that must not have been loosened by fixing the other."""
+        from app.core.redis import get_redis
+        from app.modules.orders.service import load_order, publish_order_event, vendor_channel
+
+        redis = get_redis()
+
+        _, headers = customer
+        v, _ = vendor
+
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(vendor_channel(v.id))
+        try:
+            placed = await client.post(
+                "/orders",
+                headers=headers,
+                json={"vendor_id": str(v.id), "items": _lines(menu_item)},
+            )
+            assert placed.json()["status"] == "awaiting_payment"
+            await publish_order_event(redis, await load_order(uuid.UUID(placed.json()["id"]), db))
+
+            assert await _heard(pubsub, seconds=1.0) is None, (
+                "a stall was told about an order nobody has paid for"
+            )
+        finally:
+            await pubsub.unsubscribe(vendor_channel(v.id))
+            await pubsub.aclose()
+
+    async def test_the_list_and_the_broadcast_agree(
+        self, stub_razorpay, client, db, customer, vendor, menu_item
+    ):
+        """Whatever the socket sends, a refresh must show, and vice versa."""
+        from app.db.models.order import Order
+        from app.modules.orders.service import stall_may_see
+
+        _, headers = customer
+        v, vendor_headers = vendor
+
+        await _cash_order(client, headers, v.id, menu_item)
+        await client.post(
+            "/orders", headers=headers, json={"vendor_id": str(v.id), "items": _lines(menu_item)}
+        )
+
+        listed = await client.get("/vendors/me/orders", headers=vendor_headers)
+        assert listed.status_code == 200, listed.text
+        listed_ids = {o["id"] for o in listed.json()}
+
+        from sqlalchemy import select
+
+        rows = (
+            await db.execute(select(Order).where(Order.vendor_id == v.id))
+        ).scalars().all()
+        for row in rows:
+            assert (str(row.id) in listed_ids) == stall_may_see(row), (
+                f"order {row.order_number} ({row.status.value}) disagrees between "
+                "the queue and the broadcast rule"
+            )

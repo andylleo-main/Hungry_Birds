@@ -351,12 +351,16 @@ async def list_vendor_orders(
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> list[OrderWithCodeOut]:
-    """The stall's queue - which contains only orders somebody has paid for.
+    """The stall's queue - which contains no unfinished checkouts.
 
     The socket filter alone is not enough: it covers what happens while the app
     is open, and the merchant app re-fetches this on every start and every
     reconnect. Without the same rule here, an abandoned checkout would reappear
     in the queue every time the connection blinked.
+
+    Shares its rule with publish_order_event through stall_may_see rather than
+    restating it. The two were written separately and drifted the moment pay on
+    delivery arrived.
     """
     await payments.sweep_abandoned(db, settings, vendor_id=vendor.id)
     await payments.drain_stuck_refunds(db, settings, background, vendor_id=vendor.id)
@@ -364,6 +368,9 @@ async def list_vendor_orders(
     result = await db.execute(
         order_query(
             Order.vendor_id == vendor.id,
+            # The SQL half of stall_may_see. Kept beside it in the same commit
+            # for a reason: a predicate that cannot be expressed once has to be
+            # changed twice, and this is the pair that drifted before.
             Order.status != OrderStatus.AWAITING_PAYMENT,
         ).order_by(Order.created_at.desc())
     )

@@ -300,13 +300,30 @@ def vendor_channel(vendor_id) -> str:
     return f"vendor:{vendor_id}"
 
 
+def stall_may_see(order: Order) -> bool:
+    """Whether this order belongs in the stall's queue at all.
+
+    One predicate, used by both the socket broadcast and the HTTP list, because
+    they were allowed to drift once and it cost a real bug. The rule had been
+    "payment_status is PAID" in one place and "status is not awaiting_payment" in
+    the other, which agreed perfectly until pay on delivery arrived - a cash
+    order is PLACED and *owed*, so it appeared on a refresh and never arrived
+    live, and the new-order alarm never fired for it.
+
+    Entitlement is about the food, not the money: once an order has left
+    awaiting_payment it is real work for this kitchen, whether it was prepaid or
+    is being collected for at the door.
+    """
+    return order.status is not OrderStatus.AWAITING_PAYMENT
+
+
 async def publish_order_event(redis: Redis, order: Order) -> None:
     """Broadcast an order to whoever is entitled to hear about it.
 
     The asymmetry is the design. The order channel is "your order" and has no
     admission rule - a customer watching their own checkout should see it move
     to awaiting-payment and then to placed. The vendor channel is "your queue",
-    and an order nobody has paid for does not belong in it.
+    and a checkout nobody has finished does not belong in it.
 
     The payload carries the handover code, which is safe here precisely because
     riders have no channel - they poll endpoints that return the code-less
@@ -321,7 +338,7 @@ async def publish_order_event(redis: Redis, order: Order) -> None:
     """
     payload = OrderWithCodeOut.model_validate(order).model_dump_json()
     await redis.publish(order_channel(order.id), payload)
-    if order.payment_status == PaymentStatus.PAID:
+    if stall_may_see(order):
         await redis.publish(vendor_channel(order.vendor_id), payload)
 
 

@@ -182,6 +182,22 @@ class Receipt {
       'Ordered at ${DateFormat('h:mm a').format(order.createdAt.toLocal())}',
     ));
 
+    // What the customer was told. Printed because the person packing the bag is
+    // usually not the person who accepted the order, and this is the only place
+    // they will see the promise somebody else made on their behalf.
+    //
+    // For a delivery this is the time at the door, buffer included - the stall
+    // needs it in the kitchen's hands earlier than that, which is why the label
+    // says where the clock is being read, not just when.
+    if (order.readyBy != null) {
+      bytes.addAll(_bold(true));
+      bytes.addAll(_line(
+        '${order.isDelivery ? 'At door by' : 'Ready by'} '
+        '${DateFormat('h:mm a').format(order.readyBy!.toLocal())}',
+      ));
+      bytes.addAll(_bold(false));
+    }
+
     // Fed before the cut so the ticket clears the tear bar - without this the
     // last line sits inside the mechanism and gets torn through.
     bytes.addAll(_feed(3));

@@ -17,6 +17,7 @@ import 'package:merchant_app/services/receipt.dart';
 void main() {
   Order order({
     PaymentStatus paymentStatus = PaymentStatus.paid,
+    DateTime? readyBy,
     List<OrderLineItem> items = const [],
     String? note,
     int? token = 7,
@@ -34,6 +35,7 @@ void main() {
         status: OrderStatus.accepted,
         paymentMethod: paymentStatus == PaymentStatus.due ? 'cod' : 'online',
         paymentStatus: paymentStatus,
+        readyBy: readyBy,
         totalAmount: total,
         note: note,
         createdAt: DateTime(2026, 1, 1, 13, 42),
@@ -145,6 +147,39 @@ void main() {
       // line rather than wrapping.
       expect(total, startsWith('TOTAL'));
       expect(total, endsWith('Rs.150'));
+    });
+  });
+
+  group('when it was promised', () {
+    test('the ticket carries the time the customer was told', () {
+      // The person packing the bag is usually not the one who accepted the
+      // order, so this is the only place they see the promise that was made.
+      final lines = printed(order(readyBy: DateTime(2026, 1, 1, 14, 5)));
+      expect(lines, contains('Ready by 2:05 PM'));
+    });
+
+    test('a delivery says the time at the door, not at the counter', () {
+      final lines = printed(
+        order(delivery: true, location: 'Hostel 3', readyBy: DateTime(2026, 1, 1, 14, 20)),
+      );
+      expect(lines, contains('At door by 2:20 PM'));
+    });
+
+    test('an order with no estimate prints no promise', () {
+      // A stall that has set no prep times says nothing, rather than having a
+      // time invented on the paper.
+      final lines = printed(order());
+      expect(lines.any((l) => l.contains('Ready by')), isFalse);
+      expect(lines.any((l) => l.contains('At door by')), isFalse);
+    });
+
+    test('it still fits 58mm paper', () {
+      final lines = printed(
+        order(delivery: true, location: 'Hostel 3', readyBy: DateTime(2026, 1, 1, 14, 20)),
+      );
+      for (final l in lines) {
+        expect(l.length, lessThanOrEqualTo(32), reason: '"$l" is ${l.length} chars');
+      }
     });
   });
 
