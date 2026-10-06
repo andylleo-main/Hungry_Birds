@@ -79,17 +79,16 @@ def test_an_emptied_boolean_flag_does_not_stop_the_app_booting():
     pydantic rejects "" for a bool, so the obvious way to switch one of these off
     used to crash the service on its next deploy - with an error naming a
     demo-data flag rather than anything to do with the deploy that failed. Both
-    flags are checked because the next one added will be copied from these.
+    The flag this was written for was SEED_DEMO_DATA, which is gone; the
+    behaviour it taught is not, and the next bool added will be copied from this
+    one.
     """
     from app.core.config import Settings
 
     base = {"database_url": "postgresql+asyncpg://x/y", "secret_key": "k" * 32}
-    settings = Settings(**base, seed_demo_data="", otp_debug_echo="")
-    assert settings.seed_demo_data is False
-    assert settings.otp_debug_echo is False
+    assert Settings(**base, otp_debug_echo="").otp_debug_echo is False
 
     # Real values still parse the way they always did.
-    assert Settings(**base, seed_demo_data="true").seed_demo_data is True
     assert Settings(**base, otp_debug_echo="1").otp_debug_echo is True
 
 

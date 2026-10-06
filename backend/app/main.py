@@ -99,24 +99,6 @@ async def lifespan(_: FastAPI):
     """
     async with async_session_factory() as db:
         await ensure_bootstrap_admin(settings, db)
-
-        if settings.seed_demo_data:
-            # Same reasoning as the bootstrap above: a failure here must not stop
-            # the API serving, because demo data is a convenience and an instance
-            # that will not boot is not.
-            try:
-                from app.core.demo_data import seed_demo_stalls
-
-                created = await seed_demo_stalls(db)
-                if created:
-                    _startup_log.warning(
-                        'SEED_DEMO_DATA: created demo stalls %s. Unset the variable '
-                        'once real stalls are on.',
-                        ', '.join(created),
-                    )
-            except Exception:
-                _startup_log.exception('SEED_DEMO_DATA could not be applied')
-                await db.rollback()
     yield
 
 

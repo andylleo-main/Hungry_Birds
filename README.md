@@ -68,7 +68,7 @@ pip install -r requirements.txt
 
 cp .env.example .env          # then edit DATABASE_URL / JWT_SECRET
 alembic upgrade head
-PYTHONPATH=. python scripts/seed.py    # optional: demo stalls + admin user
+# Stalls are created by their owners applying and an admin approving them.
 
 uvicorn app.main:app --reload --no-proxy-headers
 ```
@@ -442,19 +442,6 @@ Railway builds the image.
    > setting that plainly will not take: you change the pre-deploy command, hit
    > Redeploy, and watch the previous command run again. Push a commit instead.
 
-6. **Seed the demo stalls** (optional, once). Set `SEED_DEMO_DATA=true`, let it
-   deploy, check the logs for `SEED_DEMO_DATA: created demo stalls`, then unset it.
-   Three approved, open stalls with menus, and no admin — use
-   `BOOTSTRAP_ADMIN_EMAIL` for that.
-
-   > It is a startup flag and not `scripts/seed.py` because **there is no way to
-   > run a script against a Railway service.** There is no shell, the database is
-   > not reachable from outside, and the pre-deploy command is exec'd *without* a
-   > shell — so `alembic upgrade head && python scripts/seed.py` runs only the
-   > alembic half, prints nothing about the rest, and goes green. That failure
-   > looks exactly like success, which is why the mechanism changed rather than
-   > the command. `scripts/seed.py` is for a local database.
-
    > **How this failure looks, because it is not obvious.** The build dies in
    > about three seconds, and the step it blames is whatever happened to be
    > running in the *other* stage — an `apt-get`, a `pip install` — not the
@@ -524,18 +511,31 @@ values.
 If Postgres and Redis are referenced correctly, a plain `postgres://` URL is
 upgraded to the asyncpg driver automatically — you don't need to rewrite it.
 
-### Seeding
+### There is no demo data
 
-Once deployed, from the service's shell:
+The three demo stalls — Momo Point, Chai Tapri, South Express — and the
+`SEED_DEMO_DATA` flag that created them are **gone**, removed for launch. A real
+deployment gets its stalls the way it is supposed to: an owner applies from the
+merchant app and an admin approves them. Set `BOOTSTRAP_ADMIN_EMAIL` to get that
+first admin.
+
+To clear demo stalls out of a database that still has them:
 
 ```bash
-PYTHONPATH=. python scripts/seed.py
+cd backend
+DATABASE_URL=<the deployment's> PYTHONPATH=. python scripts/remove_demo_stalls.py
+# prints what it would delete, and deletes nothing
+
+DATABASE_URL=<the deployment's> PYTHONPATH=. python scripts/remove_demo_stalls.py --yes
 ```
 
-Creates the `admin@bitmesra.ac.in` admin plus three demo stalls. It's
-idempotent (skips stalls that already exist) and deliberately *not* part of the
-deploy, so it can't resurrect demo stalls you've deleted. Log in as that
-address in either app to get admin access, then approve real vendors.
+It matches on the demo owners' email addresses rather than stall names, because a
+name can be edited from the merchant app and an address cannot.
+
+> **It takes orders with it.** `orders.vendor_id` is `ON DELETE CASCADE` and
+> `payments.order_id` cascades from there, so every order ever placed against a
+> demo stall, and its payment rows, go too. On a stall that has only served test
+> orders that is the point — but read the dry run first.
 
 ### Pointing the apps at it
 
