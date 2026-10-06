@@ -15,7 +15,7 @@ any address but can only sign in from the merchant app, and only once an admin h
 approved their stall. See [Who signs in where](#who-signs-in-where).
 
 Orders are paid online through Razorpay before any stall sees them, or — for
-deliveries — in cash or by UPI when the rider arrives. For testing before the
+deliveries — in cash or by UPI when the order arrives. For testing before the
 gateway credentials exist, `PAYMENTS_MODE=mock` confirms payments without
 charging anything — see [Payments](#payments).
 
@@ -785,7 +785,7 @@ Two dashboard settings are not code and will fail silently if wrong:
 - **Auto-capture must be on** (it is the default). With it off, payments stop at
   `authorized`, `payment.captured` never fires, and nothing is ever marked paid.
 - **QR Codes is activated on request.** Pay-on-delivery UPI needs it; without it
-  the rider's UPI button answers 503 telling them to take cash, and everything
+  the UPI button in either app answers 503 telling them to take cash, and everything
   else still works.
 
 > **Until these are set, no orders can be placed at all.** `POST /orders` answers
@@ -964,28 +964,50 @@ work stays the stall's own.
 
 ## Pay on delivery
 
-A delivery can be paid at the door instead of up front: cash in the rider's hand,
-or a UPI QR the customer scans. Dine-in is always prepaid — there is no rider to
-collect from somebody standing at the counter, and the stall handling money
-itself is a different feature.
+A delivery can be paid at the door instead of up front: cash in the carrier's
+hand, or a UPI QR the customer scans. Dine-in is always prepaid — there is
+nobody to send to somebody standing at the counter.
+
+**Whoever carries the order collects for it**, which for a one-person stall is
+the owner themselves. A rider does it in the rider app; an owner who tapped
+"I'll take it" does it in the merchant app, on the order card, with the same two
+buttons and the same gateway-minted QR. The routes mirror each other
+(`/rider/orders/{id}/collect` and `/vendors/me/orders/{id}/collect`, same for
+`/upi-qr`) and share one implementation in `payments/collection.py`, because the
+only part that legitimately differs is who is allowed near the order.
+
+**Only one of them can collect on a given order.** The stall's routes refuse
+unless the order is marked self-delivery; the rider's refuse unless it is theirs.
+Two people able to mark the same cash collected is how an order ends up marked
+paid by somebody who is not holding the money.
 
 **This reverses a rule the project held on purpose.** Every order used to be paid
 before a stall saw it, because a stall that cooks food which is never paid for
 eats the loss. That exposure is back. Three things bound it:
 
-- **A rider cannot mark an order delivered while the money is owed.** The status
-  route refuses with the figure in the message. This is the control; the rest is
-  convenience.
-- **A UPI collection is confirmed by Razorpay, not by the rider.** The QR is
-  minted at the gateway (`single_use`, `fixed_amount`) and `qr_code.credited`
-  marks the order paid. A stall's own printed code would need the rider's word.
+- **Nobody can mark an order delivered while the money is owed.** Both status
+  routes refuse, with the figure in the message. This is the control; the rest is
+  convenience. It binds the stall as well as the rider — pay on delivery first
+  shipped with the guard on the rider route alone, so an owner on their own round
+  could close a cash order having collected nothing: `completed` on the outside,
+  `due` forever in the ledger, with no refund path and no record of who owed
+  what. A customer who refuses the order at the door is a cancellation, which
+  waives the amount properly.
+- **A UPI collection is confirmed by Razorpay, not by whoever is holding the
+  phone.** The QR is minted at the gateway (`single_use`, `fixed_amount`) and
+  `qr_code.credited` marks the order paid. A stall's own printed code would need
+  the carrier's word. Both apps watch for that confirmation while the code is on
+  screen and say so the moment it lands, rather than leaving somebody holding a
+  QR for an order that is already settled.
 - **`COD_ENABLED=false` turns it off everywhere**, without a deploy. Worth
   knowing where that switch is before a service you are nervous about.
 
-Cash itself is taken on the rider's word, which is the honest description of
+Cash itself is taken on the carrier's word, which is the honest description of
 cash — nobody else was there. What the system gets is that the order is theirs,
 the collection is recorded against them, and the stall sees `collected in cash`
-rather than `paid online`.
+rather than `paid online`. When the carrier *is* the stall, that reduces to the
+owner telling their own books what they already know, which is the most
+accountability cash in a pocket can carry.
 
 **A cash order is placed straight into the stall's queue** with its token number,
 rather than waiting in `awaiting_payment`. That is not a shortcut: `sweep_abandoned`

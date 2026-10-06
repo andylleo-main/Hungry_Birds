@@ -29,6 +29,14 @@ from app.core.tasks import fire_and_log
 from app.modules.fulfilment.service import assert_order_fulfilment
 from app.modules.notifications.service import notify_new_order, notify_rider_assigned
 from app.modules.payments import service as payments
+from app.modules.payments.collection import (
+    CollectCash,
+    UpiQrOut,
+    assert_collectable,
+    assert_nothing_left_to_collect,
+    mark_cash_collected,
+    mint_upi_qr,
+)
 from app.modules.orders.service import (
     REFUNDABLE_ENDINGS,
     TERMINAL_STATUSES,
@@ -397,6 +405,15 @@ async def update_order_status(
 
     assert_transition(order, payload.status)
 
+    if payload.status is OrderStatus.COMPLETED:
+        # Binds the stall exactly as it binds the rider. A self-delivering owner
+        # is the person holding the money, and before this they could close a
+        # pay-on-delivery order having collected nothing - the order read
+        # completed while its payment read "due" forever, with no refund path
+        # and no record of who owed what. A customer who refuses the order at
+        # the door is a cancellation, which waives the amount properly.
+        assert_nothing_left_to_collect(order)
+
     order.status = payload.status
 
     if payload.status is OrderStatus.ACCEPTED:
@@ -530,3 +547,69 @@ async def assign_order(
             lambda: notify_rider_assigned(order.id, assigned_to, settings),
         )
     return OrderWithCodeOut.model_validate(order)
+
+
+async def _stall_collectable(
+    order_id: uuid.UUID, vendor: Vendor, db: AsyncSession
+) -> Order:
+    """The stall's own order that they are delivering themselves, still owing money.
+
+    Self-delivery is the whole gate. When a rider is carrying the order, the
+    rider collects: two people able to mark the same cash collected is how an
+    order gets marked paid by somebody who is not holding the money. The 404 on
+    an order that is not this stall's matches the rest of the vendor namespace.
+    """
+    order = await _load_order_with_items(order_id, db)
+    if order is None or order.vendor_id != vendor.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    if not order.self_delivery:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Your rider collects on this order. Take it on yourself to collect here.",
+        )
+    assert_collectable(order)
+    return order
+
+
+@vendor_orders_router.post(
+    "/{order_id}/collect",
+    response_model=OrderWithCodeOut,
+    dependencies=[Depends(limit_by_user("order_collect", *limits.ORDER_COLLECT))],
+)
+async def collect_cash_at_door(
+    order_id: uuid.UUID,
+    payload: CollectCash,
+    vendor: Vendor = Depends(get_own_vendor),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
+) -> OrderWithCodeOut:
+    """The stall owner delivered it themselves and has the cash."""
+    order = await _stall_collectable(order_id, vendor, db)
+    await mark_cash_collected(order, payload.method, db, settings)
+
+    order = await _load_order_with_items(order.id, db)
+    await publish_order_event(redis, order)
+    return OrderWithCodeOut.model_validate(order)
+
+
+@vendor_orders_router.post(
+    "/{order_id}/upi-qr",
+    response_model=UpiQrOut,
+    dependencies=[Depends(limit_by_user("order_upi_qr", *limits.ORDER_UPI_QR))],
+)
+async def stall_upi_qr(
+    order_id: uuid.UUID,
+    vendor: Vendor = Depends(get_own_vendor),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> UpiQrOut:
+    """The same gateway-minted QR a rider shows, for an owner on their own round.
+
+    Minted at Razorpay rather than printed at the stall for the same reason as
+    the rider's: it is single-use and fixed-amount, so it cannot be underpaid or
+    reused for the next order, and the money is confirmed by qr_code.credited
+    rather than by the person holding the phone.
+    """
+    order = await _stall_collectable(order_id, vendor, db)
+    return await mint_upi_qr(order, db, settings)

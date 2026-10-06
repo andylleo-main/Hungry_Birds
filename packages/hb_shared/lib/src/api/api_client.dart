@@ -735,6 +735,36 @@ class ApiClient {
     return Order.fromJson(data);
   }
 
+  /// Records that the stall owner took cash at the door on their own round.
+  ///
+  /// The stall's half of [riderCollectCash], and refused unless the order is
+  /// marked self-delivery - when a rider is carrying it, the rider collects.
+  /// Two people able to mark the same cash collected is how an order ends up
+  /// marked paid by somebody who is not holding the money.
+  Future<Order> collectCashAtDoor(String orderId) async {
+    final data = await _request(
+      'POST',
+      '/vendors/me/orders/$orderId/collect',
+      body: {'method': 'cash'},
+    ) as Map<String, dynamic>;
+    return Order.fromJson(data);
+  }
+
+  /// The same gateway-minted QR a rider shows, for an owner delivering it.
+  ///
+  /// Throws an [ApiException] carrying the server's own words when Razorpay has
+  /// not activated QR codes for this account - which reads, correctly, as "take
+  /// cash instead".
+  Future<UpiQr> stallUpiQr(String orderId) async {
+    final data = await _request('POST', '/vendors/me/orders/$orderId/upi-qr')
+        as Map<String, dynamic>;
+    return UpiQr(
+      data['image_url'] as String,
+      double.parse(data['amount'].toString()),
+      DateTime.parse(data['expires_at'] as String),
+    );
+  }
+
   /// Ends this device's session on the server, then forgets it locally.
   ///
   /// Clearing local storage alone used to be the whole of "log out", which left

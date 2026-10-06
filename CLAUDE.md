@@ -44,10 +44,16 @@ Dart packages `hb_shared`, Firebase project `hungrybirds-7779f`.
   standing rule. The rule was "no cash on delivery, every order paid up front",
   and the reason was real: a stall can cook food that is never paid for. The user
   asked for it in launch week and that exposure is back, bounded by three things
-  — a rider cannot mark an order delivered while the money is still owed, a UPI
-  collection is confirmed by Razorpay rather than by the rider, and `COD_ENABLED`
-  switches the whole thing off in one variable. Dine-in is still prepaid: there
-  is no rider to collect from somebody standing at the counter.
+  — nobody can mark an order delivered while the money is still owed, a UPI
+  collection is confirmed by Razorpay rather than by whoever carried the order,
+  and `COD_ENABLED` switches the whole thing off in one variable. Dine-in is
+  still prepaid: there is nobody to send to somebody standing at the counter.
+- **Whoever carries a delivery collects for it, including the owner.** A stall
+  owner who takes an order themselves has the same two buttons and the same
+  gateway-minted QR as a rider, sharing one implementation in
+  `payments/collection.py`. Both status routes refuse to complete an order that
+  is still `due`. Self-delivery gates the stall's routes and rider ownership
+  gates the rider's, so exactly one of them can collect on any given order.
 - `PAYMENTS_MODE=mock` confirms payments without charging, for testing before the
   gateway credentials exist. It is **not** the same thing as pay on delivery and
   not a fallback: on a deployment students can reach it is free food, so it stays

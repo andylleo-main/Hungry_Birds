@@ -65,6 +65,20 @@ class OrdersState extends ChangeNotifier {
     }
   }
 
+  /// Re-read the queue without letting a failure reach the screen.
+  ///
+  /// For the QR sheet, where the socket is the real path and this is only
+  /// insurance against a dropped one. A stall owner holding a phone out to a
+  /// customer must not get an error banner because the campus wifi blinked.
+  Future<void> reloadQuietly() async {
+    try {
+      orders = await api.vendorOrders();
+      notifyListeners();
+    } catch (_) {
+      // Deliberately silent: the next tick, or the socket, will catch up.
+    }
+  }
+
   // Async because the socket URL now needs a ticket fetched from the API first
   // (see ApiClient._wsUri). A failure to get one is just another reason to
   // retry, handled by the same reconnect path as a dropped socket.
@@ -150,6 +164,22 @@ class OrdersState extends ChangeNotifier {
     final updated = await api.updateOrderStatus(order.id, status, prepMinutes: prepMinutes);
     _apply(updated);
   }
+
+  /// The owner took cash at the door on their own round.
+  ///
+  /// Only reachable on a self-delivery order; the server refuses it otherwise,
+  /// because an order a rider is carrying is the rider's to collect for.
+  Future<void> collectCash(Order order) async {
+    final updated = await api.collectCashAtDoor(order.id);
+    _apply(updated);
+  }
+
+  /// A single-use QR for exactly this order's total.
+  ///
+  /// Nothing is applied here on purpose: a minted QR does not mean anybody has
+  /// paid. The order flips to paid when Razorpay says so through
+  /// qr_code.credited, which arrives on the same socket as every other change.
+  Future<UpiQr> upiQr(Order order) => api.stallUpiQr(order.id);
 
   @override
   void dispose() {

@@ -692,3 +692,293 @@ class TestTheStallsQueue:
                 f"order {row.order_number} ({row.status.value}) disagrees between "
                 "the queue and the broadcast rule"
             )
+
+
+# --- when the stall owner delivers it themselves ----------------------------
+#
+# Pay on delivery shipped with collection living entirely in the rider router,
+# so an owner walking an order over had no way to take the money and - worse -
+# no guard stopping them from closing the order anyway. These are the tests for
+# the half that was missing.
+
+
+async def _self_delivered(client, order_id, vendor_headers):
+    """Walk a cash order to the doorstep with nobody but the owner carrying it."""
+    for status_value in ("accepted", "preparing", "ready"):
+        r = await client.patch(
+            f"/vendors/me/orders/{order_id}/status",
+            headers=vendor_headers,
+            json={"status": status_value},
+        )
+        assert r.status_code == 200, r.text
+
+    mine = await client.post(
+        f"/vendors/me/orders/{order_id}/assign",
+        headers=vendor_headers,
+        json={"self_delivery": True},
+    )
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["self_delivery"] is True
+
+    out = await client.patch(
+        f"/vendors/me/orders/{order_id}/status",
+        headers=vendor_headers,
+        json={"status": "out_for_delivery"},
+    )
+    assert out.status_code == 200, out.text
+
+
+async def test_a_stall_cannot_complete_a_self_delivered_order_while_it_is_owed(
+    client, db, customer, vendor, menu_item
+):
+    """The hole this change exists to close.
+
+    The rider route has refused this since pay on delivery shipped. The stall's
+    own route did not, so an owner on their own round could close a cash order
+    having collected nothing: status completed, payment_status stuck at due, no
+    refund path and nothing saying who owed what.
+    """
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+    await _self_delivered(client, order["id"], vendor_headers)
+
+    r = await client.patch(
+        f"/vendors/me/orders/{order['id']}/status",
+        headers=vendor_headers,
+        json={"status": "completed"},
+    )
+    assert r.status_code == 400, r.text
+    assert "collect" in r.json()["detail"].lower()
+
+    from app.db.models.order import Order, OrderStatus
+
+    row = await db.get(Order, uuid.UUID(order["id"]))
+    await db.refresh(row)
+    assert row.status is OrderStatus.OUT_FOR_DELIVERY
+
+
+async def test_the_owner_can_take_the_cash_themselves_and_then_complete(
+    client, db, customer, vendor, menu_item
+):
+    """The same two steps a rider has, for the person who has no rider."""
+    from app.db.models.order import Order, OrderStatus
+    from app.db.models.payment import PaymentStatus
+
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+    await _self_delivered(client, order["id"], vendor_headers)
+
+    collected = await client.post(
+        f"/vendors/me/orders/{order['id']}/collect",
+        headers=vendor_headers,
+        json={"method": "cash"},
+    )
+    assert collected.status_code == 200, collected.text
+    assert collected.json()["payment_status"] == "paid"
+    assert collected.json()["collected_via"] == "cash"
+
+    done = await client.patch(
+        f"/vendors/me/orders/{order['id']}/status",
+        headers=vendor_headers,
+        json={"status": "completed"},
+    )
+    assert done.status_code == 200, done.text
+
+    row = await db.get(Order, uuid.UUID(order["id"]))
+    await db.refresh(row)
+    assert row.status is OrderStatus.COMPLETED
+    assert row.payment_status is PaymentStatus.PAID
+
+
+async def test_the_owner_gets_the_same_gateway_minted_qr(
+    stub_razorpay, client, db, customer, vendor, menu_item
+):
+    """Not a printed sticker: single-use, fixed to the total, confirmed by Razorpay."""
+    from decimal import Decimal
+
+    from app.db.models.order import Order
+    from app.modules.payments import razorpay
+
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+    await _self_delivered(client, order["id"], vendor_headers)
+
+    r = await client.post(f"/vendors/me/orders/{order['id']}/upi-qr", headers=vendor_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["image_url"]
+
+    minted = stub_razorpay["qrs"][-1]
+    assert minted["payment_amount"] == razorpay.to_paise(Decimal(order["total_amount"]))
+    # The notes are the whole of the mapping back from qr_code.credited, which
+    # names only the QR. single_use and fixed_amount are constants inside
+    # create_upi_qr, which both routes share, so there is nothing route-specific
+    # to assert about them here.
+    assert minted["notes"]["order_id"] == order["id"]
+
+    row = await db.get(Order, uuid.UUID(order["id"]))
+    await db.refresh(row)
+    assert row.cod_qr_id == minted["id"]
+
+
+async def test_the_qr_webhook_marks_a_self_delivered_order_paid(
+    stub_razorpay, signed_webhook, client, db, customer, vendor, menu_item
+):
+    """The owner never has to be believed about the money either."""
+    from app.db.models.order import Order
+    from app.db.models.payment import PaymentStatus
+
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+    await _self_delivered(client, order["id"], vendor_headers)
+
+    await client.post(f"/vendors/me/orders/{order['id']}/upi-qr", headers=vendor_headers)
+    qr_id = stub_razorpay["qrs"][-1]["id"]
+
+    from decimal import Decimal
+
+    from app.modules.payments import razorpay
+
+    delivered = await signed_webhook(
+        {
+            "event": "qr_code.credited",
+            "payload": {
+                "qr_code": {"entity": {"id": qr_id}},
+                "payment": {
+                    "entity": {
+                        "id": f"pay_{uuid.uuid4().hex[:12]}",
+                        "status": "captured",
+                        "amount": razorpay.to_paise(Decimal(order["total_amount"])),
+                        "currency": "INR",
+                    }
+                },
+            },
+        }
+    )
+    assert delivered.status_code == 200, delivered.text
+
+    row = await db.get(Order, uuid.UUID(order["id"]))
+    await db.refresh(row)
+    assert row.payment_status is PaymentStatus.PAID
+    assert row.collected_via == "upi"
+
+    # And now it closes, which it could not do a moment ago.
+    done = await client.patch(
+        f"/vendors/me/orders/{order['id']}/status",
+        headers=vendor_headers,
+        json={"status": "completed"},
+    )
+    assert done.status_code == 200, done.text
+
+
+async def test_a_stall_cannot_collect_on_an_order_a_rider_is_carrying(
+    client, db, customer, vendor, menu_item, rider
+):
+    """Two people able to mark the same cash collected is how it gets marked by
+    whoever is *not* holding the money. Self-delivery is the whole gate."""
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+    await _out_for_delivery(client, db, order["id"], vendor_headers, rider)
+
+    r = await client.post(
+        f"/vendors/me/orders/{order['id']}/collect",
+        headers=vendor_headers,
+        json={"method": "cash"},
+    )
+    assert r.status_code == 400, r.text
+    assert "rider" in r.json()["detail"].lower()
+
+    qr = await client.post(f"/vendors/me/orders/{order['id']}/upi-qr", headers=vendor_headers)
+    assert qr.status_code == 400, qr.text
+
+
+async def test_a_stall_cannot_collect_before_the_order_goes_out(
+    client, customer, vendor, menu_item
+):
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+
+    mine = await client.post(
+        f"/vendors/me/orders/{order['id']}/assign",
+        headers=vendor_headers,
+        json={"self_delivery": True},
+    )
+    assert mine.status_code == 200, mine.text
+
+    r = await client.post(
+        f"/vendors/me/orders/{order['id']}/collect",
+        headers=vendor_headers,
+        json={"method": "cash"},
+    )
+    assert r.status_code == 400, r.text
+
+
+async def test_a_stall_cannot_collect_on_another_stalls_order(
+    client, db, customer, vendor, menu_item
+):
+    """404 rather than 403, matching the rest of the vendor namespace."""
+    from app.core.security import TokenAudience
+    from app.db.models.user import User, UserRole
+    from app.db.models.vendor import Vendor
+
+    from tests.conftest import _token
+
+    _, headers = customer
+    v, vendor_headers = vendor
+    order = (await _cash_order(client, headers, v.id, menu_item)).json()
+    await _self_delivered(client, order["id"], vendor_headers)
+
+    # A second approved stall, built here rather than as a fixture because this
+    # is the only test in the file that needs one.
+    other_user = User(email=f"other.{uuid.uuid4().hex[:10]}@gmail.com", role=UserRole.VENDOR)
+    db.add(other_user)
+    await db.commit()
+    await db.refresh(other_user)
+    db.add(
+        Vendor(
+            user_id=other_user.id,
+            stall_name=f"Other {uuid.uuid4().hex[:5]}",
+            is_approved=True,
+            is_open=True,
+        )
+    )
+    await db.commit()
+    other_headers = _token(other_user.id, TokenAudience.MERCHANT)
+
+    r = await client.post(
+        f"/vendors/me/orders/{order['id']}/collect",
+        headers=other_headers,
+        json={"method": "cash"},
+    )
+    assert r.status_code == 404, r.text
+
+
+async def test_a_stall_cannot_collect_on_an_order_paid_online(
+    client, db, customer, vendor, menu_item
+):
+    """Nothing to collect, and the route must not be a way to overwrite that."""
+    _, headers = customer
+    v, vendor_headers = vendor
+    placed = await client.post(
+        "/orders",
+        headers=headers,
+        json={
+            "vendor_id": str(v.id),
+            "items": _lines(menu_item),
+            "fulfilment_type": "delivery",
+            "delivery_location": "hostel_3",
+        },
+    )
+    order = placed.json()
+
+    r = await client.post(
+        f"/vendors/me/orders/{order['id']}/collect",
+        headers=vendor_headers,
+        json={"method": "cash"},
+    )
+    assert r.status_code in (400, 404), r.text

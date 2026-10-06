@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hb_shared/hb_shared.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -397,6 +400,17 @@ class _OrderCardState extends State<_OrderCard> {
             // being reversed, so the card has to show which of the two this is
             // rather than assert either.
             _PaymentLine(order: order),
+            // Only when the owner is the one carrying it. A rider's order is
+            // collected for in the rider app, and two people able to mark the
+            // same cash collected is how an order gets marked paid by whoever
+            // is not holding the money.
+            if (widget.live &&
+                order.isAwaitingCollection &&
+                order.selfDelivery &&
+                order.status == OrderStatus.outForDelivery) ...[
+              const SizedBox(height: 10),
+              _CollectActions(order: order),
+            ],
             if (order.readyBy != null) ...[
               const SizedBox(height: 8),
               Row(
@@ -900,6 +914,287 @@ class _PaymentLine extends StatelessWidget {
           child: Text(
             order.isPaid ? '$amount $collected' : amount,
             style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+
+/// Cash or a QR, for the owner who is delivering the order themselves.
+///
+/// The rider app has had both since pay on delivery shipped. This is the same
+/// pair for the person with no rider to send - which, for a one-person stall,
+/// is every delivery they take.
+class _CollectActions extends StatefulWidget {
+  const _CollectActions({required this.order});
+
+  final Order order;
+
+  @override
+  State<_CollectActions> createState() => _CollectActionsState();
+}
+
+class _CollectActionsState extends State<_CollectActions> {
+  bool _busy = false;
+
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _cash() => _run(() async {
+        // Read before the dialog, not after: the confirmation is an async gap,
+        // and reaching back through the context once it closes is the lint's
+        // point rather than a formality.
+        final orders = context.read<OrdersState>();
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Taken the cash?'),
+            // Marking it collected is what lets the order be closed, so it is
+            // worth one tap of confirmation rather than being a button that
+            // settles the money by accident.
+            content: Text(
+              'This records \u20b9${widget.order.totalAmount.toStringAsFixed(0)} '
+              'as collected in cash.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Not yet'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Yes, got it'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+        await orders.collectCash(widget.order);
+      });
+
+  Future<void> _qr() => _run(() async {
+        final orders = context.read<OrdersState>();
+        final qr = await orders.upiQr(widget.order);
+        if (!mounted) return;
+        await showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          // Not dismissible by dragging: the phone is being held out to
+          // somebody else, and a stray swipe closing the code mid-scan is the
+          // one interaction this screen cannot afford.
+          isDismissible: false,
+          enableDrag: false,
+          builder: (_) => StallUpiQrSheet(orderId: widget.order.id, qr: qr),
+        );
+      });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: _busy ? null : _cash,
+            icon: const Icon(Icons.payments_outlined, size: 18),
+            label: const Text('Took cash'),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: _busy ? null : _qr,
+            icon: const Icon(Icons.qr_code_2, size: 18),
+            label: const Text('Show UPI QR'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The QR a customer scans, and the moment it is paid.
+///
+/// The stall's copy of the rider app's sheet, and stateful for the same reason:
+/// a sheet that captures the QR and never looks at the order again leaves the
+/// person holding the phone with no idea the money has arrived.
+///
+/// Public rather than private only so a widget test can mount it on its own.
+class StallUpiQrSheet extends StatefulWidget {
+  const StallUpiQrSheet({super.key, required this.orderId, required this.qr});
+
+  final String orderId;
+  final UpiQr qr;
+
+  @override
+  State<StallUpiQrSheet> createState() => StallUpiQrSheetState();
+}
+
+class StallUpiQrSheetState extends State<StallUpiQrSheet> {
+  /// Slower than the rider app's three seconds, because this app holds a socket
+  /// and qr_code.credited is published down it. This is only insurance against
+  /// that socket having dropped while the sheet is open, and a stall's order
+  /// list is a heavier read than a rider's two deliveries.
+  static const _whileWatching = Duration(seconds: 6);
+
+  Timer? _poll;
+
+  /// So the buzz fires once rather than on every rebuild after payment.
+  bool _announced = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _poll = Timer.periodic(_whileWatching, (_) {
+      context.read<OrdersState>().reloadQuietly();
+    });
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  /// The order as the server last described it, or null if it has gone.
+  Order? _current(OrdersState state) {
+    for (final o in state.orders) {
+      if (o.id == widget.orderId) return o;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final order = _current(context.watch<OrdersState>());
+
+    // A missing order counts as settled rather than still owing. Staring at a
+    // live code for an order that is no longer in the queue would be asking a
+    // customer to pay for something already closed.
+    final paid = order == null || !order.isAwaitingCollection;
+
+    if (paid && !_announced) {
+      _announced = true;
+      _poll?.cancel();
+      // Haptic as well as visual: the phone is turned towards the customer, so
+      // the owner is watching them rather than the screen.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        HapticFeedback.heavyImpact();
+      });
+    }
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: paid ? _paidView(order) : _qrView(),
+      ),
+    );
+  }
+
+  Widget _paidView(Order? order) {
+    final how = order?.collectedVia == 'cash' ? 'in cash' : 'by UPI';
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.check_circle, size: 64, color: AppTheme.success),
+        const SizedBox(height: 12),
+        Text(
+          '\u20b9${widget.qr.amount.toStringAsFixed(0)} received',
+          style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Paid $how. You can hand the order over.',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        ),
+        const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _qrView() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '\u20b9${widget.qr.amount.toStringAsFixed(0)}',
+          style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Ask the customer to scan with any UPI app',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        ),
+        const SizedBox(height: 16),
+        // Razorpay renders and hosts the image, so there is no QR package in
+        // this app and nothing here has to encode a payment string.
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 280),
+          child: Image.network(
+            widget.qr.imageUrl,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text("Couldn't load the QR. Take cash instead."),
+            ),
+            loadingBuilder: (_, child, progress) => progress == null
+                ? child
+                : const Padding(
+                    padding: EdgeInsets.all(40),
+                    child: CircularProgressIndicator(),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              height: 14,
+              width: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 10),
+            Text(
+              'Waiting for the payment',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'This screen tells you the moment it arrives. '
+          'The code works until ${TimeOfDay.fromDateTime(widget.qr.expiresAt.toLocal()).format(context)}.',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
           ),
         ),
       ],

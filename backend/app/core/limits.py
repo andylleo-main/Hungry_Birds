@@ -75,6 +75,15 @@ ORDER_STATUS_UPDATE = (Limit(60, MINUTE),)
 # normal.
 ORDER_ASSIGN = (Limit(60, MINUTE),)
 
+# Taking the money at the door, when the stall owner is the one carrying the
+# order. Riders do the same thing under RIDER_WRITE; these exist separately
+# because the two audiences are counted separately - per user here, per IP
+# there - and because minting a QR is a round trip to Razorpay while tapping
+# "cash" is one small write. Somebody showing a code to one customer needs a few
+# attempts, not sixty.
+ORDER_COLLECT = (Limit(30, MINUTE),)
+ORDER_UPI_QR = (Limit(10, MINUTE), Limit(60, HOUR))
+
 # --- Riders -----------------------------------------------------------------
 # A rider's password is server-generated and readable - roughly 34 bits, which
 # is deliberately not enough to stand on its own. This limit is the other half
