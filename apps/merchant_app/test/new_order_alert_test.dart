@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hb_shared/hb_shared.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:merchant_app/services/new_order_alert.dart';
 import 'package:merchant_app/state/orders_state.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -70,6 +71,7 @@ void main() {
       Order.fromJson(orderJson(id, status.wire));
 
   _arrivalsByAnyPath();
+  _whenTheSoundFails();
 
   test('the first load does not announce the whole queue', () async {
     // The one that would make this unusable: a stall opening the app mid-service
@@ -303,5 +305,60 @@ void _arrivalsByAnyPath() {
 
     expect(state.pendingAlerts.map((o) => o.id), ['b']);
     state.dispose();
+  });
+}
+
+/// What the alarm does when the audio will not play.
+///
+/// The sound itself cannot be exercised here - there is no audio device - so
+/// what is pinned is everything around it: that a failure is recorded rather
+/// than swallowed, that the phone still buzzes, and that the self-test answers
+/// in words instead of throwing. Those are the parts that were missing when
+/// "the alarm doesn't ring" arrived with nothing to act on.
+void _whenTheSoundFails() {
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({});
+  });
+
+  test('a failure to play is recorded, not swallowed', () async {
+    // No audio platform under the test binding, so both routes fail - which is
+    // exactly the condition that used to produce silence and no explanation.
+    final alert = NewOrderAlert();
+
+    await alert.start();
+
+    expect(alert.isRinging, isFalse);
+    expect(alert.lastProblem, isNotNull);
+    expect(alert.lastProblem, contains('volume'),
+        reason: 'it should name the route it tried');
+    alert.dispose();
+  });
+
+  test('the self-test answers in words rather than throwing', () async {
+    final alert = NewOrderAlert();
+
+    final result = await alert.selfTest();
+
+    expect(result, isNotEmpty);
+    expect(result, contains('buzzed'));
+    alert.dispose();
+  });
+
+  test('stopping something that never started is harmless', () async {
+    final alert = NewOrderAlert();
+    await alert.stop();
+    expect(alert.isRinging, isFalse);
+    alert.dispose();
+  });
+
+  test('start is safe to call twice', () async {
+    // _apply and a reload can both land on the same order within a second.
+    final alert = NewOrderAlert();
+
+    await Future.wait([alert.start(), alert.start()]);
+
+    expect(alert.isRinging, isFalse, reason: 'no audio here either way');
+    alert.dispose();
   });
 }

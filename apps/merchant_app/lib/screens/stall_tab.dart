@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../services/cloudinary_uploader.dart';
 import '../app_config.dart';
 import '../services/printer.dart';
+import '../state/orders_state.dart';
 import '../state/merchant_state.dart';
 import 'fulfilment_screen.dart';
 import 'printer_screen.dart';
@@ -19,6 +20,35 @@ class StallTab extends StatefulWidget {
 }
 
 class _StallTabState extends State<StallTab> {
+  bool _testingAlarm = false;
+
+  /// Ring the alarm on demand, and say what happened.
+  ///
+  /// The sound cannot be tried from where this app is written, so without this
+  /// "the alarm doesn't ring" is a report with nothing in it to act on - the
+  /// failure was going to debugPrint, which a release build throws away.
+  Future<void> _testAlarm() async {
+    final orders = context.read<OrdersState>();
+    setState(() => _testingAlarm = true);
+    final result = await orders.alert.selfTest();
+    if (!mounted) return;
+    setState(() => _testingAlarm = false);
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New-order alarm'),
+        content: Text(result),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   bool _uploadingCover = false;
 
   Future<void> _editDetails() async {
@@ -239,6 +269,28 @@ class _StallTabState extends State<StallTab> {
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const PrinterScreen()),
               ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.notifications_active_outlined),
+              title: const Text(
+                'New-order alarm',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: const Text(
+                'Ring it for three seconds, to check you can hear it',
+                style: TextStyle(fontSize: 13),
+              ),
+              trailing: _testingAlarm
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    )
+                  : const Icon(Icons.play_arrow),
+              onTap: _testingAlarm ? null : _testAlarm,
             ),
           ),
           const SizedBox(height: 16),
