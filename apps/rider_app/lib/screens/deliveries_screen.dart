@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hb_shared/hb_shared.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -253,60 +256,12 @@ class _DeliveryCardState extends State<_DeliveryCard> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '\u20b9${qr.amount.toStringAsFixed(0)}',
-                style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'Ask the customer to scan with any UPI app',
-                style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-              ),
-              const SizedBox(height: 16),
-              // Razorpay renders and hosts the image, so there is no QR package
-              // in this app and nothing here has to encode a payment string.
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 280),
-                child: Image.network(
-                  qr.imageUrl,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text("Couldn't load the QR. Collect cash instead."),
-                  ),
-                  loadingBuilder: (_, child, progress) => progress == null
-                      ? child
-                      : const Padding(
-                          padding: EdgeInsets.all(40),
-                          child: CircularProgressIndicator(),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'It marks itself paid once the money arrives. '
-                'You do not need to confirm anything.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Close'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      // Not dismissible by dragging: the rider is holding the phone out to
+      // somebody else, and a stray swipe closing the code mid-scan is the one
+      // interaction this screen cannot afford.
+      isDismissible: false,
+      enableDrag: false,
+      builder: (_) => UpiQrSheet(orderId: order.id, qr: qr),
     );
   }
 
@@ -569,5 +524,191 @@ class _DeliveryCardState extends State<_DeliveryCard> {
           ),
         ),
     };
+  }
+}
+
+
+/// The QR a customer scans, and the moment it is paid.
+///
+/// Public rather than private only so a widget test can mount it on its own.
+/// The behaviour worth testing is the transition from waiting to paid, and
+/// reaching it through the whole deliveries screen would mean standing up an
+/// API client to prove something about one sheet.
+///
+/// Its own widget with its own poll, because the sheet used to be a static
+/// picture: the rider held it up, the customer paid, Razorpay told the server -
+/// and nothing told the rider. They had to close the sheet and notice the card
+/// had changed, which is a poor thing to be doing while somebody waits for their
+/// food.
+///
+/// Polls faster than the background timer does. Twelve seconds is right for a
+/// list nobody is staring at; it is far too long when a rider is standing in a
+/// doorway watching for a confirmation. Three seconds against a 120-a-minute
+/// limit is affordable, and it stops the moment the money lands.
+class UpiQrSheet extends StatefulWidget {
+  const UpiQrSheet({super.key, required this.orderId, required this.qr});
+
+  final String orderId;
+  final UpiQr qr;
+
+  @override
+  State<UpiQrSheet> createState() => UpiQrSheetState();
+}
+
+class UpiQrSheetState extends State<UpiQrSheet> {
+  static const _whileWatching = Duration(seconds: 3);
+
+  Timer? _poll;
+
+  /// So the buzz fires once rather than on every rebuild after payment.
+  bool _announced = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _poll = Timer.periodic(_whileWatching, (_) {
+      // Quiet: a poll that fails because the rider walked behind a wall must not
+      // replace the screen with an error while a customer is scanning.
+      context.read<RiderState>().refresh(quiet: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  /// The order as the server last described it, or null once it has gone.
+  Order? _current(RiderState state) {
+    for (final o in state.orders) {
+      if (o.id == widget.orderId) return o;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final order = _current(context.watch<RiderState>());
+
+    // A missing order counts as settled: it has left the rider's list, which it
+    // only does once it is finished. Treating it as still owing would leave the
+    // rider staring at a code for something that is no longer theirs.
+    final paid = order == null || !order.isAwaitingCollection;
+
+    if (paid && !_announced) {
+      _announced = true;
+      _poll?.cancel();
+      // Haptic rather than only visual: a rider in a corridor is looking at the
+      // customer, not at the screen they are holding out.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        HapticFeedback.heavyImpact();
+      });
+    }
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: paid ? _paidView(order) : _qrView(),
+      ),
+    );
+  }
+
+  Widget _paidView(Order? order) {
+    final how = order?.collectedVia == 'cash' ? 'in cash' : 'by UPI';
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.check_circle, size: 64, color: AppTheme.success),
+        const SizedBox(height: 12),
+        Text(
+          '\u20b9${widget.qr.amount.toStringAsFixed(0)} received',
+          style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Paid $how. You can hand the order over.',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        ),
+        const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _qrView() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '\u20b9${widget.qr.amount.toStringAsFixed(0)}',
+          style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Ask the customer to scan with any UPI app',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        ),
+        const SizedBox(height: 16),
+        // Razorpay renders and hosts the image, so there is no QR package in
+        // this app and nothing here has to encode a payment string.
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 280),
+          child: Image.network(
+            widget.qr.imageUrl,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text("Couldn't load the QR. Collect cash instead."),
+            ),
+            loadingBuilder: (_, child, progress) => progress == null
+                ? child
+                : const Padding(
+                    padding: EdgeInsets.all(40),
+                    child: CircularProgressIndicator(),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              height: 14,
+              width: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 10),
+            Text(
+              'Waiting for the payment',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'This screen tells you the moment it arrives. '
+          'The code works until ${TimeOfDay.fromDateTime(widget.qr.expiresAt.toLocal()).format(context)}.',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ),
+      ],
+    );
   }
 }
