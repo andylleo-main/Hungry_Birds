@@ -26,7 +26,7 @@ from app.modules.orders.schemas import (
 )
 from app.modules.auth.service import assert_allowed_domain
 from app.core.tasks import fire_and_log
-from app.modules.fulfilment.service import assert_order_fulfilment
+from app.modules.fulfilment.service import assert_meets_minimum, assert_order_fulfilment
 from app.modules.notifications.service import notify_new_order, notify_rider_assigned
 from app.modules.payments import service as payments
 from app.modules.payments.collection import (
@@ -253,6 +253,11 @@ async def place_order(
         )
 
     order.total_amount = total
+
+    # Only now, because this is the first moment the basket's worth is known
+    # from the server's own prices. Before this point there is nothing to
+    # compare against the stall's minimum except numbers the client sent.
+    assert_meets_minimum(vendor, order.fulfilment_type, total)
 
     # What the stall's own menu says this basket takes. Snapshotted here rather
     # than computed on every read, so a merchant editing a dish tomorrow cannot

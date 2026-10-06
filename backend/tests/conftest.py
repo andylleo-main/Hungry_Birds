@@ -130,6 +130,8 @@ async def customer(db):
 @pytest.fixture
 async def vendor(db):
     """An approved, open stall and a merchant-app token for its owner."""
+    from decimal import Decimal
+
     from app.core.security import TokenAudience
     from app.db.models.user import User, UserRole
     from app.db.models.vendor import Vendor
@@ -144,6 +146,18 @@ async def vendor(db):
         stall_name=f"Stall {uuid.uuid4().hex[:5]}",
         is_approved=True,
         is_open=True,
+        # No minimum, set explicitly against the column's Rs.100 default.
+        #
+        # Nearly every delivery test in the suite orders one Rs.60 Momos, because
+        # that is what `menu_item` is and what makes the totals readable. Those
+        # tests are about riders, handover codes, push and cash collection - a
+        # minimum none of them asked for has no business refusing their orders,
+        # and raising every basket past Rs.100 instead would obscure what each
+        # one is checking.
+        #
+        # The default itself is covered where it belongs, in test_min_order.py,
+        # which builds its own stalls at the figures it means to test.
+        min_delivery_order=Decimal("0.00"),
     )
     db.add(v)
     await db.commit()

@@ -78,6 +78,13 @@ export default function Checkout() {
   const [location, setLocation] = useState('');
   const [dineInOk, setDineInOk] = useState(vendor?.dine_in_enabled ?? true);
   const [deliveryOk, setDeliveryOk] = useState(vendor?.delivery_enabled ?? true);
+  // The stall's smallest delivery, re-read with the rest of its settings below.
+  // Starts at 0 rather than at the server's default, because a cart saved before
+  // this field existed carries no figure and guessing 100 would refuse a basket
+  // the stall would actually have taken.
+  const [minDelivery, setMinDelivery] = useState(
+    Number(vendor?.min_delivery_order ?? 0),
+  );
 
   // Whether this deployment is charging anybody. Read from the server rather
   // than the bundle: it is a property of the backend that is running, and a
@@ -112,6 +119,7 @@ export default function Checkout() {
         if (cancelled) return;
         setDineInOk(detail.dine_in_enabled);
         setDeliveryOk(detail.delivery_enabled);
+        setMinDelivery(Number(detail.min_delivery_order ?? 0));
         setLocations(detail.delivery_locations);
 
         // Nothing is pre-selected. Dine-in used to be picked here as soon as
@@ -172,6 +180,16 @@ export default function Checkout() {
   /// a stale choice behind - the server would refuse the order and the customer
   /// would have no idea why.
   const cashAtTheDoor = payLater && fulfilment === 'delivery';
+
+  /// How much short of the stall's minimum this basket is, or 0 if it is fine.
+  ///
+  /// Delivery only, and only once delivery has actually been chosen: a basket
+  /// that is being eaten at the counter is never too small. Computed rather
+  /// than stored so it follows the stepper as the customer adds a dish.
+  const shortOfMinimum =
+    fulfilment === 'delivery' && minDelivery > 0 && subtotal < minDelivery
+      ? minDelivery - subtotal
+      : 0;
 
   const modes = useMemo(
     () =>
@@ -637,6 +655,21 @@ export default function Checkout() {
             </div>
           )}
 
+          {shortOfMinimum > 0 && soldOut.length === 0 && (
+            <div className="rounded bg-warning-tint px-space-sm py-space-sm text-body-sm text-on-surface">
+              <p>
+                {vendor?.stall_name ?? 'This stall'} delivers orders of{' '}
+                {rupees(minDelivery)} or more. Add {rupees(shortOfMinimum)} more to have
+                this delivered.
+              </p>
+              {dineInOk && (
+                <p className="mt-space-xs text-on-surface-variant">
+                  Eating at the stall has no minimum.
+                </p>
+              )}
+            </div>
+          )}
+
           {error && soldOut.length === 0 && (
             <p className="rounded bg-primary-tint px-space-sm py-space-sm text-body-sm text-primary">
               {error}
@@ -646,17 +679,22 @@ export default function Checkout() {
           {/* Refused while nothing is chosen: the mode is no longer picked for
               the customer, so the button has to wait for them rather than send
               an order the server will bounce. Refused with a sold-out line in
-              the cart for the same reason. */}
+              the cart for the same reason, and below the stall's minimum for
+              the same reason again - the server refuses that too. */}
           <button
             type="button"
             className="btn-primary w-full"
-            disabled={placing || fulfilment === null || soldOut.length > 0}
+            disabled={
+              placing || fulfilment === null || soldOut.length > 0 || shortOfMinimum > 0
+            }
             onClick={placeOrder}
           >
             {placing ? (
               <Spinner />
             ) : fulfilment === null ? (
               'Choose dine in or delivery'
+            ) : shortOfMinimum > 0 ? (
+              `Add ${rupees(shortOfMinimum)} to have this delivered`
             ) : cashAtTheDoor ? (
               <>
                 Place order &middot; pay {rupees(subtotal)} on delivery

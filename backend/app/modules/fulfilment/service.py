@@ -6,6 +6,7 @@ incoming order is one this stall will actually accept.
 """
 
 import uuid
+from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -102,3 +103,31 @@ async def assert_order_fulfilment(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "This stall does not deliver to that location"
         )
+
+
+def assert_meets_minimum(
+    vendor: Vendor, fulfilment_type: FulfilmentType, total: Decimal
+) -> None:
+    """Refuse a delivery smaller than this stall will cook for.
+
+    Separate from assert_order_fulfilment, and called from a different place,
+    because it needs something that function cannot have: the basket's total.
+    The total is only known after every line has been priced off the rows the
+    server read - the payload's own figures are never trusted - so the check has
+    to happen after that, not alongside the mode and location checks that run
+    before anything is priced.
+
+    Dine-in is exempt. The minimum exists because a delivery costs the stall a
+    trip, and there is no trip to the counter.
+    """
+    if fulfilment_type is not FulfilmentType.DELIVERY:
+        return
+    minimum = vendor.min_delivery_order or Decimal(0)
+    if minimum <= 0 or total >= minimum:
+        return
+    short = minimum - total
+    raise HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        f"{vendor.stall_name} delivers orders of ₹{minimum:.0f} or more. "
+        f"Add ₹{short:.0f} more, or eat at the stall instead.",
+    )

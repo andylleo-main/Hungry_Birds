@@ -332,6 +332,7 @@ class ApiClient {
     required bool dineInEnabled,
     required bool deliveryEnabled,
     required List<String> enabledLocations,
+    double? minDeliveryOrder,
   }) async {
     final data = await _request(
       'PUT',
@@ -340,6 +341,11 @@ class ApiClient {
         'dine_in_enabled': dineInEnabled,
         'delivery_enabled': deliveryEnabled,
         'enabled_locations': enabledLocations,
+        // Omitted when null, and the server reads omission as "leave it alone".
+        // Sent as a string, two decimal places, because the field is a Decimal
+        // there and a Dart double would arrive as 100.0 or worse.
+        if (minDeliveryOrder != null)
+          'min_delivery_order': minDeliveryOrder.toStringAsFixed(2),
       },
     ) as Map<String, dynamic>;
     return FulfilmentSettings.fromJson(data);

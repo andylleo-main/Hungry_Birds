@@ -18,6 +18,15 @@ export interface Vendor {
   /** How this stall will hand food over. Both default to on server-side. */
   dine_in_enabled: boolean;
   delivery_enabled: boolean;
+  /**
+   * The smallest delivery this stall will cook for, as a decimal string. "0.00"
+   * means none, and it never applies to dine-in.
+   *
+   * Optional on this type, not on the wire: a cart that was filled before this
+   * shipped is still sitting in somebody's localStorage without it, and the
+   * server is the authority anyway.
+   */
+  min_delivery_order?: string;
 }
 
 /** One size of a dish: "Half" at 120, "Full" at 200. */

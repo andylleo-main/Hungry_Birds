@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 from pydantic import BaseModel
 
@@ -30,6 +31,10 @@ class VendorOut(BaseModel):
     # location list for every stall on the discover page.
     dine_in_enabled: bool
     delivery_enabled: bool
+    # Carried on the list shape rather than only the detail one so a stall card
+    # can warn about the minimum before a customer has built a basket. 0 means
+    # none, and it applies to delivery only.
+    min_delivery_order: Decimal
 
     model_config = {"from_attributes": True}
 

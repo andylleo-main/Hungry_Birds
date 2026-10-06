@@ -19,6 +19,7 @@ async def _current(vendor: Vendor, db: AsyncSession) -> FulfilmentOut:
     return FulfilmentOut(
         dine_in_enabled=vendor.dine_in_enabled,
         delivery_enabled=vendor.delivery_enabled,
+        min_delivery_order=vendor.min_delivery_order,
         locations=[
             LocationOut(code=code, label=label, enabled=code not in disabled)
             for code, label in DELIVERY_LOCATIONS.items()
@@ -66,6 +67,8 @@ async def update_fulfilment(
     await set_enabled_codes(vendor.id, set(payload.enabled_locations), db)
     vendor.dine_in_enabled = payload.dine_in_enabled
     vendor.delivery_enabled = payload.delivery_enabled
+    if payload.min_delivery_order is not None:
+        vendor.min_delivery_order = payload.min_delivery_order
     await db.commit()
     await db.refresh(vendor)
     return await _current(vendor, db)

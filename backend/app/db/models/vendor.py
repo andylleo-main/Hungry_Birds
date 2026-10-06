@@ -1,6 +1,7 @@
 import uuid
+from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, String, Text
+from sqlalchemy import Boolean, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,6 +26,19 @@ class Vendor(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # the vendor has to opt into before their stall reappears.
     dine_in_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     delivery_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # The smallest delivery this stall will cook for. Delivery only: there is
+    # nobody to send to somebody standing at the counter, so a dine-in order of
+    # one samosa costs the stall nothing it was not already set up for.
+    #
+    # Not nullable, with a default rather than None-means-no-minimum, because
+    # "no minimum" is expressible as zero and a nullable column would make every
+    # caller handle two shapes of the same answer. Numeric to match
+    # orders.total_amount: comparing a basket against a float minimum is how a
+    # Rs.100 basket gets refused for being Rs.99.99999.
+    min_delivery_order: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), default=Decimal("100.00"), nullable=False
+    )
 
     user: Mapped["User"] = relationship(back_populates="vendor")
     categories: Mapped[list["MenuCategory"]] = relationship(
