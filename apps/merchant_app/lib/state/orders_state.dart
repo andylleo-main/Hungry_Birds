@@ -140,8 +140,14 @@ class OrdersState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateStatus(Order order, OrderStatus status) async {
-    final updated = await api.updateOrderStatus(order.id, status);
+  /// Moves an order along, optionally saying how long the kitchen needs.
+  ///
+  /// [prepMinutes] is only read by the server when accepting. Omitting it keeps
+  /// whatever the menu's own times worked out at placement, which is also what
+  /// the accept dialog pre-fills - so accepting the suggestion and accepting
+  /// without thinking about it are the same request.
+  Future<void> updateStatus(Order order, OrderStatus status, {int? prepMinutes}) async {
+    final updated = await api.updateOrderStatus(order.id, status, prepMinutes: prepMinutes);
     _apply(updated);
   }
 

@@ -34,12 +34,14 @@ from app.modules.orders.service import (
     TERMINAL_STATUSES,
     allocate_token,
     assert_transition,
+    estimate_prep_minutes,
     generate_delivery_code,
     generate_order_number,
     load_order,
     may_view_order,
     order_query,
     publish_order_event,
+    ready_by_from,
 )
 from app.modules.menu.service import resolve_line_price
 from app.modules.vendors.deps import get_own_vendor
@@ -243,6 +245,19 @@ async def place_order(
         )
 
     order.total_amount = total
+
+    # What the stall's own menu says this basket takes. Snapshotted here rather
+    # than computed on every read, so a merchant editing a dish tomorrow cannot
+    # change what this customer was told today - the same reason line prices are
+    # snapshotted a few lines above.
+    # One entry per distinct dish on the ticket, not per unit: four rotis are one
+    # pan, which is the whole reason the formula charges per dish rather than
+    # summing quantities.
+    order.prep_minutes = estimate_prep_minutes(
+        found[line.menu_item_id].prep_minutes for line in payload.items
+    )
+    order.ready_by = ready_by_from(order.prep_minutes, order.fulfilment_type)
+
     db.add(order)
 
     if not paying_now:
@@ -376,6 +391,21 @@ async def update_order_status(
     assert_transition(order, payload.status)
 
     order.status = payload.status
+
+    if payload.status is OrderStatus.ACCEPTED:
+        # The authoritative number, because the merchant is the one looking at
+        # the actual kitchen. Falls back to what the menu said at placement when
+        # they leave the field alone, which is also what their app pre-fills it
+        # with - so accepting without thinking about it and accepting the
+        # suggestion are the same action.
+        if payload.prep_minutes is not None:
+            order.prep_minutes = payload.prep_minutes
+        # Recomputed from now rather than from placement: the clock a customer
+        # watches should start when the kitchen takes the order on, not when
+        # they paid. An order accepted ten minutes late would otherwise show a
+        # countdown that has already run out.
+        order.ready_by = ready_by_from(order.prep_minutes, order.fulfilment_type)
+
     await db.commit()
 
     # A stall ending an order without the customer getting their food is the

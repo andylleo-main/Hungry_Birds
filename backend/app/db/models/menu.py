@@ -57,6 +57,19 @@ class MenuItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Roughly how long this dish takes to make, in minutes.
+    #
+    # Nullable, and null means "nobody has said" rather than "instant". A dish
+    # with no time contributes nothing to an order's estimate, and an order whose
+    # dishes all lack one gets no estimate at all - showing nothing is honest,
+    # where inventing a number for a stall that never filled this in is not.
+    #
+    # Unlike price, this is an ordinary field a merchant writes directly: there
+    # is no approval queue. A wrong prep time costs a few minutes of goodwill;
+    # a wrong price costs money, which is the whole reason only one of them has
+    # an admin in front of it.
+    prep_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     vendor: Mapped["Vendor"] = relationship(back_populates="items")
     category: Mapped["MenuCategory | None"] = relationship(back_populates="items")
 

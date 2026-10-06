@@ -178,6 +178,20 @@ class Order {
   /// "cash" or "upi" once a rider has collected at the door. Null otherwise.
   final String? collectedVia;
 
+  /// How long the kitchen says this takes, in minutes. Prep only - the delivery
+  /// buffer is not in here.
+  ///
+  /// Null when no dish on the order had a time set and the merchant has not
+  /// supplied one either.
+  final int? prepMinutes;
+
+  /// When to expect it, absolute, including the delivery buffer.
+  ///
+  /// Computed server-side rather than from [prepMinutes] on each device,
+  /// because "now" differs on every phone and a countdown that disagrees
+  /// between the student's browser and the stall's tablet is worse than none.
+  final DateTime? readyBy;
+
   final double totalAmount;
   final String? note;
   final DateTime createdAt;
@@ -226,6 +240,8 @@ class Order {
     required this.paymentMethod,
     this.paymentStatus = PaymentStatus.unknown,
     this.collectedVia,
+    this.prepMinutes,
+    this.readyBy,
     required this.totalAmount,
     required this.note,
     required this.createdAt,
@@ -270,6 +286,10 @@ class Order {
         paymentMethod: json['payment_method'] as String,
         paymentStatus: PaymentStatus.fromJson(json['payment_status'] as String?),
         collectedVia: json['collected_via'] as String?,
+        prepMinutes: json['prep_minutes'] as int?,
+        readyBy: json['ready_by'] == null
+            ? null
+            : DateTime.parse(json['ready_by'] as String),
         totalAmount: double.parse(json['total_amount'].toString()),
         note: json['note'] as String?,
         createdAt: DateTime.parse(json['created_at'] as String),

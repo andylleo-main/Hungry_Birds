@@ -1,11 +1,12 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     Enum,
     ForeignKey,
     Index,
@@ -74,6 +75,27 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Null on anything paid online, and on a cash order nobody has collected yet.
     # A stall counting its cash box at close wants exactly this column.
     collected_via: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    # How long the kitchen says this one takes, in minutes.
+    #
+    # Snapshotted at placement from the dishes' own prep times, for the same
+    # reason prices are snapshotted: a merchant editing a dish tomorrow must not
+    # retroactively change what a customer was told today. Overwritten by
+    # whatever the merchant types when they accept, which is the authoritative
+    # number - they are looking at the actual kitchen.
+    #
+    # Prep only. The delivery buffer is not in here, so a merchant never has to
+    # think about riders when answering "how long will this take to cook".
+    prep_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # When the customer is told to expect it, absolute.
+    #
+    # Stored rather than computed by each client, because "now" differs on every
+    # phone and a countdown that disagrees between the web app and the stall is
+    # worse than no countdown. Recomputed at placement and again on acceptance,
+    # since the clock should start when the kitchen actually takes it on, not
+    # when the order was paid for.
+    ready_by: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # The Razorpay QR a rider is currently showing for this order, if any.
     # Indexed, because the qr_code.credited webhook names only the QR and this is

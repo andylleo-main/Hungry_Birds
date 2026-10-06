@@ -80,6 +80,13 @@ class MenuItem {
   /// The proposed price, waiting on an admin. Null when nothing is pending.
   final double? pendingPrice;
 
+  /// Roughly how long this dish takes to make.
+  ///
+  /// Null means the stall has not said, which is not the same as instant - a
+  /// dish with no time contributes nothing to an order's estimate, and anything
+  /// drawing this shows nothing rather than a zero.
+  final int? prepMinutes;
+
   const MenuItem({
     required this.id,
     required this.name,
@@ -90,6 +97,7 @@ class MenuItem {
     required this.isAvailable,
     this.variants = const [],
     this.pendingPrice,
+    this.prepMinutes,
   });
 
   bool get priceAwaitingApproval => pendingPrice != null;
@@ -118,6 +126,7 @@ class MenuItem {
         categoryId: json['category_id'] as String?,
         imageUrl: json['image_url'] as String?,
         isAvailable: json['is_available'] as bool,
+        prepMinutes: json['prep_minutes'] as int?,
         // Defaulted rather than required, so an item serialised by a server
         // that predates sizes still decodes instead of throwing and taking the
         // whole menu with it. Same reasoning as fulfilment_type on Order.

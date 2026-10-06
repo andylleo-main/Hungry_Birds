@@ -917,6 +917,51 @@ reject and the customer is refunded. Re-validating at webhook time would mean a
 webhook that can fail for a business reason, which is the one thing a webhook
 must not be.
 
+## How long the food will take
+
+Each dish carries a prep time the merchant sets, and an order's estimate is built
+from them:
+
+```
+max(the dishes' times) + 2 minutes per extra dish
++ 15 minutes if it is a delivery
+```
+
+`max` rather than a sum, because a kitchen cooks in parallel — the rotis go on
+while the paneer simmers. Summing would make four rotis and a curry read as half
+an hour and nobody would wait. Two minutes per extra dish is the cost of another
+pan and another thing to plate. The delivery buffer is flat and dine-in gets
+none, since the customer is already standing there.
+
+**A dish with no prep time is ignored, and an order whose dishes all lack one
+gets no estimate at all.** Showing nothing is honest; inventing a number for a
+stall that never filled this in is not. Nothing is backfilled for the same
+reason.
+
+**The merchant's number wins.** Accepting an order opens a field pre-filled with
+the computed estimate, which they can change — they are the one looking at the
+actual kitchen. Leaving it alone keeps the suggestion, so accepting thoughtlessly
+and accepting the suggestion are the same request. What they type is **cooking
+time only**; the delivery buffer is added server-side, so a merchant answering
+"how long will this take" never has to think about riders.
+
+**Prep times save immediately — no admin approval**, unlike prices. The
+asymmetry is the point: a wrong prep time costs a few minutes of goodwill and the
+merchant fixes it themselves, where a wrong price costs money.
+
+The estimate is snapshotted onto the order at placement, the same way line prices
+are, so a merchant editing a dish tomorrow cannot change what somebody was
+promised today. `ready_by` is stored as an absolute timestamp rather than left to
+each client to compute, because "now" differs on every phone and a countdown that
+disagrees between the student's browser and the stall's tablet is worse than no
+countdown. It is recomputed when the order is accepted, so the clock starts when
+the kitchen takes it on rather than when the order was paid for.
+
+**The stall's queue is not reordered.** Quick orders do not jump ahead of slow
+ones — a long order would keep sinking as short ones arrived, and that customer
+is the one who waits longest and complains. The times are shown; the order of
+work stays the stall's own.
+
 ## Pay on delivery
 
 A delivery can be paid at the door instead of up front: cash in the rider's hand,

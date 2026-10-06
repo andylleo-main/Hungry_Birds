@@ -1,7 +1,8 @@
 import uuid
 from decimal import Decimal
+from typing import Annotated
 
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, Field, computed_field
 
 from app.core.fields import Description, ImageUrl, Money, Name, SortOrder
 
@@ -24,12 +25,20 @@ class CategoryOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# Roughly how long a dish takes. Bounded at both ends: zero would mean a student
+# is told their food is ready before it is started, and four hours is longer than
+# anybody waits for campus food - a stall that types 999 by accident should not
+# tell somebody to come back tomorrow.
+PrepMinutes = Annotated[int, Field(ge=1, le=240)]
+
+
 class ItemCreate(BaseModel):
     name: Name
     description: Description | None = None
     price: Money
     category_id: uuid.UUID | None = None
     image_url: ImageUrl | None = None
+    prep_minutes: PrepMinutes | None = None
 
 
 class ItemUpdate(BaseModel):
@@ -41,6 +50,10 @@ class ItemUpdate(BaseModel):
     now goes through PUT /vendors/me/items/{id}/price, so "can a merchant write
     a price?" is answered by one handler whose only job is that, rather than by
     whether somebody remembered which fields are on this model.
+
+    `prep_minutes` *is* here, and the asymmetry is the point. A wrong prep time
+    costs a few minutes of goodwill and the merchant fixes it themselves; a wrong
+    price costs money. Only one of those is worth an admin standing in the way.
     """
 
     # Rejects unknown fields rather than ignoring them, which is Pydantic's
@@ -56,6 +69,7 @@ class ItemUpdate(BaseModel):
     category_id: uuid.UUID | None = None
     image_url: ImageUrl | None = None
     is_available: bool | None = None
+    prep_minutes: PrepMinutes | None = None
 
 
 class PriceUpdate(BaseModel):
@@ -103,6 +117,9 @@ class ItemOut(BaseModel):
     category_id: uuid.UUID | None
     image_url: str | None
     is_available: bool
+    # Null means the stall has not said. Clients show nothing rather than a
+    # guess, which is why this is not defaulted to a number anywhere.
+    prep_minutes: int | None = None
 
     variants: list[VariantOut] = []
     pending_price: Decimal | None = None

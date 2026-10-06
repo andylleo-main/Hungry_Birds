@@ -166,10 +166,72 @@ class _OrderCardState extends State<_OrderCard> {
     if (go == true && mounted) await _move(OrderStatus.cancelled);
   }
 
-  Future<void> _move(OrderStatus status) async {
+  /// Accepts, after asking how long it will take.
+  ///
+  /// The field is pre-filled with what the stall's own menu times worked out, so
+  /// the common case is a glance and a tap. The merchant is the one looking at
+  /// the actual kitchen, though, so their number wins over the menu's.
+  ///
+  /// Skipping is a real option rather than a hidden one: a stall that has filled
+  /// in no prep times has nothing to suggest, and being made to invent a number
+  /// under a queue of waiting students is how a wrong one gets typed.
+  Future<void> _acceptWithTime() async {
+    final order = widget.order;
+    final controller = TextEditingController(text: order.prepMinutes?.toString() ?? '');
+
+    final minutes = await showDialog<String?>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('How long will this take?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Cooking time',
+                suffixText: 'min',
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              order.isDelivery
+                  ? 'Cooking only. We add 15 minutes for the ride.'
+                  : 'The customer sees this as their wait.',
+              style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Skip'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+
+    // Null is the dialog being dismissed or skipped, which still accepts - the
+    // order is the thing that matters and a stall should never be stuck behind
+    // this question. An empty string is the same.
+    if (!mounted) return;
+    await _move(OrderStatus.accepted, prepMinutes: int.tryParse(minutes ?? ''));
+  }
+
+  Future<void> _move(OrderStatus status, {int? prepMinutes}) async {
     setState(() => _busy = true);
     try {
-      await context.read<OrdersState>().updateStatus(widget.order, status);
+      await context
+          .read<OrdersState>()
+          .updateStatus(widget.order, status, prepMinutes: prepMinutes);
     } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -335,6 +397,23 @@ class _OrderCardState extends State<_OrderCard> {
             // being reversed, so the card has to show which of the two this is
             // rather than assert either.
             _PaymentLine(order: order),
+            if (order.readyBy != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.schedule, size: 16, color: AppTheme.textSecondary),
+                  const SizedBox(width: 8),
+                  Text(
+                    // What the customer was told, so the stall is looking at the
+                    // same promise rather than guessing what was said on their
+                    // behalf.
+                    'Told ${DateFormat('h:mm a').format(order.readyBy!.toLocal())}'
+                    '${order.isDelivery ? ' at the door' : ''}',
+                    style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                  ),
+                ],
+              ),
+            ],
             if (order.customerPhone != null) ...[
               const SizedBox(height: 10),
               _CustomerContact(name: order.customerName, phone: order.customerPhone!),
@@ -552,7 +631,7 @@ class _OrderCardState extends State<_OrderCard> {
             const SizedBox(width: 10),
             Expanded(
               child: ElevatedButton(
-                onPressed: () => _move(OrderStatus.accepted),
+                onPressed: _acceptWithTime,
                 child: const Text('Accept'),
               ),
             ),

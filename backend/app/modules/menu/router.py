@@ -138,6 +138,7 @@ async def create_item(
         price=payload.price,
         category_id=payload.category_id,
         image_url=payload.image_url,
+        prep_minutes=payload.prep_minutes,
     )
     db.add(item)
     await db.flush()
@@ -202,6 +203,10 @@ async def update_item(
         item.image_url = changes["image_url"]
     if "is_available" in changes:
         item.is_available = changes["is_available"]
+    # Written straight through, unlike price. See ItemUpdate for why only one of
+    # the two has an approval queue in front of it.
+    if "prep_minutes" in changes:
+        item.prep_minutes = changes["prep_minutes"]
 
     await db.commit()
     await db.refresh(item)

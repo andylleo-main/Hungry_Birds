@@ -1,5 +1,6 @@
 import secrets
 import uuid
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException, status as http_status
@@ -199,6 +200,64 @@ def service_date_now() -> date:
     restart the token counter in the middle of breakfast service.
     """
     return datetime.now(IST).date()
+
+
+# How much each additional dish adds to an order's estimate.
+#
+# A kitchen works in parallel - the rotis go on while the paneer simmers - so an
+# order is not the sum of its dishes. But it is not free either: each extra dish
+# is another pan, another thing to plate, another thing to forget. Two minutes is
+# the number the stall asked for.
+PREP_PER_EXTRA_DISH_MINUTES = 2
+
+# Added to every delivery estimate and to no dine-in one.
+#
+# Flat rather than clever. A rider's trip across campus is a few minutes plus
+# however long they take to find the room, and modelling that from an unassigned
+# order would be a confident guess dressed as a measurement. Dine-in gets nothing
+# because the customer is already standing there.
+DELIVERY_BUFFER_MINUTES = 15
+
+# Nobody waits two hours for campus food, and a stall that types 999 by accident
+# should not tell a student to come back tomorrow.
+MAX_PREP_MINUTES = 240
+
+
+def estimate_prep_minutes(prep_times: Iterable[int | None]) -> int | None:
+    """How long a basket of dishes takes, from each dish's own time.
+
+    `max` plus a small charge per extra dish, because a kitchen cooks in
+    parallel: summing would make four rotis and a curry read as half an hour and
+    nobody would wait.
+
+    Dishes with no prep time set are ignored entirely - they do not raise the
+    maximum and they do not count as an extra dish. A stall that has filled in
+    times for its slow dishes and left the drinks blank gets an estimate about
+    the cooking, which is the useful answer.
+
+    Returns None when no dish has a time, which the callers pass straight
+    through: an order with no estimate shows no estimate. Inventing one for a
+    stall that never filled this in would be worse than the silence.
+    """
+    known = [t for t in prep_times if t]
+    if not known:
+        return None
+    return min(max(known) + PREP_PER_EXTRA_DISH_MINUTES * (len(known) - 1), MAX_PREP_MINUTES)
+
+
+def ready_by_from(
+    prep_minutes: int | None, fulfilment: FulfilmentType, *, now: datetime | None = None
+) -> datetime | None:
+    """The absolute moment to promise, prep plus the delivery buffer.
+
+    Computed server-side and stored rather than left to each client, because
+    "now" differs on every phone and a countdown that disagrees between the
+    student's browser and the stall's tablet is worse than no countdown at all.
+    """
+    if prep_minutes is None:
+        return None
+    buffer = DELIVERY_BUFFER_MINUTES if fulfilment is FulfilmentType.DELIVERY else 0
+    return (now or datetime.now(timezone.utc)) + timedelta(minutes=prep_minutes + buffer)
 
 
 async def allocate_token(order: Order, db: AsyncSession) -> None:

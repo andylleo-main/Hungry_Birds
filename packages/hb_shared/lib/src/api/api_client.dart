@@ -378,6 +378,7 @@ class ApiClient {
     required double price,
     String? categoryId,
     String? imageUrl,
+    int? prepMinutes,
   }) async {
     final data = await _request(
       'POST',
@@ -388,6 +389,7 @@ class ApiClient {
         'price': price,
         if (categoryId != null) 'category_id': categoryId,
         if (imageUrl != null) 'image_url': imageUrl,
+        if (prepMinutes != null) 'prep_minutes': prepMinutes,
       },
     ) as Map<String, dynamic>;
     return MenuItem.fromJson(data);
@@ -406,6 +408,11 @@ class ApiClient {
     String? categoryId,
     String? imageUrl,
     bool? isAvailable,
+    int? prepMinutes,
+    // Null is a real value for prep time - it means "I do not want to say" - so
+    // clearing it needs its own flag. Omitting the field leaves it alone, which
+    // is what every other argument here does.
+    bool clearPrepMinutes = false,
   }) async {
     final body = <String, dynamic>{};
     if (name != null) body['name'] = name;
@@ -413,6 +420,11 @@ class ApiClient {
     if (categoryId != null) body['category_id'] = categoryId;
     if (imageUrl != null) body['image_url'] = imageUrl;
     if (isAvailable != null) body['is_available'] = isAvailable;
+    if (clearPrepMinutes) {
+      body['prep_minutes'] = null;
+    } else if (prepMinutes != null) {
+      body['prep_minutes'] = prepMinutes;
+    }
     final data = await _request('PATCH', '/vendors/me/items/$itemId', body: body)
         as Map<String, dynamic>;
     return MenuItem.fromJson(data);
@@ -701,11 +713,24 @@ class ApiClient {
     await _request('DELETE', '/rider/devices/$fcmToken');
   }
 
-  Future<Order> updateOrderStatus(String orderId, OrderStatus status) async {
+  /// Moves an order along, optionally saying how long the kitchen needs.
+  ///
+  /// [prepMinutes] is only read by the server when accepting, and omitting it
+  /// keeps whatever the menu's own times worked out at placement. So accepting
+  /// without touching the field and accepting the suggested number are the same
+  /// request, which is what lets the merchant app pre-fill it safely.
+  Future<Order> updateOrderStatus(
+    String orderId,
+    OrderStatus status, {
+    int? prepMinutes,
+  }) async {
     final data = await _request(
       'PATCH',
       '/vendors/me/orders/$orderId/status',
-      body: {'status': status.wire},
+      body: {
+        'status': status.wire,
+        if (prepMinutes != null) 'prep_minutes': prepMinutes,
+      },
     ) as Map<String, dynamic>;
     return Order.fromJson(data);
   }

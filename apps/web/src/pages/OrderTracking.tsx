@@ -239,6 +239,26 @@ export default function OrderTracking() {
         </p>
       )}
 
+      {order.ready_by && isActive(order.status) && (
+        <div className="card mb-space-lg flex flex-wrap items-center gap-space-md border-[1.5px] border-outline-variant p-space-md">
+          <Icon name="schedule" className="text-[26px] text-on-surface-variant" />
+          <div className="min-w-0 flex-1">
+            <p className="text-label-lg text-on-surface">
+              {/* The stall's own promise, not a guess made here. It is computed
+                  and stored server-side so this page and the stall's tablet are
+                  never counting down to different minutes. */}
+              {order.fulfilment_type === 'delivery' ? 'At your door by' : 'Ready by'}{' '}
+              {timeOfDay(order.ready_by)}
+            </p>
+            <p className="text-body-sm text-on-surface-variant">
+              {order.fulfilment_type === 'delivery'
+                ? 'Includes the ride over. The stall will update this if it changes.'
+                : 'The stall will update this if it changes.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header strip */}
       <div className="card mb-space-lg flex flex-wrap items-center justify-between gap-space-md p-space-md">
         <div className="flex items-center gap-space-md">

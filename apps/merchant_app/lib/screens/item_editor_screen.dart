@@ -21,6 +21,7 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
   late final TextEditingController _nameController;
   late final TextEditingController _descriptionController;
   late final TextEditingController _priceController;
+  late final TextEditingController _prepController;
 
   String? _categoryId;
   String? _imageUrl;
@@ -43,6 +44,7 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
     _nameController = TextEditingController(text: item?.name ?? '');
     _descriptionController = TextEditingController(text: item?.description ?? '');
     _priceController = TextEditingController(text: item?.price.toStringAsFixed(0) ?? '');
+    _prepController = TextEditingController(text: item?.prepMinutes?.toString() ?? '');
     _categoryId = item?.categoryId;
     _imageUrl = item?.imageUrl;
     _variants = List.of(item?.variants ?? const []);
@@ -53,6 +55,7 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
     _nameController.dispose();
     _descriptionController.dispose();
     _priceController.dispose();
+    _prepController.dispose();
     super.dispose();
   }
 
@@ -96,6 +99,9 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
     }
   }
 
+  /// Minutes typed into the prep field, or null for a blank one.
+  int? get _prepMinutes => int.tryParse(_prepController.text.trim());
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
@@ -118,6 +124,12 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
           description: description,
           categoryId: _categoryId,
           imageUrl: _imageUrl,
+          // Saved right here with everything else, unlike price. A wrong prep
+          // time costs a few minutes of goodwill and the merchant fixes it
+          // themselves; a wrong price costs money, which is why only one of the
+          // two waits on an admin.
+          prepMinutes: _prepMinutes,
+          clearPrepMinutes: _prepController.text.trim().isEmpty,
         );
 
         // Sent separately, and only when it actually moved.
@@ -143,6 +155,7 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
           price: price ?? 0,
           categoryId: _categoryId,
           imageUrl: _imageUrl,
+          prepMinutes: _prepMinutes,
         );
       }
       if (!mounted) return;
@@ -244,6 +257,39 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
                     ),
                   const SizedBox(height: 14),
                 ],
+
+                // Outside the !_hasVariants block on purpose: a dish priced by
+                // its sizes still takes one amount of time to cook. Sizes change
+                // what it costs, not how long the pan is on.
+                TextFormField(
+                  controller: _prepController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Usually takes (minutes)',
+                    suffixText: 'min',
+                    helperText: 'Optional. Students see this on your menu.',
+                  ),
+                  validator: (v) {
+                    final text = v?.trim() ?? '';
+                    // Blank is a real answer - it means "I would rather not
+                    // say", and the menu then shows nothing instead of a guess.
+                    if (text.isEmpty) return null;
+                    final parsed = int.tryParse(text);
+                    if (parsed == null) return 'Whole minutes only';
+                    if (parsed < 1) return 'At least a minute';
+                    if (parsed > 240) return 'Four hours is the most';
+                    return null;
+                  },
+                ),
+                const Padding(
+                  padding: EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Saves straight away - no approval needed, unlike the price.',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
                 if (_isEditing) ...[
                   _SizesSection(
                     itemId: widget.item!.id,

@@ -46,6 +46,13 @@ export interface MenuItem {
   category_id: string | null;
   image_url: string | null;
   is_available: boolean;
+  /**
+   * Roughly how long this dish takes, in minutes.
+   *
+   * Null means the stall has not said, which is not the same as instant — show
+   * nothing rather than a zero.
+   */
+  prep_minutes: number | null;
 }
 
 export interface CategoryWithItems {
@@ -193,6 +200,10 @@ export interface Order {
   status: OrderStatus;
   payment_method: string;
   payment_status: PaymentStatus;
+  /** What the kitchen said, in minutes. Prep only — no delivery buffer. */
+  prep_minutes: number | null;
+  /** When to expect it, absolute and including the delivery buffer. */
+  ready_by: string | null;
   /** "cash" or "upi" once a rider has collected at the door; null otherwise. */
   collected_via?: string | null;
   total_amount: string;

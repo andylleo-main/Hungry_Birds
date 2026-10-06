@@ -90,6 +90,18 @@ class OrderCreate(BaseModel):
 class OrderStatusUpdate(BaseModel):
     status: OrderStatus
 
+    # How long the kitchen says it needs, set when accepting.
+    #
+    # Optional, and only read on the move to `accepted` - a stall marking
+    # something ready is not re-answering this. Omitting it keeps whatever was
+    # computed from the menu at placement, which is what the merchant app
+    # pre-fills the field with, so "accept without thinking about it" and
+    # "accept with the suggested number" are the same action.
+    #
+    # Prep only. The delivery buffer is added on top server-side, so a merchant
+    # answering "how long to cook this" never has to think about riders.
+    prep_minutes: Annotated[int, Field(ge=1, le=240)] | None = None
+
 
 class RiderStatusUpdate(OrderStatusUpdate):
     """What a rider sends when moving an order along.
@@ -148,6 +160,11 @@ class OrderOut(BaseModel):
     status: OrderStatus
     payment_method: str
     payment_status: PaymentStatus
+    # What the kitchen said, in minutes, and the absolute moment to expect it.
+    # Both null when no dish on the order has a prep time set - clients show
+    # nothing rather than a guess.
+    prep_minutes: int | None = None
+    ready_by: datetime | None = None
     # "cash" or "upi" once a rider has collected at the door; null on anything
     # paid online, and on a cash order nobody has collected yet. A stall
     # counting its till at close wants exactly this.

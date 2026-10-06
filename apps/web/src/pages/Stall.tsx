@@ -58,6 +58,15 @@ function MenuItemRow({
           </span>
         </div>
 
+        {item.prep_minutes !== null && (
+          <span className="flex items-center gap-1 text-body-sm text-on-surface-variant">
+            <Icon name="schedule" className="text-[15px]" aria-hidden="true" />
+            {/* A dish the stall has not timed shows nothing at all, rather than
+                a zero that would read as "instant". */}
+            about {item.prep_minutes} min
+          </span>
+        )}
+
         {item.description && (
           <p className="line-clamp-2 max-w-[55ch] text-body-sm text-on-surface-variant">
             {item.description}
