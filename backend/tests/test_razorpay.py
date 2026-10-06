@@ -611,3 +611,77 @@ async def test_a_refund_webhook_without_a_payment_entity_still_finds_its_order(
 
     await db.refresh(row)
     assert row.payment_status.value == "refunded"
+
+
+# --- events we do not act on ------------------------------------------------
+
+
+async def test_qr_lifecycle_events_are_ignored_without_a_warning(
+    signed_webhook, client, db
+):
+    """qr_code.created and qr_code.closed are routine, not anomalies.
+
+    A Razorpay webhook subscribes to whole families of events, so both of these
+    arrive every time a QR is minted or replaced. They carry no payment entity,
+    so they used to fall through to the payment lookup and be logged as
+    "for an order we do not recognise: ''" - a warning that was neither true
+    nor actionable, and which drowned the one that means something. Production
+    logs were full of them.
+    """
+    import uuid as _uuid
+
+    from app.db.models.payment import PaymentEvent
+    from sqlalchemy import select
+
+    # Explicit ids so the assertion reads back exactly these two rows. Querying
+    # by event_type would pick up whatever else a shared test database holds.
+    ids = {}
+    for event_type in ("qr_code.created", "qr_code.closed"):
+        event_id = f"evt_{_uuid.uuid4().hex[:16]}"
+        # event_id_for stores the header value prefixed, so that is what the
+        # ledger holds and what this has to look for.
+        ids[event_type] = f"evt:{event_id}"
+        r = await signed_webhook(
+            {"event": event_type, "payload": {"qr_code": {"entity": {}}}},
+            event_id=event_id,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "ignored"
+
+    # Recorded as ignored rather than as an order we failed to find - the
+    # ledger is where somebody looks when a collection did not land, and it
+    # should not be full of false alarms either.
+    outcomes = (
+        await db.execute(
+            select(PaymentEvent.outcome).where(PaymentEvent.event_id.in_(list(ids.values())))
+        )
+    ).scalars().all()
+    assert len(outcomes) == 2
+    assert set(outcomes) == {"ignored"}
+
+
+async def test_an_unknown_event_type_is_ignored(signed_webhook):
+    """Razorpay adds events; a new one must not be an error."""
+    r = await signed_webhook({"event": "payment.dispute.created", "payload": {}})
+    assert r.status_code == 200
+    assert r.json()["status"] == "ignored"
+
+
+async def test_qr_credited_is_still_handled(signed_webhook):
+    """The guard above must not swallow the one qr event that matters.
+
+    A credit for a QR we have never heard of is "ignored" because there is no
+    order to apply it to - but it got as far as looking, which is the
+    difference this pins.
+    """
+    r = await signed_webhook(
+        {
+            "event": "qr_code.credited",
+            "payload": {
+                "qr_code": {"entity": {"id": "qr_nosuchcode"}},
+                "payment": {"entity": {"id": "pay_x", "amount": 6000}},
+            },
+        }
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "ignored"

@@ -778,15 +778,34 @@ Then register the webhook in the Razorpay dashboard, pointing at
 `<PUBLIC_BASE_URL>/api/payments/razorpay/webhook`, for the events
 `payment.captured`, `payment.failed`, `refund.processed`, `refund.failed` and
 `qr_code.credited`. Put the signing secret you set there into
-`RAZORPAY_WEBHOOK_SECRET`.
+`RAZORPAY_WEBHOOK_SECRET`. The handled set is `HANDLED_EVENTS` in
+`payments/router.py`; anything else is acknowledged and dropped, so subscribing
+to more than this list is harmless.
 
-Two dashboard settings are not code and will fail silently if wrong:
+> **`qr_code.credited` is the one that is easy to miss, and missing it has no
+> symptom at the gateway.** The dashboard groups the QR events together, so
+> ticking `qr_code.created` and `qr_code.closed` without `credited` is an easy
+> slip - and it leaves a system that mints QR codes perfectly, shows them, and
+> never once confirms a payment. The customer pays, the money arrives in the
+> Razorpay account, and the order sits on "waiting for the payment" forever,
+> which looks like a bug in the app.
+>
+> This happened on this deployment. What told us was the API log: `qr_code.created`
+> and `qr_code.closed` arriving on every mint with no `qr_code.credited` ever.
+> That is the check - the presence of its siblings is what proves delivery and
+> signing are fine and the subscription is the problem.
+
+Three dashboard settings are not code and will fail silently if wrong:
 
 - **Auto-capture must be on** (it is the default). With it off, payments stop at
   `authorized`, `payment.captured` never fires, and nothing is ever marked paid.
 - **QR Codes is activated on request.** Pay-on-delivery UPI needs it; without it
   the UPI button in either app answers 503 telling them to take cash, and everything
   else still works.
+- **`qr_code.credited` must be ticked**, per the note above. Activation and
+  subscription are separate: an activated account mints QRs over a webhook that
+  never reports them paid, and the only difference the apps can see is a
+  collection that never lands.
 
 > **Until these are set, no orders can be placed at all.** `POST /orders` answers
 > 503 with a message saying so. That is deliberate: payment is the only route out

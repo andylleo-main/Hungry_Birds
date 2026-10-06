@@ -26,6 +26,28 @@ from app.modules.payments.schemas import PaymentCallback, PaymentSessionOut, Web
 
 logger = logging.getLogger(__name__)
 
+# The events this webhook acts on. Everything else Razorpay sends is
+# acknowledged and dropped.
+#
+# order.paid and payment.authorized are deliberately absent: both describe a
+# payment that payment.captured describes again, and two paths to the same
+# transition is two chances to disagree about it. qr_code.created and
+# qr_code.closed are absent because they say nothing about money - only
+# qr_code.credited does.
+#
+# If a collection never marks itself paid, check this set against the events
+# actually ticked on the webhook in the Razorpay dashboard. A subscription
+# missing qr_code.credited mints QR codes perfectly and never confirms one.
+HANDLED_EVENTS = frozenset(
+    {
+        "payment.captured",
+        "payment.failed",
+        "refund.processed",
+        "refund.failed",
+        "qr_code.credited",
+    }
+)
+
 router = APIRouter(prefix="/payments", tags=["payments"])
 
 # Mounted on the order so it reads as part of checkout rather than a separate
@@ -353,9 +375,23 @@ async def razorpay_webhook(
     refund_entity = (entities.get("refund") or {}).get("entity") or {}
     qr_entity = (entities.get("qr_code") or {}).get("entity") or {}
 
+    # Anything we do not act on leaves here, before any lookup.
+    #
+    # Not an optimisation. A Razorpay webhook is usually subscribed to whole
+    # families of events, so qr_code.created and qr_code.closed arrive every
+    # time a QR is minted or replaced. Those carry no payment entity, so they
+    # used to fall through to the lookup below and be logged as
+    # "razorpay qr_code.created for an order we do not recognise: ''" - which is
+    # not what happened, and which buried the warning that means something. A
+    # genuine unrecognised order is now the only thing that logs it.
+    if event_type not in HANDLED_EVENTS:
+        event.outcome = "ignored"
+        await db.commit()
+        return WebhookAck(status="ignored")
+
     # A doorstep UPI collection is the one event with no payments row behind it -
     # a pay-on-delivery order never opened anything at the gateway - so it is
-    # matched on the QR the rider is holding up instead.
+    # matched on the QR whoever is carrying the order is holding up instead.
     if event_type == "qr_code.credited":
         order = (
             await db.execute(select(Order).where(Order.cod_qr_id == str(qr_entity.get("id") or "")))

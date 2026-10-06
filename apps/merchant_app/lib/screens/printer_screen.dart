@@ -75,13 +75,13 @@ class _PrinterScreenState extends State<PrinterScreen> {
     await context.read<PrinterService>().setColumns(columns);
   }
 
-  Future<void> _test() async {
+  Future<void> _test({bool reconnect = false}) async {
     final service = context.read<PrinterService>();
     final stallName = context.read<MerchantState>().vendor?.stallName ?? 'Hungry Birds';
 
     setState(() => _printing = true);
     try {
-      await service.printTest(stallName: stallName);
+      await service.printTest(stallName: stallName, reconnect: reconnect);
       if (mounted) _say('Sent. Check the paper.');
     } on PrinterException catch (e) {
       if (mounted) _say(e.message);
@@ -154,13 +154,31 @@ class _PrinterScreenState extends State<PrinterScreen> {
                   const Divider(height: 1),
                   Padding(
                     padding: const EdgeInsets.all(12),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _printing ? null : _test,
-                        icon: const Icon(Icons.receipt_long_outlined, size: 18),
-                        label: Text(_printing ? 'Printing…' : 'Print a test page'),
-                      ),
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _printing ? null : () => _test(),
+                            icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                            label: Text(_printing ? 'Printing…' : 'Print a test page'),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        // The honest answer to "it says it printed and nothing
+                        // came out". The connection can be dead while looking
+                        // alive - a write to a sleeping printer is buffered and
+                        // reported as sent - and this is the way to rule that
+                        // out without power-cycling anything.
+                        SizedBox(
+                          width: double.infinity,
+                          child: TextButton.icon(
+                            onPressed: _printing ? null : () => _test(reconnect: true),
+                            icon: const Icon(Icons.bluetooth_searching, size: 18),
+                            label: const Text('Nothing came out? Reconnect and retry'),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
