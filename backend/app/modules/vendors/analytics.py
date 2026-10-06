@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.menu import MenuItem
+from app.db.models.menu import MenuItem, MenuItemVariant
 from app.db.models.order import FulfilmentType, Order, OrderStatus
 from app.db.models.payment import PaymentStatus
 from app.modules.admin.analytics import ACTIVE_STATUSES, EARNING_STATUSES
@@ -327,11 +327,23 @@ async def build_vendor_analytics(
         for r in dish_rows
     ]
 
-    pending_price_changes = await db.scalar(
+    # Both shapes a price can live in. Counting only MenuItem.pending_price told
+    # a stall whose one waiting change was on a size that nothing was waiting,
+    # while the admin queue - which unions both, see admin/menu_router.py - still
+    # showed it. Two scalars rather than a union: each is a trivial indexed count
+    # and neither needs the other's join.
+    pending_items = await db.scalar(
         select(func.count())
         .select_from(MenuItem)
         .where(MenuItem.vendor_id == vendor_id, MenuItem.pending_price.is_not(None))
     )
+    pending_variants = await db.scalar(
+        select(func.count())
+        .select_from(MenuItemVariant)
+        .join(MenuItem, MenuItem.id == MenuItemVariant.item_id)
+        .where(MenuItem.vendor_id == vendor_id, MenuItemVariant.pending_price.is_not(None))
+    )
+    pending_price_changes = (pending_items or 0) + (pending_variants or 0)
 
     return VendorAnalyticsOut(
         range_days=days,
@@ -382,5 +394,5 @@ async def build_vendor_analytics(
         orders_by_day=orders_by_day,
         hours=hours,
         top_dishes=top_dishes,
-        pending_price_changes=pending_price_changes or 0,
+        pending_price_changes=pending_price_changes,
     )

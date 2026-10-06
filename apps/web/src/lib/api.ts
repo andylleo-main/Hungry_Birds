@@ -202,6 +202,36 @@ export interface Analytics {
   top_vendors: { vendor_id: string; stall_name: string; orders: number; revenue: number }[];
 }
 
+/** A dish price, or one size of a dish. The two live in different id spaces. */
+export type PriceChangeTarget = 'item' | 'variant';
+
+/**
+ * A price a stall wants to charge, waiting on an admin.
+ *
+ * Money arrives as strings: these are pydantic `Decimal`s, and turning them
+ * into JS numbers to render them is how a price picks up a rounding error on
+ * the way to somebody's screen. Format them, do not compute with them.
+ */
+export interface PendingPriceChange {
+  target: PriceChangeTarget;
+  target_id: string;
+  vendor_id: string;
+  stall_name: string;
+  item_name: string;
+  variant_name: string | null;
+  current_price: string;
+  pending_price: string;
+  pct_change: number;
+  requested_at: string | null;
+}
+
+/** What approve/reject answer with. `price` is the price now in force. */
+export interface PriceDecision {
+  target: PriceChangeTarget;
+  target_id: string;
+  price: string;
+}
+
 export const api = {
   // --- Auth ---
   requestOtp: (email: string) =>
@@ -347,6 +377,13 @@ export const api = {
     request<Vendor[]>('GET', `/admin/vendors?pending_only=${pendingOnly}`),
   approveVendor: (id: string) => request<Vendor>('POST', `/admin/vendors/${id}/approve`),
   suspendVendor: (id: string) => request<Vendor>('POST', `/admin/vendors/${id}/suspend`),
+
+  adminPriceChanges: () =>
+    request<PendingPriceChange[]>('GET', '/admin/menu/price-changes'),
+  approvePriceChange: (target: PriceChangeTarget, id: string) =>
+    request<PriceDecision>('POST', `/admin/menu/price-changes/${target}/${id}/approve`),
+  rejectPriceChange: (target: PriceChangeTarget, id: string) =>
+    request<PriceDecision>('POST', `/admin/menu/price-changes/${target}/${id}/reject`),
 };
 
 /**

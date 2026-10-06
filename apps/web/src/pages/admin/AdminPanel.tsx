@@ -3,8 +3,9 @@ import { ApiError, api } from '../../lib/api';
 import type { Vendor } from '../../lib/types';
 import { EmptyState, ErrorRetry, Icon, PageLoader, Spinner } from '../../components/ui';
 import Analytics from './Analytics';
+import PriceChanges from './PriceChanges';
 
-type Tab = 'overview' | 'pending' | 'approved';
+type Tab = 'overview' | 'pending' | 'approved' | 'prices';
 
 function VendorRow({
   vendor,
@@ -72,6 +73,9 @@ export default function AdminPanel() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
+  // Reported up by the price-changes tab so its pill can carry a count, the
+  // same way the stall tabs do. Null until that tab has loaded once.
+  const [priceCount, setPriceCount] = useState<number | null>(null);
 
   async function load() {
     setError(null);
@@ -141,7 +145,7 @@ export default function AdminPanel() {
         <PageLoader />
       ) : (
         <>
-          {tab !== 'overview' && (
+          {(tab === 'pending' || tab === 'approved') && (
           <div className="mb-space-lg grid gap-space-md sm:grid-cols-3">
             {[
               ['pending_actions', 'Awaiting approval', pending.length],
@@ -183,6 +187,13 @@ export default function AdminPanel() {
             >
               Approved ({approved.length})
             </button>
+            <button
+              type="button"
+              onClick={() => setTab('prices')}
+              className={`pill ${tab === 'prices' ? 'pill-active' : ''}`}
+            >
+              Price changes{priceCount ? ` (${priceCount})` : ''}
+            </button>
           </div>
 
           {actionError && (
@@ -193,6 +204,8 @@ export default function AdminPanel() {
 
           {tab === 'overview' ? (
             <Analytics />
+          ) : tab === 'prices' ? (
+            <PriceChanges onCount={setPriceCount} />
           ) : shown.length === 0 ? (
             <EmptyState
               icon={tab === 'pending' ? 'task_alt' : 'storefront'}

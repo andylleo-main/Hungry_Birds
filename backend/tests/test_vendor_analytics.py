@@ -251,6 +251,95 @@ class TestWhatAStallActuallyWants:
         body = (await client.get("/vendors/me/analytics", headers=headers)).json()
         assert body["pending_price_changes"] == 1
 
+    async def test_a_waiting_size_price_is_counted_too(self, client, vendor, menu_item):
+        """A price can be pending on a size as well as on the dish itself.
+
+        This counted only MenuItem.pending_price, so a stall whose one waiting
+        change was on "Half" was told nothing was waiting - while the admin
+        queue, which unions both shapes, was showing it the whole time. The
+        merchant's only signal that an admin had not got to it yet said zero.
+        """
+        _, headers = vendor
+        variant = await client.post(
+            f"/vendors/me/items/{menu_item.id}/variants",
+            headers=headers,
+            json={"name": "Half", "price": "120.00"},
+        )
+        assert variant.status_code == 201, variant.text
+        r = await client.put(
+            f"/vendors/me/items/{menu_item.id}/variants/{variant.json()['id']}/price",
+            headers=headers,
+            json={"price": "150.00"},
+        )
+        assert r.status_code == 200, r.text
+
+        body = (await client.get("/vendors/me/analytics", headers=headers)).json()
+        assert body["pending_price_changes"] == 1
+
+    async def test_both_shapes_add_up(self, client, vendor, menu_item):
+        """The dish and one of its sizes, waiting at the same time: two."""
+        _, headers = vendor
+        variant = await client.post(
+            f"/vendors/me/items/{menu_item.id}/variants",
+            headers=headers,
+            json={"name": "Half", "price": "120.00"},
+        )
+        await client.put(
+            f"/vendors/me/items/{menu_item.id}/variants/{variant.json()['id']}/price",
+            headers=headers,
+            json={"price": "150.00"},
+        )
+        await client.put(
+            f"/vendors/me/items/{menu_item.id}/price",
+            headers=headers,
+            json={"price": "90.00"},
+        )
+
+        body = (await client.get("/vendors/me/analytics", headers=headers)).json()
+        assert body["pending_price_changes"] == 2
+
+    async def test_another_stalls_waiting_size_is_not_counted(
+        self, client, db, vendor, menu_item
+    ):
+        """The join reaches the stall through the dish, so it has to be the
+        right stall's dish. A count that leaked across stalls would show every
+        merchant on campus the same number."""
+        from app.db.models.menu import MenuItem, MenuItemVariant
+        from app.db.models.user import User, UserRole
+        from app.db.models.vendor import Vendor
+
+        _, headers = vendor
+        owner = User(
+            email=f"rival.{uuid.uuid4().hex[:8]}@example.com",
+            role=UserRole.VENDOR,
+            phone="+919876500077",
+        )
+        db.add(owner)
+        await db.commit()
+        await db.refresh(owner)
+        other = Vendor(
+            user_id=owner.id, stall_name="Somebody Else", is_approved=True, is_open=True
+        )
+        db.add(other)
+        await db.commit()
+        await db.refresh(other)
+        item = MenuItem(vendor_id=other.id, name="Their dish", price=Decimal("50.00"))
+        db.add(item)
+        await db.commit()
+        await db.refresh(item)
+        db.add(
+            MenuItemVariant(
+                item_id=item.id,
+                name="Half",
+                price=Decimal("30.00"),
+                pending_price=Decimal("40.00"),
+            )
+        )
+        await db.commit()
+
+        body = (await client.get("/vendors/me/analytics", headers=headers)).json()
+        assert body["pending_price_changes"] == 0
+
     async def test_the_day_range_is_filled_in(self, client, vendor):
         """A quiet Tuesday has to be a trough, not a missing bar - an axis that
         skips it makes a bad week look like a steady one."""
