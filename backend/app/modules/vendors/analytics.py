@@ -84,6 +84,33 @@ class VendorTotals(BaseModel):
     cash: MoneySplit
     prepaid: MoneySplit
 
+    # The same money crossed both ways, so the stall can see which combination
+    # it is actually running on. The four cells sum to `revenue`, and each pair
+    # of them sums to the margin above - a dine-in that is not prepaid is a
+    # dine-in paid in cash, and so on.
+    #
+    # dine_in_cash is structurally always zero: OrderCreate.cash_is_for_deliveries
+    # refuses pay-on-delivery on a dine-in order, because there is nobody to
+    # collect from somebody standing at the counter. It is reported anyway
+    # rather than omitted, because a cell that should be empty and is not says a
+    # rule has been broken somewhere, and that is worth being able to see.
+    dine_in_prepaid: MoneySplit
+    dine_in_cash: MoneySplit
+    delivery_prepaid: MoneySplit
+    delivery_cash: MoneySplit
+
+    # Money owed right now: pay-on-delivery orders the stall is making or has
+    # sent out, that nobody has collected for yet. Not revenue - nothing has
+    # been paid - which is exactly why it is worth a figure of its own. It is
+    # the stall's exposure, and the reason pay on delivery reversed a standing
+    # rule.
+    outstanding: MoneySplit
+
+    # Money that went back out. A stall that refuses orders after they are paid
+    # for sees `refused_value` as order value; this is what was actually
+    # returned.
+    refunded: MoneySplit
+
 
 class DayPoint(BaseModel):
     day: date
@@ -175,23 +202,52 @@ async def build_vendor_analytics(
             ).label("revenue"),
         )
 
-    dine_orders, dine_revenue = _slice(is_dine_in)
-    delivery_orders, delivery_revenue = _slice(~is_dine_in)
-    cash_orders, cash_revenue = _slice(in_cash)
-    prepaid_orders, prepaid_revenue = _slice(~in_cash)
+    def _cell(name, condition):
+        """Both numbers for one slice, labelled so the row reads back by name."""
+        orders_col, revenue_col = _slice(condition)
+        return [orders_col.label(f"{name}_orders"), revenue_col.label(f"{name}_revenue")]
 
-    split = (
+    columns = [
+        # The margins.
+        *_cell("dine", is_dine_in),
+        *_cell("delivery", ~is_dine_in),
+        *_cell("cash", in_cash),
+        *_cell("prepaid", ~in_cash),
+        # And the same money crossed both ways.
+        *_cell("dine_prepaid", is_dine_in & ~in_cash),
+        *_cell("dine_cash", is_dine_in & in_cash),
+        *_cell("delivery_prepaid", ~is_dine_in & ~in_cash),
+        *_cell("delivery_cash", ~is_dine_in & in_cash),
+    ]
+
+    split = (await db.execute(select(*columns).where(mine, window, earning))).one()
+
+    # --- money that is not revenue ---------------------------------------------
+    #
+    # Both of these sit outside the splits above on purpose: `earning` requires
+    # a paid order, and neither of these is one. Mixing them in would break the
+    # property that makes the breakdown worth showing - that its parts add up to
+    # the takings.
+    owed = (
         await db.execute(
             select(
-                dine_orders.label("dine_orders"),
-                dine_revenue.label("dine_revenue"),
-                delivery_orders.label("delivery_orders"),
-                delivery_revenue.label("delivery_revenue"),
-                cash_orders.label("cash_orders"),
-                cash_revenue.label("cash_revenue"),
-                prepaid_orders.label("prepaid_orders"),
-                prepaid_revenue.label("prepaid_revenue"),
-            ).where(mine, window, earning)
+                func.count().label("orders"),
+                func.coalesce(func.sum(Order.total_amount), 0).label("revenue"),
+            ).where(
+                mine,
+                window,
+                Order.status.in_(EARNING_STATUSES),
+                Order.payment_status == PaymentStatus.DUE.value,
+            )
+        )
+    ).one()
+
+    returned = (
+        await db.execute(
+            select(
+                func.count().label("orders"),
+                func.coalesce(func.sum(Order.total_amount), 0).label("revenue"),
+            ).where(mine, window, Order.payment_status == PaymentStatus.REFUNDED.value)
         )
     ).one()
 
@@ -301,6 +357,26 @@ async def build_vendor_analytics(
             prepaid=MoneySplit(
                 orders=split.prepaid_orders or 0,
                 revenue=float(split.prepaid_revenue or 0),
+            ),
+            dine_in_prepaid=MoneySplit(
+                orders=split.dine_prepaid_orders or 0,
+                revenue=float(split.dine_prepaid_revenue or 0),
+            ),
+            dine_in_cash=MoneySplit(
+                orders=split.dine_cash_orders or 0,
+                revenue=float(split.dine_cash_revenue or 0),
+            ),
+            delivery_prepaid=MoneySplit(
+                orders=split.delivery_prepaid_orders or 0,
+                revenue=float(split.delivery_prepaid_revenue or 0),
+            ),
+            delivery_cash=MoneySplit(
+                orders=split.delivery_cash_orders or 0,
+                revenue=float(split.delivery_cash_revenue or 0),
+            ),
+            outstanding=MoneySplit(orders=owed.orders or 0, revenue=float(owed.revenue or 0)),
+            refunded=MoneySplit(
+                orders=returned.orders or 0, revenue=float(returned.revenue or 0)
             ),
         ),
         orders_by_day=orders_by_day,

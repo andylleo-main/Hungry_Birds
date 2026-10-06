@@ -46,6 +46,57 @@ void main() {
     expect(t.revenue, 450);
   });
 
+  test('the cross-tab decodes and both margins reconcile', () {
+    final t = VendorTotals.fromJson(totals(extra: {
+      'dine_in': {'orders': 1, 'revenue': '150'},
+      'delivery': {'orders': 2, 'revenue': '300'},
+      'cash': {'orders': 1, 'revenue': '150'},
+      'prepaid': {'orders': 2, 'revenue': '300'},
+      'dine_in_prepaid': {'orders': 1, 'revenue': '150'},
+      'dine_in_cash': {'orders': 0, 'revenue': '0'},
+      'delivery_prepaid': {'orders': 1, 'revenue': '150'},
+      'delivery_cash': {'orders': 1, 'revenue': '150'},
+      'outstanding': {'orders': 1, 'revenue': '150'},
+      'refunded': {'orders': 1, 'revenue': '75'},
+    }));
+
+    // Rows.
+    expect(t.dineInPrepaid.revenue + t.dineInCash.revenue, t.dineIn.revenue);
+    expect(t.deliveryPrepaid.revenue + t.deliveryCash.revenue, t.delivery.revenue);
+    // Columns.
+    expect(t.dineInPrepaid.revenue + t.deliveryPrepaid.revenue, t.prepaid.revenue);
+    expect(t.dineInCash.revenue + t.deliveryCash.revenue, t.cash.revenue);
+    // Corner.
+    expect(
+      t.dineInPrepaid.revenue +
+          t.dineInCash.revenue +
+          t.deliveryPrepaid.revenue +
+          t.deliveryCash.revenue,
+      t.revenue,
+    );
+
+    // Neither of these is takings, so neither is in the table.
+    expect(t.outstanding.revenue, 150);
+    expect(t.refunded.revenue, 75);
+  });
+
+  test('the average is over paid orders, not over every order placed', () {
+    // `orders` counts the refused ones too. Dividing by it would quietly
+    // understate what an order is worth on a day with rejections.
+    final t = VendorTotals.fromJson(totals(extra: {
+      'dine_in': {'orders': 1, 'revenue': '150'},
+      'delivery': {'orders': 2, 'revenue': '300'},
+    }));
+
+    expect(t.orders, 3, reason: 'the fixture places three');
+    expect(t.paidOrders, 3);
+    expect(t.averageOrder, closeTo(150, 1e-9));
+  });
+
+  test('the average is null rather than zero when nothing sold', () {
+    expect(VendorTotals.fromJson(totals()).averageOrder, isNull);
+  });
+
   test('shares are computed against the takings, and null when nothing sold', () {
     const slice = MoneySplit(orders: 2, revenue: 300);
 

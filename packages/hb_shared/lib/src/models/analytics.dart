@@ -49,6 +49,26 @@ class VendorTotals {
   final MoneySplit cash;
   final MoneySplit prepaid;
 
+  /// The same money crossed both ways. The four cells sum to [revenue], and
+  /// each pair sums to the margin above it.
+  ///
+  /// [dineInCash] is structurally always zero - the server refuses
+  /// pay-on-delivery on a dine-in order, because there is nobody to collect
+  /// from somebody standing at the counter. It is carried anyway: a cell that
+  /// should be empty and is not says a rule has been broken.
+  final MoneySplit dineInPrepaid;
+  final MoneySplit dineInCash;
+  final MoneySplit deliveryPrepaid;
+  final MoneySplit deliveryCash;
+
+  /// Owed right now: orders out for delivery that nobody has collected for.
+  /// Not revenue, which is the point of showing it separately - it is the
+  /// stall's exposure.
+  final MoneySplit outstanding;
+
+  /// Money that went back out to customers.
+  final MoneySplit refunded;
+
   const VendorTotals({
     required this.orders,
     required this.revenue,
@@ -59,7 +79,24 @@ class VendorTotals {
     this.delivery = MoneySplit.empty,
     this.cash = MoneySplit.empty,
     this.prepaid = MoneySplit.empty,
+    this.dineInPrepaid = MoneySplit.empty,
+    this.dineInCash = MoneySplit.empty,
+    this.deliveryPrepaid = MoneySplit.empty,
+    this.deliveryCash = MoneySplit.empty,
+    this.outstanding = MoneySplit.empty,
+    this.refunded = MoneySplit.empty,
   });
+
+  /// How many orders were actually paid for, which is what the breakdown
+  /// counts. Not [orders], which includes the ones that were refused.
+  int get paidOrders => dineIn.orders + delivery.orders;
+
+  /// What an average order came to, or null when nothing has sold.
+  ///
+  /// Worth a line of its own because it is the number that moves when a stall
+  /// changes its menu or its prices, and the only one here that a bigger day
+  /// does not automatically make bigger.
+  double? get averageOrder => paidOrders == 0 ? null : revenue / paidOrders;
 
   /// What share of orders this stall turned away. Null when there is nothing to
   /// divide by - a quiet day should read as quiet, not as a perfect record.
@@ -75,6 +112,12 @@ class VendorTotals {
         delivery: _split(json['delivery']),
         cash: _split(json['cash']),
         prepaid: _split(json['prepaid']),
+        dineInPrepaid: _split(json['dine_in_prepaid']),
+        dineInCash: _split(json['dine_in_cash']),
+        deliveryPrepaid: _split(json['delivery_prepaid']),
+        deliveryCash: _split(json['delivery_cash']),
+        outstanding: _split(json['outstanding']),
+        refunded: _split(json['refunded']),
       );
 
   /// Decoded nullably, following the convention the order model already uses:

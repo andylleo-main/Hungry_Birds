@@ -154,55 +154,72 @@ class _AnalyticsTabState extends State<AnalyticsTab> {
         const SizedBox(height: 22),
         _SectionTitle(
           'Where it came from',
-          subtitle: 'Of the ₹${money.format(d.totals.revenue.round())} taken. '
-              'Each pair adds up to that.',
+          subtitle: 'Every row and column adds up to the \u20b9'
+              '${money.format(d.totals.revenue.round())} taken.',
         ),
-        _SplitRow(
-          left: _SplitStat(
-            label: 'Dine in',
-            icon: Icons.restaurant,
-            split: d.totals.dineIn,
-            total: d.totals.revenue,
-            money: money,
-          ),
-          right: _SplitStat(
-            label: 'Delivery',
-            icon: Icons.delivery_dining,
-            split: d.totals.delivery,
-            total: d.totals.revenue,
-            money: money,
-          ),
-        ),
-        const SizedBox(height: 10),
-        _SplitRow(
-          left: _SplitStat(
-            label: 'Prepaid',
-            icon: Icons.account_balance,
-            split: d.totals.prepaid,
-            total: d.totals.revenue,
-            money: money,
-          ),
-          right: _SplitStat(
-            label: 'Cash in hand',
-            icon: Icons.payments_outlined,
-            split: d.totals.cash,
-            total: d.totals.revenue,
-            // The number to count the till against, so it gets the emphasis.
-            tone: AppTheme.success,
-            money: money,
-          ),
-        ),
+        _MoneyGrid(totals: d.totals, money: money),
         const SizedBox(height: 8),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 2),
           child: Text(
             // The one rule nobody would guess, and the one that decides whether
             // the till adds up: a doorstep UPI payment is not cash.
-            'A pay-on-delivery order paid by UPI counts as prepaid — that '
-            'money is with Razorpay, not in your cash box.',
+            'A pay-on-delivery order paid by UPI counts as prepaid \u2014 that '
+            'money is with Razorpay, not in your cash box. Dine-in is always '
+            'prepaid, so that cell stays empty.',
             style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
           ),
         ),
+
+        const SizedBox(height: 18),
+        _SectionTitle(
+          'And the rest of it',
+          subtitle: 'Money that is not takings, and the one figure a busy day '
+              'does not move on its own.',
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: _Stat(
+                label: 'Still to collect',
+                value: d.totals.outstanding.orders == 0
+                    ? '\u2014'
+                    : '\u20b9${money.format(d.totals.outstanding.revenue.round())}',
+                // Coloured only when there is something at stake. This is food
+                // already cooked that nobody has paid for.
+                tone: d.totals.outstanding.orders > 0 ? AppTheme.warning : null,
+                footnote: d.totals.outstanding.orders == 0
+                    ? 'Nothing owed at a door'
+                    : '${d.totals.outstanding.orders} '
+                        '${d.totals.outstanding.orders == 1 ? 'order' : 'orders'} '
+                        'out there',
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _Stat(
+                label: 'Average order',
+                value: d.totals.averageOrder == null
+                    ? '\u2014'
+                    : '\u20b9${money.format(d.totals.averageOrder!.round())}',
+                footnote: d.totals.paidOrders == 0
+                    ? null
+                    : 'over ${d.totals.paidOrders} paid',
+              ),
+            ),
+          ],
+        ),
+        if (d.totals.refunded.orders > 0) ...[
+          const SizedBox(height: 10),
+          _Stat(
+            label: 'Refunded',
+            value: '\u20b9${money.format(d.totals.refunded.revenue.round())}',
+            tone: AppTheme.primaryRed,
+            footnote: '${d.totals.refunded.orders} '
+                '${d.totals.refunded.orders == 1 ? 'order' : 'orders'} '
+                'went back to the customer',
+          ),
+        ],
 
         if (d.pendingPriceChanges > 0) ...[
           const SizedBox(height: 12),
@@ -326,88 +343,167 @@ class _Stat extends StatelessWidget {
   }
 }
 
-/// Two slices side by side, sized equally so the pair reads as one row.
-class _SplitRow extends StatelessWidget {
-  const _SplitRow({required this.left, required this.right});
+/// The takings, crossed by how the food went out and how it was paid for.
+///
+/// A table rather than a row of cards, because this is cross-tabulated money
+/// and the margins are half the point: a stall wants to read "delivery is most
+/// of my takings, and most of that is still cash" off one glance, which means
+/// the rows and columns have to be visibly rows and columns.
+///
+/// Every row and every column adds up to the total in its corner. That is the
+/// property that makes the thing trustworthy next to a cash box, and it is why
+/// the slices are computed from one query rather than assembled here.
+class _MoneyGrid extends StatelessWidget {
+  const _MoneyGrid({required this.totals, required this.money});
 
-  final Widget left;
-  final Widget right;
+  final VendorTotals totals;
+  final NumberFormat money;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        child: Table(
+          columnWidths: const {
+            0: FlexColumnWidth(1.15),
+            1: FlexColumnWidth(1),
+            2: FlexColumnWidth(1),
+            3: FlexColumnWidth(1),
+          },
+          children: [
+            TableRow(
+              children: [
+                const _GridHeading(''),
+                const _GridHeading('Prepaid'),
+                const _GridHeading('Cash'),
+                const _GridHeading('Total', strong: true),
+              ],
+            ),
+            _row(
+              'Dine in',
+              Icons.restaurant,
+              [totals.dineInPrepaid, totals.dineInCash, totals.dineIn],
+            ),
+            _row(
+              'Delivery',
+              Icons.delivery_dining,
+              [totals.deliveryPrepaid, totals.deliveryCash, totals.delivery],
+            ),
+            _row(
+              'Total',
+              null,
+              [totals.prepaid, totals.cash, MoneySplit(
+                orders: totals.paidOrders,
+                revenue: totals.revenue,
+              )],
+              strong: true,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  TableRow _row(String label, IconData? icon, List<MoneySplit> cells,
+      {bool strong = false}) {
+    return TableRow(
+      decoration: strong
+          ? const BoxDecoration(
+              border: Border(top: BorderSide(color: AppTheme.divider)),
+            )
+          : null,
       children: [
-        Expanded(child: left),
-        const SizedBox(width: 10),
-        Expanded(child: right),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 13, color: AppTheme.textSecondary),
+                const SizedBox(width: 5),
+              ],
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: strong ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (var i = 0; i < cells.length; i++)
+          _GridCell(
+            split: cells[i],
+            money: money,
+            // The corner and the row ends carry the weight; the inner cells are
+            // detail you look at second.
+            strong: strong || i == cells.length - 1,
+          ),
       ],
     );
   }
 }
 
-/// One slice: what it came to, how many orders, and what share of the total.
-///
-/// The share is the part a stall actually uses. An absolute figure says little
-/// without knowing the total; "62% of takings" is the thing worth noticing when
-/// it moves.
-class _SplitStat extends StatelessWidget {
-  const _SplitStat({
-    required this.label,
-    required this.icon,
-    required this.split,
-    required this.total,
-    required this.money,
-    this.tone,
-  });
+class _GridHeading extends StatelessWidget {
+  const _GridHeading(this.text, {this.strong = false});
 
-  final String label;
-  final IconData icon;
-  final MoneySplit split;
-  final double total;
-  final NumberFormat money;
-  final Color? tone;
+  final String text;
+  final bool strong;
 
   @override
   Widget build(BuildContext context) {
-    final share = split.shareOf(total);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, size: 14, color: AppTheme.textSecondary),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '₹${money.format(split.revenue.round())}',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                color: tone ?? AppTheme.textPrimary,
-              ),
-            ),
-            Text(
-              // An em dash rather than "0%" when nothing has sold: a quiet day
-              // should read as quiet, not as a real zero share.
-              share == null
-                  ? '—'
-                  : '${(share * 100).round()}% · '
-                      '${split.orders} ${split.orders == 1 ? 'order' : 'orders'}',
-              style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-            ),
-          ],
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        text,
+        textAlign: TextAlign.right,
+        style: TextStyle(
+          fontSize: 11,
+          color: AppTheme.textSecondary,
+          fontWeight: strong ? FontWeight.w800 : FontWeight.w600,
         ),
+      ),
+    );
+  }
+}
+
+/// One cell: the amount, and how many orders made it.
+class _GridCell extends StatelessWidget {
+  const _GridCell({required this.split, required this.money, this.strong = false});
+
+  final MoneySplit split;
+  final NumberFormat money;
+  final bool strong;
+
+  @override
+  Widget build(BuildContext context) {
+    // An em dash rather than a zero. Nothing happened here is a different
+    // statement from zero rupees, and on the dine-in cash cell - which the
+    // server will never let be anything else - it is the honest one.
+    final empty = split.orders == 0;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            empty ? '\u2014' : '\u20b9${money.format(split.revenue.round())}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: strong ? FontWeight.w800 : FontWeight.w600,
+              color: empty ? AppTheme.textSecondary : AppTheme.textPrimary,
+            ),
+          ),
+          if (!empty)
+            Text(
+              '${split.orders}',
+              style: const TextStyle(fontSize: 10, color: AppTheme.textSecondary),
+            ),
+        ],
       ),
     );
   }

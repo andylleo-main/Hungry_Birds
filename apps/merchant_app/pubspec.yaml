@@ -21,7 +21,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # refused with "App not installed" - which reads as a broken build rather than a
 # versioning rule, and the only way past it is uninstalling, taking the saved
 # login and the printer pairing with it.
-version: 1.3.0+7
+version: 1.4.0+8
 
 environment:
   sdk: ">=3.4.0 <4.0.0"

@@ -447,3 +447,200 @@ class TestWhereTheMoneyCameFrom:
 
         for slice_name in ("dine_in", "delivery", "cash", "prepaid"):
             assert totals[slice_name] == {"orders": 0, "revenue": 0.0}
+
+
+class TestTheCrossTab:
+    """The same money crossed both ways, and the two figures that are not it.
+
+    The property that matters is arithmetic: every row and every column has to
+    add up to the takings. A stall reads this against a cash box, and a table
+    whose margins disagree with its cells is worse than no table.
+    """
+
+    async def _totals(self, client, vendor_headers):
+        r = await client.get("/vendors/me/analytics", headers=vendor_headers)
+        assert r.status_code == 200, r.text
+        return r.json()["totals"]
+
+    async def _cod_delivery(self, client, headers, vendor_id, item):
+        r = await client.post(
+            "/orders",
+            headers=headers,
+            json={
+                "vendor_id": str(vendor_id),
+                "items": _lines(item),
+                "fulfilment_type": "delivery",
+                "delivery_location": "hostel_3",
+                "payment_method": "cod",
+            },
+        )
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    async def _to_the_door(self, client, order_id, vendor_headers):
+        for status_value in ("accepted", "preparing", "ready", "out_for_delivery"):
+            r = await client.patch(
+                f"/vendors/me/orders/{order_id}/status",
+                headers=vendor_headers,
+                json={"status": status_value},
+            )
+            assert r.status_code == 200, r.text
+
+    async def test_every_row_and_column_adds_up(
+        self, client, db, customer, vendor, menu_item, pay
+    ):
+        _, headers = customer
+        v, vendor_headers = vendor
+
+        # One prepaid dine-in, one cash delivery, one uncollected cash delivery.
+        await _paid_order(client, headers, v.id, menu_item, pay)
+
+        cash_order = await self._cod_delivery(client, headers, v.id, menu_item)
+        await self._to_the_door(client, cash_order["id"], vendor_headers)
+        await client.post(
+            f"/vendors/me/orders/{cash_order['id']}/collect",
+            headers=vendor_headers,
+            json={"method": "cash"},
+        )
+
+        owed_order = await self._cod_delivery(client, headers, v.id, menu_item)
+        await self._to_the_door(client, owed_order["id"], vendor_headers)
+
+        t = await self._totals(client, vendor_headers)
+
+        def rev(name):
+            return t[name]["revenue"]
+
+        # Rows.
+        assert rev("dine_in_prepaid") + rev("dine_in_cash") == pytest.approx(rev("dine_in"))
+        assert rev("delivery_prepaid") + rev("delivery_cash") == pytest.approx(
+            rev("delivery")
+        )
+        # Columns.
+        assert rev("dine_in_prepaid") + rev("delivery_prepaid") == pytest.approx(
+            rev("prepaid")
+        )
+        assert rev("dine_in_cash") + rev("delivery_cash") == pytest.approx(rev("cash"))
+        # And the whole table against the corner.
+        assert (
+            rev("dine_in_prepaid")
+            + rev("dine_in_cash")
+            + rev("delivery_prepaid")
+            + rev("delivery_cash")
+        ) == pytest.approx(t["revenue"])
+
+        # Order counts reconcile the same way, since they are what the cells
+        # carry alongside the money.
+        assert (
+            t["dine_in_prepaid"]["orders"]
+            + t["dine_in_cash"]["orders"]
+            + t["delivery_prepaid"]["orders"]
+            + t["delivery_cash"]["orders"]
+        ) == t["dine_in"]["orders"] + t["delivery"]["orders"]
+
+    async def test_the_cells_land_where_they_belong(
+        self, client, db, customer, vendor, menu_item, pay
+    ):
+        _, headers = customer
+        v, vendor_headers = vendor
+
+        await _paid_order(client, headers, v.id, menu_item, pay)
+        cash_order = await self._cod_delivery(client, headers, v.id, menu_item)
+        await self._to_the_door(client, cash_order["id"], vendor_headers)
+        await client.post(
+            f"/vendors/me/orders/{cash_order['id']}/collect",
+            headers=vendor_headers,
+            json={"method": "cash"},
+        )
+
+        t = await self._totals(client, vendor_headers)
+
+        assert t["dine_in_prepaid"]["orders"] == 1
+        assert t["delivery_cash"]["orders"] == 1
+        assert t["dine_in_cash"]["orders"] == 0
+        assert t["delivery_prepaid"]["orders"] == 0
+
+    async def test_dine_in_cash_is_structurally_empty(
+        self, client, customer, vendor, menu_item
+    ):
+        """It is not that no dine-in order happened to be cash - it cannot be.
+
+        OrderCreate.cash_is_for_deliveries refuses it, because there is nobody
+        to collect from somebody standing at the counter. The cell is reported
+        anyway so that a non-zero reading means a rule has been broken.
+        """
+        _, headers = customer
+        v, vendor_headers = vendor
+
+        refused = await client.post(
+            "/orders",
+            headers=headers,
+            json={
+                "vendor_id": str(v.id),
+                "items": _lines(menu_item),
+                "fulfilment_type": "dine_in",
+                "payment_method": "cod",
+            },
+        )
+        assert refused.status_code == 422, refused.text
+
+        t = await self._totals(client, vendor_headers)
+        assert t["dine_in_cash"] == {"orders": 0, "revenue": 0.0}
+
+    async def test_money_owed_at_a_door_is_counted_but_not_as_takings(
+        self, client, db, customer, vendor, menu_item
+    ):
+        """The stall's exposure, and the reason pay on delivery reversed a rule.
+
+        Food is cooked and nobody has paid. It must not be revenue - nothing
+        arrived - and it must not be invisible either.
+        """
+        _, headers = customer
+        v, vendor_headers = vendor
+
+        order = await self._cod_delivery(client, headers, v.id, menu_item)
+        await self._to_the_door(client, order["id"], vendor_headers)
+
+        t = await self._totals(client, vendor_headers)
+
+        assert t["outstanding"]["orders"] == 1
+        assert t["outstanding"]["revenue"] == pytest.approx(float(order["total_amount"]))
+        assert t["revenue"] == 0, "nothing has been paid for"
+        assert t["cash"]["revenue"] == 0
+        assert t["prepaid"]["revenue"] == 0
+
+    async def test_collecting_moves_it_out_of_owed_and_into_takings(
+        self, client, db, customer, vendor, menu_item
+    ):
+        _, headers = customer
+        v, vendor_headers = vendor
+
+        order = await self._cod_delivery(client, headers, v.id, menu_item)
+        await self._to_the_door(client, order["id"], vendor_headers)
+        await client.post(
+            f"/vendors/me/orders/{order['id']}/collect",
+            headers=vendor_headers,
+            json={"method": "cash"},
+        )
+
+        t = await self._totals(client, vendor_headers)
+
+        assert t["outstanding"] == {"orders": 0, "revenue": 0.0}
+        assert t["delivery_cash"]["orders"] == 1
+        assert t["revenue"] == pytest.approx(float(order["total_amount"]))
+
+    async def test_a_quiet_day_reports_empty_cells_rather_than_nothing(
+        self, client, vendor
+    ):
+        _, vendor_headers = vendor
+        t = await self._totals(client, vendor_headers)
+
+        for name in (
+            "dine_in_prepaid",
+            "dine_in_cash",
+            "delivery_prepaid",
+            "delivery_cash",
+            "outstanding",
+            "refunded",
+        ):
+            assert t[name] == {"orders": 0, "revenue": 0.0}, name
