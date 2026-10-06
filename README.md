@@ -603,6 +603,30 @@ keeps on, and an order naming any other is refused. A stall cannot switch both
 dine-in and delivery off - that would read as open while rejecting everything, and
 there is already a switch for being closed.
 
+- **The smallest delivery it will cook for**, default **₹100**, editable from the
+  same screen, and 0 means none.
+
+Delivery only: a ₹20 delivery costs a stall a trip across campus for almost
+nothing, while a single samosa eaten at the counter costs it nothing it was not
+already set up for. So there is no dine-in equivalent, and `assert_meets_minimum`
+returns early for dine-in.
+
+Two things about this are worth knowing before the migration runs. The ₹100
+default is **not inert** - every stall that already existed starts refusing
+sub-₹100 deliveries the moment `f1d6c4a82b39` is applied, which is what was
+asked for. And the figure is checked *after* the basket is priced, in
+`place_order`, not alongside the mode and location checks: the total is only
+known once every line has been priced off the rows the server read, and the
+client's own numbers are never trusted. Checkout refuses a small basket before
+submitting it too, but that is a courtesy - the API is the authority.
+
+`min_delivery_order` is **optional** on `PUT /vendors/me/fulfilment`, and
+omitting it leaves the stall's figure alone. A released merchant APK does not
+send the field, and a required one would mean an old app got a 422 trying to
+switch delivery off. The decode is tolerant in the same direction: a response
+*without* the field reads as 0 rather than throwing, so a newer app against an
+older server can still open its settings screen.
+
 **Accepting an order is the commitment.** A stall says yes or no while the order
 is `placed` - Accept or Reject - and after that it is theirs to make. There is no
 cancel button past that point, on the user's instruction, and that is worth
@@ -611,6 +635,34 @@ and there is no admin route that cancels an order, so an accepted order has no
 exit but completion. A student who ordered at the wrong counter has to be sorted
 out in person. `ACCEPTED -> CANCELLED` is still in `ALLOWED_TRANSITIONS`, so the
 API can do it; it is the button that is gone.
+
+## Hearing a new order
+
+The merchant app rings until somebody dismisses the popup. Two rules make that
+work, and both are the fix to a bug rather than an obvious design:
+
+**The ring is on the alarm stream, not the media stream** (`AndroidUsageType.alarm`
+with `sonification` and `gainTransientExclusive`, in `new_order_alert.dart`). On
+the media stream a stall with its media volume down - which is most of them, it
+is a tablet in a kitchen - heard nothing at all while the app looked perfectly
+healthy. It also means the sound behaves like an incoming call rather than a
+video: it ducks what is playing and comes back at alarm volume.
+
+**A socket frame is an event; only a full fetch is a baseline.** `OrdersState`
+keeps every order id it has seen, and stays quiet about a *snapshot* until the
+first successful fetch has established what was already in the queue - a stall
+opening the app to six waiting orders wants to see them, not hear six alarms.
+A frame off the WebSocket is never treated that way, because Redis pub/sub has
+no replay, so anything arriving there is by definition something that just
+happened.
+
+That second rule is what was wrong. The baseline flag used to be set by whichever
+path arrived first, so if the opening fetch threw - campus wifi at app open - the
+*next order to arrive* was mistaken for part of the queue that was already there:
+recorded silently, with the baseline flipped true behind it, and because the seen
+set is keyed on id it could never ring afterwards either. It hit **cash orders**
+hardest, which reach the stall the instant they are placed, which is exactly when
+the app has just been opened.
 
 ## The kitchen ticket printer
 
@@ -1017,6 +1069,16 @@ time only**; the delivery buffer is added server-side, so a merchant answering
 **Prep times save immediately — no admin approval**, unlike prices. The
 asymmetry is the point: a wrong prep time costs a few minutes of goodwill and the
 merchant fixes it themselves, where a wrong price costs money.
+
+**Where an admin actually decides a price:** `/admin` → **Price changes**. A
+stall's request sits as `pending_price` on the row and the old price keeps
+selling until somebody approves it, so the queue being unwatched is a merchant
+waiting rather than anything breaking. The queue unions two shapes - a dish's own
+price and a size's - because they are the same decision and an admin should not
+have to know which they are looking at. The merchant's dashboard counts both for
+the same reason; it used to count only dishes, so a stall whose one waiting
+change was on "Half" was told nothing was waiting while the admin queue was
+showing it.
 
 The estimate is snapshotted onto the order at placement, the same way line prices
 are, so a merchant editing a dish tomorrow cannot change what somebody was

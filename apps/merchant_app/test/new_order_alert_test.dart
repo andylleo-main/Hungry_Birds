@@ -72,6 +72,7 @@ void main() {
 
   _arrivalsByAnyPath();
   _whenTheSoundFails();
+  _afterAFailedFirstLoad();
 
   test('the first load does not announce the whole queue', () async {
     // The one that would make this unusable: a stall opening the app mid-service
@@ -360,5 +361,123 @@ void _whenTheSoundFails() {
 
     expect(alert.isRinging, isFalse, reason: 'no audio here either way');
     alert.dispose();
+  });
+}
+
+/// The order that could never ring, however long you waited.
+///
+/// `_loadedOnce` used to be set by whichever path reached `_noticeArrivals`
+/// first. So when the opening `load()` threw - campus wifi at app open - the
+/// next order to arrive was mistaken for part of the queue that was already
+/// there: recorded silently, baseline flipped true behind it. And because the
+/// record is keyed on id, it could never ring afterwards either.
+///
+/// It hit cash orders hardest. A cash order reaches the stall the instant it is
+/// placed, which is exactly when somebody has just opened the app.
+void _afterAFailedFirstLoad() {
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({});
+  });
+
+  Map<String, dynamic> cashOrder(String id) => {
+        'id': id,
+        'order_number': '000001-4821',
+        'token_number': 7,
+        'vendor_id': 'v1',
+        'customer_id': 'c1',
+        'status': 'placed',
+        'payment_method': 'cod',
+        'payment_status': 'due',
+        'total_amount': '150',
+        'note': null,
+        'created_at': '2026-01-01T10:00:00',
+        'updated_at': '2026-01-01T10:00:00',
+        'items': [],
+        'customer_name': 'Student',
+        'customer_phone': '+919876543210',
+        'fulfilment_type': 'delivery',
+        'delivery_location': 'hostel_3',
+      };
+
+  OrdersState stateOn(http.Client client) => OrdersState(
+        ApiClient(
+          baseUrl: 'https://test.local/api',
+          authStorage: AuthStorage(),
+          client: client,
+        ),
+      );
+
+  test('a cash order on the socket rings even if the first load failed',
+      () async {
+    // The exact sequence: open the app, the queue fetch fails, then an order
+    // arrives down the socket.
+    final state = stateOn(MockClient((_) async => http.Response('{"detail":"nope"}', 503)));
+    await state.load();
+    expect(state.error, isNotNull, reason: 'the first load must have failed');
+
+    state.applyForTest(Order.fromJson(cashOrder('a')));
+
+    expect(state.pendingAlerts.map((o) => o.id), ['a']);
+    state.dispose();
+  });
+
+  test('and it is not swallowed into the baseline either', () async {
+    // The nastier half: the order used to be recorded as "already seen", so a
+    // later reload could not rescue it. Nothing should ever ring twice, but it
+    // has to have rung once.
+    final state = stateOn(MockClient((_) async => http.Response('{"detail":"nope"}', 503)));
+    await state.load();
+
+    state.applyForTest(Order.fromJson(cashOrder('a')));
+    await state.acknowledge(state.pendingAlerts.first);
+    state.applyForTest(Order.fromJson(cashOrder('a')));
+
+    expect(state.pendingAlerts, isEmpty, reason: 'the same order must not ring twice');
+    state.dispose();
+  });
+
+  test('a socket frame does not become the baseline for a later load',
+      () async {
+    // If a socket frame set _loadedOnce, the first real fetch afterwards would
+    // announce the whole queue - the opposite failure, six alarms at once.
+    var queue = <Map<String, dynamic>>[];
+    final state = stateOn(MockClient((request) async {
+      if (request.url.path.endsWith('/vendors/me/orders')) {
+        return http.Response(jsonEncode(queue), 200);
+      }
+      return http.Response('{"detail":"unexpected"}', 404);
+    }));
+
+    state.applyForTest(Order.fromJson(cashOrder('a')));
+    expect(state.pendingAlerts.map((o) => o.id), ['a']);
+    await state.acknowledge(state.pendingAlerts.first);
+
+    // Now the first successful fetch arrives, carrying a backlog.
+    queue = [cashOrder('a'), cashOrder('b'), cashOrder('c')];
+    await state.load();
+
+    expect(state.pendingAlerts, isEmpty,
+        reason: 'the opening queue is not news, however it was reached');
+    state.dispose();
+  });
+
+  test('once a baseline exists, a later arrival still rings', () async {
+    var queue = [cashOrder('a')];
+    final state = stateOn(MockClient((request) async {
+      if (request.url.path.endsWith('/vendors/me/orders')) {
+        return http.Response(jsonEncode(queue), 200);
+      }
+      return http.Response('{"detail":"unexpected"}', 404);
+    }));
+
+    await state.load();
+    expect(state.pendingAlerts, isEmpty);
+
+    queue = [cashOrder('a'), cashOrder('b')];
+    await state.load();
+
+    expect(state.pendingAlerts.map((o) => o.id), ['b']);
+    state.dispose();
   });
 }

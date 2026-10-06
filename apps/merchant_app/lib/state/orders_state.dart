@@ -75,7 +75,7 @@ class OrdersState extends ChangeNotifier {
       error = null;
       // Through the same funnel as the socket. A new order is a new order
       // whichever way it reached the phone.
-      _noticeArrivals(fetched);
+      _noticeArrivals(fetched, fromSnapshot: true);
     } catch (e) {
       error = e;
     } finally {
@@ -86,17 +86,38 @@ class OrdersState extends ChangeNotifier {
 
   /// Ring for anything here that has not been seen before.
   ///
-  /// The first load only records what is already there - a stall opening the
-  /// app to six waiting orders wants to see them, not be shouted at six times.
-  void _noticeArrivals(List<Order> incoming) {
-    final announce = _loadedOnce;
+  /// [fromSnapshot] says whether this is the whole queue as the server has it
+  /// (a load) or a single thing that just happened (a socket frame). The
+  /// difference decides whether silence is the right answer, and getting it
+  /// wrong is how a cash order went unheard:
+  ///
+  ///  * A **snapshot** can legitimately be full of orders nobody should be
+  ///    shouted at about - a stall opening the app to six waiting orders wants
+  ///    to see them, not hear six alarms. So the first successful snapshot only
+  ///    records, and establishes the baseline.
+  ///  * A **socket frame** is never a baseline. Redis pub/sub has no replay, so
+  ///    anything arriving that way is by definition something that just
+  ///    happened, and it rings whether or not a baseline was ever established.
+  ///
+  /// That second rule is the fix. `_loadedOnce` used to be set here by whichever
+  /// path arrived first, so if the opening `load()` threw - campus wifi at app
+  /// open - the *next order to arrive* was mistaken for part of the queue that
+  /// was already there: recorded silently, with the baseline flipped true behind
+  /// it. And because `_seen` is keyed on id, that order could never ring
+  /// afterwards either. It hit cash orders hardest, which reach the stall the
+  /// instant they are placed - exactly when the app has just been opened.
+  void _noticeArrivals(List<Order> incoming, {required bool fromSnapshot}) {
+    // A snapshot stays quiet until a baseline exists. An event never does.
+    final announce = !fromSnapshot || _loadedOnce;
     for (final order in incoming) {
       // Set.add answers whether it was actually new, which is exactly the
       // question, and records it in the same step.
       final isNew = _seen.add(order.id);
       if (announce && isNew) _maybeAlert(order);
     }
-    _loadedOnce = true;
+    // Only a full fetch can establish the baseline. A single socket frame says
+    // nothing about what else is in the queue.
+    if (fromSnapshot) _loadedOnce = true;
   }
 
   /// Re-read the queue without letting a failure reach the screen.
@@ -110,7 +131,7 @@ class OrdersState extends ChangeNotifier {
       orders = fetched;
       // Still announced. An order landing while the owner is holding a QR out
       // to a customer is the one they most need to hear about.
-      _noticeArrivals(fetched);
+      _noticeArrivals(fetched, fromSnapshot: true);
       notifyListeners();
     } catch (_) {
       // Deliberately silent: the next tick, or the socket, will catch up.
@@ -158,7 +179,7 @@ class OrdersState extends ChangeNotifier {
     final index = orders.indexWhere((o) => o.id == incoming.id);
     if (index == -1) {
       orders = [incoming, ...orders];
-      _noticeArrivals([incoming]);
+      _noticeArrivals([incoming], fromSnapshot: false);
     } else {
       orders = [...orders]..[index] = incoming;
     }
