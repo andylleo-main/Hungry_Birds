@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:merchant_app/services/printer.dart';
 import 'package:merchant_app/services/receipt.dart';
@@ -182,6 +184,7 @@ void main() {
   });
 
   _diagnostics();
+  _byteEncoding();
 
   test('no printer chosen says where to choose one', () async {
     final service = PrinterService(transport: FakeTransport());
@@ -338,4 +341,57 @@ class ThrowingTransport implements PrinterTransport {
 
   @override
   Future<bool> write(List<int> bytes) async => throw StateError('no platform here');
+}
+
+/// The byte encoding that stopped anything ever printing.
+///
+/// Receipt hands back a Uint8List, which is the natural type for a byte buffer
+/// and is a perfectly good `List<int>` as far as Dart is concerned. Flutter's
+/// StandardMessageCodec disagrees: a Uint8List has its own wire type and lands
+/// on Android as a ByteArray, where the plugin's cast to `List<Int>` returns
+/// null and the method answers false without touching the socket.
+///
+/// So every write returned false from the first build. The connection was
+/// always fine - which is exactly why three rounds were spent on permissions, a
+/// stale socket and the ESC/POS commands.
+void _byteEncoding() {
+  test('a Uint8List is converted to an ordinary list', () {
+    final typed = Uint8List.fromList([0x1B, 0x40, 0x48, 0x69, 0x0A]);
+
+    final sent = asPlatformList(typed);
+
+    expect(sent, isNot(isA<Uint8List>()),
+        reason: 'a Uint8List crosses the channel as a ByteArray and is refused');
+    expect(sent, [0x1B, 0x40, 0x48, 0x69, 0x0A]);
+  });
+
+  test('an ordinary list survives unchanged', () {
+    final plain = <int>[1, 2, 3];
+
+    final sent = asPlatformList(plain);
+
+    expect(sent, isNot(isA<Uint8List>()));
+    expect(sent, [1, 2, 3]);
+  });
+
+  test('every payload the receipt builds converts cleanly', () {
+    // All three are Uint8List at source, so all three would have been refused.
+    for (final payload in [
+      const Receipt().plainTest(),
+      const Receipt().testPage(),
+    ]) {
+      final sent = asPlatformList(payload);
+      expect(sent, isNot(isA<Uint8List>()));
+      expect(sent, payload.toList());
+      expect(sent, isNotEmpty);
+    }
+  });
+
+  test('values stay within a byte, so nothing is mangled in transit', () {
+    // The codec writes each element as a number. Anything outside 0..255 would
+    // mean the receipt built something that is not a byte in the first place.
+    for (final b in asPlatformList(const Receipt().testPage())) {
+      expect(b, inInclusiveRange(0, 255));
+    }
+  });
 }

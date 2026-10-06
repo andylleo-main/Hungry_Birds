@@ -167,14 +167,29 @@ class Receipt {
       bytes.addAll(_align(0));
     }
 
-    if (order.note != null && order.note!.isNotEmpty) {
+    // Boxed and bold, to match how loudly the app shows it.
+    //
+    // A note is "no onion", "less spicy", an allergy. It is the one line on the
+    // slip that changes what goes in the pan, and it is read side-on at a
+    // counter mid-service - so it gets rules above and below to stop the eye
+    // rather than sitting as another paragraph among the totals and times.
+    //
+    // Deliberately not double-height: that halves the usable width to sixteen
+    // characters, and a note is the one field whose length nobody controls.
+    // Legible and unmissable beats large and wrapped into nonsense.
+    final note = order.note?.trim();
+    if (note != null && note.isNotEmpty) {
       bytes.addAll(_line(''));
+      bytes.addAll(_line(_rule()));
+      bytes.addAll(_align(1));
       bytes.addAll(_bold(true));
-      bytes.addAll(_line('NOTE'));
-      bytes.addAll(_bold(false));
-      for (final line in wrap(order.note!, columns)) {
+      bytes.addAll(_line('** NOTE **'));
+      bytes.addAll(_align(0));
+      for (final line in wrap(note, columns)) {
         bytes.addAll(_line(line));
       }
+      bytes.addAll(_bold(false));
+      bytes.addAll(_line(_rule()));
     }
 
     bytes.addAll(_line(''));

@@ -215,12 +215,32 @@ void main() {
   group('the note', () {
     test('prints under its own heading', () {
       final lines = printed(order(note: 'No onions please'));
-      expect(lines, contains('NOTE'));
+      // Matched loosely rather than on the exact heading text, which is
+      // decoration and has changed once already.
+      expect(lines.any((l) => l.contains('NOTE')), isTrue);
       expect(lines, contains('No onions please'));
     });
 
+    test('is boxed, so the eye stops on it mid-service', () {
+      // A note is "no onion", or an allergy - the one line that changes what
+      // goes in the pan. Rules above and below are what stop it reading as
+      // another paragraph among the totals and times.
+      final lines = printed(order(note: 'No onions please'));
+      final heading = lines.indexWhere((l) => l.contains('NOTE'));
+      final body = lines.indexOf('No onions please');
+
+      expect(heading, greaterThan(0));
+      expect(lines[heading - 1], '-' * 32, reason: 'no rule above the note');
+      expect(lines[body + 1], '-' * 32, reason: 'no rule below the note');
+    });
+
     test('is absent when there is none, rather than an empty heading', () {
-      expect(printed(order()).contains('NOTE'), isFalse);
+      expect(printed(order()).any((l) => l.contains('NOTE')), isFalse);
+    });
+
+    test('whitespace alone is not a note', () {
+      // An empty box in the web app should not print a heading over nothing.
+      expect(printed(order(note: '   ')).any((l) => l.contains('NOTE')), isFalse);
     });
 
     test('a long note wraps instead of being cut off', () {

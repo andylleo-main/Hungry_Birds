@@ -628,7 +628,17 @@ payload with no escape sequences at all - if that prints and the test page does
 not, the connection is fine and a formatting command is the problem, which is a
 different fix.
 
-Two things about the plugin are worked around rather than trusted:
+**What was actually wrong, for four rounds:** `Receipt` returns a `Uint8List`,
+which is a perfectly good `List<int>` as far as Dart is concerned - but Flutter's
+StandardMessageCodec gives it its own wire type, so it lands on Android as a
+`ByteArray`, where the plugin's cast to a list of ints returns null and
+`writeBytes` answers `false` without touching the socket. Every write failed from
+the first build. The connection was always fine, which is exactly why permissions,
+a stale socket and the ESC/POS commands all looked plausible and were all wrong.
+`asPlatformList` in `printer_transport.dart` converts unconditionally, and there
+is a test asserting nothing leaves as a typed list.
+
+Two other things about the plugin are worked around rather than trusted:
 
 - **`connectionStatus` lies.** It probes by writing a space to the socket, so it
   prints a stray character, and a buffered write to a printer that has slept

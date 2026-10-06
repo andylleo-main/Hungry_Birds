@@ -31,12 +31,28 @@ class OrdersState extends ChangeNotifier {
 
   /// Whether the first load has finished.
   ///
-  /// The guard that stops this screaming at the wrong time. `load()` replaces
-  /// the whole list without going through `_apply`, and `_scheduleReconnect`
-  /// calls it every three seconds while the socket is down - so without this,
-  /// a merchant with bad wifi would be alerted about their entire queue, over
-  /// and over.
+  /// The guard that stops this screaming at the wrong time: the queue a stall
+  /// already has when it opens the app is not news.
   bool _loadedOnce = false;
+
+  /// Every order id this screen has already seen, however it arrived.
+  ///
+  /// This is what makes the alarm work at all. It used to live implicitly in
+  /// `orders` and be checked only inside `_apply`, which is the socket's path -
+  /// but `load()` replaces the whole list without going through `_apply`, and
+  /// `_scheduleReconnect` calls `load()` every three seconds while the socket
+  /// is down. So a new order arriving during any socket trouble was absorbed
+  /// silently, and by the time the socket came back and re-announced it,
+  /// `_apply` found it already in the list and said nothing.
+  ///
+  /// On a phone whose socket never connected at all - a flaky campus wifi, a
+  /// ticket that would not fetch - that meant the alarm never rang once, while
+  /// the queue itself looked perfectly healthy because the three-second reload
+  /// was quietly doing all the work.
+  ///
+  /// Keyed on id rather than on list membership because an order leaves
+  /// `orders` eventually and must not ring again if it comes back.
+  final Set<String> _seen = {};
 
   String? _vendorId;
   WebSocketChannel? _channel;
@@ -54,15 +70,33 @@ class OrdersState extends ChangeNotifier {
 
   Future<void> load() async {
     try {
-      orders = await api.vendorOrders();
+      final fetched = await api.vendorOrders();
+      orders = fetched;
       error = null;
-      _loadedOnce = true;
+      // Through the same funnel as the socket. A new order is a new order
+      // whichever way it reached the phone.
+      _noticeArrivals(fetched);
     } catch (e) {
       error = e;
     } finally {
       loading = false;
       notifyListeners();
     }
+  }
+
+  /// Ring for anything here that has not been seen before.
+  ///
+  /// The first load only records what is already there - a stall opening the
+  /// app to six waiting orders wants to see them, not be shouted at six times.
+  void _noticeArrivals(List<Order> incoming) {
+    final announce = _loadedOnce;
+    for (final order in incoming) {
+      // Set.add answers whether it was actually new, which is exactly the
+      // question, and records it in the same step.
+      final isNew = _seen.add(order.id);
+      if (announce && isNew) _maybeAlert(order);
+    }
+    _loadedOnce = true;
   }
 
   /// Re-read the queue without letting a failure reach the screen.
@@ -72,7 +106,11 @@ class OrdersState extends ChangeNotifier {
   /// customer must not get an error banner because the campus wifi blinked.
   Future<void> reloadQuietly() async {
     try {
-      orders = await api.vendorOrders();
+      final fetched = await api.vendorOrders();
+      orders = fetched;
+      // Still announced. An order landing while the owner is holding a QR out
+      // to a customer is the one they most need to hear about.
+      _noticeArrivals(fetched);
       notifyListeners();
     } catch (_) {
       // Deliberately silent: the next tick, or the socket, will catch up.
@@ -120,27 +158,24 @@ class OrdersState extends ChangeNotifier {
     final index = orders.indexWhere((o) => o.id == incoming.id);
     if (index == -1) {
       orders = [incoming, ...orders];
-      _maybeAlert(incoming);
+      _noticeArrivals([incoming]);
     } else {
       orders = [...orders]..[index] = incoming;
     }
     notifyListeners();
   }
 
-  /// Raise the alarm, if this is genuinely a new order somebody should see.
+  /// Raise the alarm for an order that has just arrived.
   ///
-  /// Three things have to be true, and each of them has bitten a version of
-  /// this feature somewhere:
+  /// Whether it is new at all is `_noticeArrivals`'s question, not this one.
+  /// What is left here are the two conditions about the order itself:
   ///
-  ///  * the first load has finished, or a reconnect re-announces the whole
-  ///    queue every three seconds;
-  ///  * the order is `placed`, so the stall is not alerted about something it
-  ///    has already accepted or about an order arriving mid-flight from
-  ///    another device;
-  ///  * nothing is already ringing for it, since `_apply` also runs for the
-  ///    merchant's own status changes.
+  ///  * it is `placed`, so the stall is not alerted about something it has
+  ///    already accepted, or about an order arriving mid-flight from another
+  ///    device;
+  ///  * nothing is already ringing for it, since an order can be announced by
+  ///    the socket and a reload within the same second.
   void _maybeAlert(Order order) {
-    if (!_loadedOnce) return;
     if (order.status != OrderStatus.placed) return;
     if (pendingAlerts.any((o) => o.id == order.id)) return;
     pendingAlerts.add(order);
