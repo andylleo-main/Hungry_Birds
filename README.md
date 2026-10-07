@@ -1198,6 +1198,48 @@ the money is in the till, and handing it back is a human doing it.
 request, not by default. Without it the rider's UPI button answers 503 with
 "please collect cash", and everything else works.
 
+## The checkout, and the footer
+
+Checkout is **two pages**: `/checkout` is the order - the basket, how it is
+handed over, who to reach - and `/checkout/payment` is cashback, how to pay, and
+the one button that commits. Nothing on the first page charges anybody, which is
+what makes "Continue" safe to press.
+
+The basket is editable on the first page and read-only on the second, with a
+link back. Somebody about to pay should not discover they have nudged a stepper.
+
+**The state lives in `CheckoutProvider`, not in either page.** Local state would
+not survive the navigation: a customer who chose delivery to Hostel 5, moved to
+payment and came back would have found both answers gone, and the payment page
+would have had nothing to send. The provider mounts on a layout route, so it
+outlives both pages and the three fetches it owns run once rather than twice. It
+is deliberately *not* in `CartContext`, which is persisted: a stall's delivery
+locations go stale, and a redemption offered yesterday may not be available
+today.
+
+Reaching `/checkout/payment` cold - a refresh, a pasted link - bounces to the
+first page, because the cart survives in localStorage but none of the answers do.
+
+**A disabled button always says what is missing.** "Continue to payment" greyed
+out is the worst of both: it looks like the way forward, does nothing, and gives
+no clue which of four things is wrong. So the label becomes the next action -
+remove the sold-out dish, choose a mode, add ₹20, choose a hostel - in the order
+the work is done rather than the order of the page. A student told to pick a
+hostel and *then* told the order is too small to deliver has been led on.
+
+The old step 4 is gone. It was a question with one answer that contradicted
+itself, claiming "pay online to confirm" even on an order the customer had just
+chosen to pay for on delivery. Dine-in, which genuinely has no choice, now says
+so in a sentence instead of rendering a single pre-selected option.
+
+### The footer
+
+The four-column footer belongs to the landing page and only it - under a
+checkout or an order being tracked it is a wall of marketing beneath the thing
+somebody came to do. Every page, the landing page included, carries a slim
+signature bar reading *manifested into reality by ARNAV*. Both are rendered by
+`Shell` in `App.tsx`, so no page carries either itself and none can forget.
+
 ## Cashback
 
 A launch promotion: **flat 20% back** at ordinary stalls capped at ₹40, **flat

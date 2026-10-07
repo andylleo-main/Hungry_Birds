@@ -1,13 +1,16 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import Header from './components/Header';
 import Footer from './components/Footer';
+import Signature from './components/Signature';
 import { EmptyState, PageLoader } from './components/ui';
 import { useAuth } from './state/AuthContext';
 import Login from './pages/Login';
 import Discover from './pages/Discover';
 import Stall from './pages/Stall';
-import Checkout from './pages/Checkout';
+import CheckoutLayout from './pages/checkout/Layout';
+import Review from './pages/checkout/Review';
+import Payment from './pages/checkout/Payment';
 import Orders from './pages/Orders';
 import OrderTracking from './pages/OrderTracking';
 import Offers from './pages/Offers';
@@ -15,12 +18,19 @@ import Profile from './pages/Profile';
 import AdminPanel from './pages/admin/AdminPanel';
 
 function Shell({ children }: { children: ReactNode }) {
+  // The four-column footer is the landing page's, and only its. Under a
+  // checkout, an order being tracked or the admin panel it is a wall of
+  // marketing beneath the thing somebody came to do - so every other page gets
+  // the signature alone.
+  const onLanding = useLocation().pathname === '/';
+
   return (
     <div className="flex min-h-screen flex-col">
       <Header />
       {/* Offset the fixed 80px header. */}
       <main className="flex-1 pt-20">{children}</main>
-      <Footer />
+      {onLanding && <Footer />}
+      <Signature />
     </div>
   );
 }
@@ -53,7 +63,12 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Discover />} />
         <Route path="/stall/:vendorId" element={<Stall />} />
-        <Route path="/checkout" element={<Checkout />} />
+        {/* A layout route, so the checkout's state mounts once and survives
+            the move between its two pages. */}
+        <Route path="/checkout" element={<CheckoutLayout />}>
+          <Route index element={<Review />} />
+          <Route path="payment" element={<Payment />} />
+        </Route>
         <Route path="/orders" element={<Orders />} />
         <Route path="/orders/:orderId" element={<OrderTracking />} />
         <Route path="/offers" element={<Offers />} />
