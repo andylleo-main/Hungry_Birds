@@ -185,6 +185,9 @@ async def main() -> int:
                 await db.execute(select(MenuItem).where(MenuItem.vendor_id == vendor.id))
             ).scalars().all()
         }
+        # For naming the section an existing dish currently sits in, when that
+        # disagrees with the file.
+        category_names = {c.id: c.name for c in existing_categories.values() if c.id}
 
         # First appearance in the file decides the order sections are shown in,
         # which is the order whoever wrote the CSV put them in.
@@ -210,6 +213,10 @@ async def main() -> int:
         added = 0
         skipped: list[str] = []
         repriced: list[str] = []
+        # Where the file and the live menu already disagree. Never acted on
+        # silently - a stall that is open has prices somebody set on purpose.
+        disagree: list[str] = []
+        misplaced: list[str] = []
         # Names queued for insert in this run. Kept apart from `existing_items`
         # rather than written into it, because a dict cannot say "I am about to
         # add this" with a value of None - `.get` would read that back as absent
@@ -223,6 +230,18 @@ async def main() -> int:
             item = existing_items.get(key)
             if item is not None:
                 was = Decimal(item.price)
+                # Reported whether or not anything is done about it. A stall that
+                # is already live has a menu somebody has been editing, and a
+                # file that silently disagrees with it is the thing worth seeing
+                # before 150 more dishes land next to it.
+                if was != price:
+                    disagree.append(f"{name}: menu says {was}, file says {price}")
+                here = category_names.get(item.category_id)
+                if here is None or here.strip().lower() != category_name.strip().lower():
+                    misplaced.append(
+                        f"{name}: in {here or 'no section'}, file says {category_name}"
+                    )
+
                 if args.update_prices and was != price:
                     item.price = price
                     repriced.append(f"{name}: {was} -> {price}")
@@ -251,16 +270,33 @@ async def main() -> int:
             f"\n{new_categories} new categories, {added} new dishes, "
             f"{len(skipped)} already on the menu"
         )
-        if repriced:
-            print(f"{len(repriced)} price changes:")
-            for line in repriced[:20]:
+        def _listing(title: str, lines: list[str]) -> None:
+            if not lines:
+                return
+            print(f"\n{title} ({len(lines)}):")
+            for line in lines[:30]:
                 print(f"  {line}")
-            if len(repriced) > 20:
-                print(f"  ... and {len(repriced) - 20} more")
-        elif skipped and not args.update_prices:
+            if len(lines) > 30:
+                print(f"  ... and {len(lines) - 30} more")
+
+        _listing("Priced differently on the live menu", disagree)
+        _listing("In a different section from the file", misplaced)
+
+        if repriced:
+            _listing("Prices being rewritten", repriced)
+        elif disagree and not args.update_prices:
             print(
-                "Existing dishes were left alone, prices included. "
-                "Pass --update-prices to rewrite them."
+                "\nThose prices are being left as they are. --update-prices "
+                "rewrites them, and writes `price` directly - which is the "
+                "merchant app's approval flow bypassed."
+            )
+        elif skipped and not args.update_prices:
+            print("\nExisting dishes were left alone, and all of them match the file.")
+
+        if misplaced:
+            print(
+                "Sections of existing dishes are never changed by this script. "
+                "Move them from the merchant app if they are wrong."
             )
 
         if not args.yes:
