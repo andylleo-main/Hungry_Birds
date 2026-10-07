@@ -47,6 +47,9 @@ export default function Header() {
           <NavLink to="/orders" className={navLink}>
             Orders
           </NavLink>
+          <NavLink to="/offers" className={navLink}>
+            Offers
+          </NavLink>
           {isAdmin && (
             <NavLink to="/admin" className={navLink}>
               Admin
@@ -111,6 +114,13 @@ export default function Header() {
                     className="flex items-center gap-space-sm px-space-md py-space-sm text-body-sm text-on-surface-medium hover:bg-surface-container"
                   >
                     <Icon name="receipt_long" className="text-[18px]" /> My orders
+                  </Link>
+                  <Link
+                    to="/offers"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex items-center gap-space-sm px-space-md py-space-sm text-body-sm text-on-surface-medium hover:bg-surface-container"
+                  >
+                    <Icon name="redeem" className="text-[18px]" /> Offers &amp; cashback
                   </Link>
                   {isAdmin && (
                     <Link

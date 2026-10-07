@@ -1,6 +1,9 @@
 import type { RazorpayHandback } from './razorpay';
 import type {
   AppUser,
+  CashbackConfig,
+  CashbackQuote,
+  CashbackSummary,
   FulfilmentType,
   Order,
   OrderStatus,
@@ -323,6 +326,15 @@ export const api = {
      * nobody to collect from somebody standing at the counter.
      */
     payment_method?: PaymentMethod;
+    /**
+     * Put the student's matching cashback towards this order.
+     *
+     * A flag rather than an amount, by the same rule as the gateway amount: the
+     * server reads the balance and applies the most its own rules allow. A
+     * client that decided how much of a discount it was owed would be a client
+     * deciding what it owes.
+     */
+    redeem_cashback?: boolean;
   }) => request<Order>('POST', '/orders', { body: payload }),
 
   /**
@@ -353,7 +365,25 @@ export const api = {
    * Server facts the bundle must not hardcode. Unauthenticated, and safe to
    * call before sign-in.
    */
-  config: () => request<{ payments_mode: string }>('GET', '/config'),
+  config: () =>
+    request<{ payments_mode: string; cashback?: CashbackConfig }>('GET', '/config'),
+
+  // --- Cashback ---
+  /** Both balances and the movements behind them. */
+  cashback: () => request<CashbackSummary>('GET', '/cashback'),
+
+  /**
+   * What would come off this cart at this stall.
+   *
+   * The subtotal is only used for the answer - it never reaches an order, which
+   * is priced from the stall's own rows - so a wrong figure here only misleads
+   * the page that sent it.
+   */
+  cashbackQuote: (vendorId: string, subtotal: string) =>
+    request<CashbackQuote>(
+      'GET',
+      `/cashback/quote?vendor_id=${vendorId}&subtotal=${encodeURIComponent(subtotal)}`,
+    ),
 
   /**
    * Stands in for paying, when the server reports mode "mock".

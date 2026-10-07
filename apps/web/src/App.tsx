@@ -10,6 +10,7 @@ import Stall from './pages/Stall';
 import Checkout from './pages/Checkout';
 import Orders from './pages/Orders';
 import OrderTracking from './pages/OrderTracking';
+import Offers from './pages/Offers';
 import Profile from './pages/Profile';
 import AdminPanel from './pages/admin/AdminPanel';
 
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="/checkout" element={<Checkout />} />
         <Route path="/orders" element={<Orders />} />
         <Route path="/orders/:orderId" element={<OrderTracking />} />
+        <Route path="/offers" element={<Offers />} />
         <Route path="/profile" element={<Profile />} />
         <Route
           path="/admin"

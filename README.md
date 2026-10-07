@@ -1198,6 +1198,138 @@ the money is in the till, and handing it back is a human doing it.
 request, not by default. Without it the rider's UPI button answers 503 with
 "please collect cash", and everything else works.
 
+## Cashback
+
+A launch promotion: **flat 20% back** at ordinary stalls capped at ₹40, **flat
+60%** at Gourmet Kitchen capped at ₹90. Two wallets, and they never mix - a
+balance earned at an ordinary stall is unspendable at Gourmet and the reverse.
+"One wallet per order" needs no rule of its own, because an order has exactly
+one stall.
+
+This is the first thing in the project that **creates** money rather than moving
+money somebody already owed, which is why most of its design is about money that
+should not exist.
+
+### `total_amount` is not the amount charged
+
+`orders.total_amount` stays the **gross value of the food**, because that is what
+the stall is owed: Hungry Birds funds the discount, not the stall. A separate
+`cashback_applied` records what came off, and **`Order.amount_due`** is the one
+name for what anybody is charged or collects.
+
+Every money-bearing path reads `amount_due`: the Razorpay order amount, the
+`payments` row, a collection QR, the `Collect ₹X` guard, the rider's figure, and
+the `COLLECT` line on a printed ticket. `grep amount_due` is meant to find all of
+them. Analytics all stay on the gross, which is why no analytics query changed.
+
+The one that must not be missed is the webhook's amount check. Compare
+`qr_code.credited` against the gross and Razorpay is asked for ₹200 on an order
+the customer was shown ₹160 for - so the student pays and is told they have not.
+Two tests cover exactly that.
+
+Redemption is capped at the kind's own percentage of the cart, so `amount_due`
+can never reach zero: there is no free order and no ₹0 gateway call to handle.
+
+The **delivery minimum measures the gross**. A ₹120 basket with ₹24 of cashback
+on it is still a ₹120 basket to the kitchen.
+
+### The balance is a walk, not a sum
+
+Credits expire individually, so a sum is wrong. Take ₹40 expiring on 1 November,
+spent in full on 15 October: sum the unexpired credits on 2 November and you get
+₹0, add the ₹40 debit and the balance reads **minus ₹40**, which would then eat
+the next credit the student earned. Only a replay knows that debit consumed a
+credit which has since expired.
+
+So `live_balances` walks `cashback_entries` chronologically, holding open lots,
+and spends the **soonest-expiring lot first** - the order that leaves a student
+with the most usable balance. An inconsistent ledger is logged and clamped rather
+than raised: the walk is on every read path, and a balance of zero is a better
+answer than an offers page that will not render.
+
+The table is append-only. A redemption that has to be given back is another row
+(`reason = 'returned'`), never an update.
+
+### Earning and giving back
+
+Credited on **`COMPLETED`**, never at placement - a credit at placement belongs to
+an order the stall may still reject. Both routes that reach `COMPLETED` (the
+stall's and the rider's) call the same idempotent function, guarded by a read and
+a partial unique index on `(order_id, reason)`.
+
+Nothing is earned when the order was **pay-on-delivery and a delivery**, when
+cashback was **redeemed** on it, or when a **coupon** was applied (that check is
+written already, so coupons have nothing to remember).
+
+**A refused order returns the redemption.** Without it a stall rejecting an order
+keeps the student's cashback - it paid for food they never got, and no refund path
+touches it because the gateway never saw that part of the money. It rides on
+`REFUNDABLE_ENDINGS` rather than a named status, for the reason the refund path
+already learnt. The returned credit gets a **fresh** expiry: reconstructing which
+lots the original redemption consumed would need the ledger to record it, and the
+student did nothing wrong.
+
+Redemption is serialised per student with a row lock on `users`, or two checkouts
+in the same instant both read the same balance and both spend it.
+
+### Asking for it
+
+`POST /orders` takes **`redeem_cashback: true`** - a flag, not an amount, by the
+same rule the file already states about the gateway amount. The server reads the
+balance and applies the most its own rules allow.
+
+`GET /cashback` returns both balances with their next expiry and the movements
+behind them. `GET /cashback/quote?vendor_id=&subtotal=` says exactly what would
+come off a cart, **through the same function the order path calls** - which is the
+whole reason it exists rather than the browser doing the percentage. A student
+shown one number and charged against another stops trusting the app and never
+reports it as a bug.
+
+### Settings
+
+| Variable | Default | |
+| --- | --- | --- |
+| `CASHBACK_NORMAL_PERCENT` | `20` | |
+| `CASHBACK_NORMAL_CAP` | `40` | per order |
+| `CASHBACK_GOURMET_PERCENT` | `60` | |
+| `CASHBACK_GOURMET_CAP` | `90` | per order |
+| `GOURMET_KITCHEN_NAME` | *empty* | matched on the stall's name, trimmed and case-insensitive |
+| `CASHBACK_EXPIRY_DAYS` | `30` | `0` disables expiry |
+| `CASHBACK_END_DATE` | *empty* | **currently inert - see below** |
+
+`GOURMET_KITCHEN_NAME` empty means **no stall is Gourmet**, so the expensive tier
+does not exist until somebody deliberately names one. That is the safe default:
+the 60% rate cannot be handed out by accident.
+
+`CASHBACK_EXPIRY_DAYS` is read once, at the moment of earning, and frozen onto
+the row. Changing it cannot retroactively kill or revive a balance a student was
+already shown a date for.
+
+> **`CASHBACK_END_DATE` does not do anything yet.** It is read and threaded
+> through `rate_for()` without changing what that returns, because the flat rates
+> are to stay until the probability distribution is specified. The risk is worth
+> stating: a date that passes unnoticed means full promotional rates keep being
+> paid. When the distribution arrives it is an edit to that one function.
+
+### What students and stalls see
+
+`/offers` shows both balances, what each is spendable on, the next expiry, and
+every movement with the order it came from - because a balance somebody cannot
+account for is what generates support messages, and expiring credit needs
+explaining before it goes rather than after.
+
+Checkout offers the redemption only when there is something to spend, quotes it
+from the server, and says plainly that a redeeming order earns nothing. Stall
+cards carry a "20% back" badge built from `/config`, never from a number in the
+bundle - a hardcoded badge would keep promising 20% after somebody changed the
+variable.
+
+Both apps show the reduced figure wherever money changes hands, and the printed
+ticket prints the subtraction (`Order`, `Cashback`, `TO PAY`) when there is one.
+A stall handed a slip saying `COLLECT Rs.160` on a ₹200 order has to see why from
+the slip alone - otherwise the safe thing for whoever packs the bag to do is ask
+for the bigger number, which is the wrong thing.
+
 ## Stall owners sign in with a password
 
 A merchant's first sign-in is an email code, same as before. They then pick a

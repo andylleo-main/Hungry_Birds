@@ -215,7 +215,18 @@ export interface Order {
   ready_by: string | null;
   /** "cash" or "upi" once a rider has collected at the door; null otherwise. */
   collected_via?: string | null;
+  /**
+   * What the food is worth, and what the stall is owed for it.
+   *
+   * Not what the customer pays when cashback was spent: Hungry Birds funds the
+   * discount, so this stays the full figure. Put `amount_due` next to the word
+   * "pay"; put this next to "order total".
+   */
   total_amount: string;
+  /** Promotional credit put towards this order. "0.00" on almost all of them. */
+  cashback_applied?: string;
+  /** What the customer actually hands over. */
+  amount_due?: string;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -275,3 +286,73 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   rejected: 'Rejected',
   cancelled: 'Cancelled',
 };
+
+/** One of the two cashback wallets. The two never mix. */
+export type CashbackKind = 'normal' | 'gourmet';
+
+/**
+ * A balance, and the rate it was earned at.
+ *
+ * Money is a decimal string on the wire, as everywhere else here: these are
+ * pydantic `Decimal`s, and turning one into a JS number to render it is how a
+ * figure picks up a rounding error on the way to somebody's screen. Compare
+ * with `Number(...)` only where a comparison is needed; never to display.
+ */
+export interface CashbackWallet {
+  kind: CashbackKind;
+  balance: string;
+  /** The percentage this wallet earns at, and may be spent at. */
+  percent: number;
+  /** The most one order can earn into it. */
+  cap: string;
+  /** The soonest unexpired credit's date, so a student is warned rather than
+   * discovering expiry by losing a balance. */
+  expires_next: string | null;
+}
+
+/** One movement, for the "where did this come from" list. */
+export interface CashbackEntry {
+  id: string;
+  kind: CashbackKind;
+  /** Signed: a credit is positive, a redemption negative. */
+  amount: string;
+  reason: 'earned' | 'redeemed' | 'returned';
+  order_id: string | null;
+  /** Null where the order has since been deleted; the money is still owed. */
+  stall_name: string | null;
+  order_number: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface CashbackSummary {
+  wallets: CashbackWallet[];
+  entries: CashbackEntry[];
+}
+
+/**
+ * What would actually come off a given cart.
+ *
+ * Worked out by the server from the same function the order path uses, which is
+ * the whole reason this exists rather than the page doing the percentage
+ * itself: the figure a student is shown and the figure they are charged cannot
+ * then disagree.
+ */
+export interface CashbackQuote {
+  kind: CashbackKind;
+  balance: string;
+  redeemable: string;
+  payable: string;
+  percent: number;
+}
+
+/** The promotion's shape, from /config, so the bundle hardcodes no rates. */
+export interface CashbackConfig {
+  normal_percent: number;
+  normal_cap: string;
+  gourmet_percent: number;
+  gourmet_cap: string;
+  /** Empty when no stall is on the better rate. */
+  gourmet_stall_name: string;
+  expiry_days: number;
+}

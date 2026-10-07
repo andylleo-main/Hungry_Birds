@@ -7,7 +7,12 @@ import { useAuth } from '../state/AuthContext';
 import { keyOf, lineKey, unitPrice, useCart } from '../state/CartContext';
 import { isMockPayment } from '../lib/types';
 import type { CartLine } from '../state/CartContext';
-import type { DeliveryLocation, FulfilmentType, MenuItem } from '../lib/types';
+import type {
+  CashbackQuote,
+  DeliveryLocation,
+  FulfilmentType,
+  MenuItem,
+} from '../lib/types';
 import { CHECKOUT_THEME, openCheckout } from '../lib/razorpay';
 
 function Step({
@@ -74,6 +79,22 @@ export default function Checkout() {
    * opt-in rather than a question everybody has to answer.
    */
   const [payLater, setPayLater] = useState(false);
+
+  /**
+   * Whether to put cashback towards this order, and what the server says that
+   * is worth.
+   *
+   * Off by default. A balance is the student's to decide about, and quietly
+   * spending it on the first order they place after earning it is not a
+   * decision they made.
+   *
+   * The figure is never computed here. The server quotes it from the same
+   * function that applies it at placement, so what is shown and what is charged
+   * cannot drift apart - which is also why `redeem` sends a flag rather than an
+   * amount.
+   */
+  const [redeem, setRedeem] = useState(false);
+  const [quote, setQuote] = useState<CashbackQuote | null>(null);
   const [locations, setLocations] = useState<DeliveryLocation[] | null>(null);
   const [location, setLocation] = useState('');
   const [dineInOk, setDineInOk] = useState(vendor?.dine_in_enabled ?? true);
@@ -191,6 +212,41 @@ export default function Checkout() {
       ? minDelivery - subtotal
       : 0;
 
+  // Re-quoted whenever the basket changes, because the ceiling is a share of the
+  // cart: removing a dish lowers what can be spent, and a stale figure would
+  // promise a discount the server then declines to apply.
+  useEffect(() => {
+    if (!vendorId || subtotal <= 0) return;
+    let cancelled = false;
+    api
+      .cashbackQuote(vendorId, subtotal.toFixed(2))
+      .then((q) => {
+        if (!cancelled) setQuote(q);
+      })
+      // Silent. Cashback is a bonus, and a failed read should cost the student
+      // the chance to spend it rather than the chance to order.
+      .catch(() => {
+        if (!cancelled) setQuote(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorId, subtotal]);
+
+  /**
+   * The quote, only while it is about the cart in front of us.
+   *
+   * Derived rather than cleared from inside the effect: an empty cart has
+   * nothing to quote against, and a stale figure must not survive into a
+   * basket it was not computed for. The effect refetches on every subtotal
+   * change, so this is the only case left to rule out.
+   */
+  const liveQuote = subtotal > 0 ? quote : null;
+
+  // What will actually come off, which is nothing unless the student asked.
+  const applied = redeem && liveQuote ? Number(liveQuote.redeemable) : 0;
+  const payable = subtotal - applied;
+
   const modes = useMemo(
     () =>
       [
@@ -260,6 +316,10 @@ export default function Checkout() {
         // one rather than ignoring it, so a stray value is not harmless.
         delivery_location: fulfilment === 'delivery' ? location : undefined,
         payment_method: cashAtTheDoor ? 'cod' : 'online',
+        // A flag, not an amount. The server reads the balance itself and
+        // applies the most its own rules allow, so a page that is out of date
+        // about the figure cannot be out of date about the decision.
+        redeem_cashback: redeem,
       });
 
       if (cashAtTheDoor) {
@@ -468,6 +528,48 @@ export default function Checkout() {
               </div>
             )}
 
+            {/* Only when there is something to spend. A toggle offering nothing
+                is a worse answer than no toggle: it reads as a feature that is
+                broken rather than a balance that is empty, and the offers page
+                is where an empty wallet gets explained. */}
+            {liveQuote && Number(liveQuote.redeemable) > 0 && (
+              <div className="mt-space-md">
+                <span className="text-label-md text-on-surface-medium">Cashback</span>
+                <button
+                  type="button"
+                  aria-pressed={redeem}
+                  onClick={() => setRedeem((on) => !on)}
+                  className={`mt-space-xs flex w-full items-start gap-space-sm rounded-lg border-[1.5px] p-space-md text-left transition-colors ${
+                    redeem
+                      ? 'border-primary bg-primary-tint/40'
+                      : 'border-outline-variant bg-surface-container hover:bg-surface-container-high'
+                  }`}
+                >
+                  <Icon
+                    name={redeem ? 'check_circle' : 'redeem'}
+                    className={`text-[22px] ${redeem ? 'text-primary' : 'text-on-surface-variant'}`}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-label-lg text-on-surface">
+                      Use {rupees(liveQuote.redeemable)}
+                      {liveQuote.kind === 'gourmet' ? ' Gourmet' : ''} cashback
+                    </span>
+                    <span className="block text-body-sm text-on-surface-variant">
+                      {Number(liveQuote.redeemable) < Number(liveQuote.balance)
+                        ? `You have ${rupees(liveQuote.balance)} — up to ${liveQuote.percent}% of a cart can be used.`
+                        : `Your whole ${rupees(liveQuote.balance)} balance.`}
+                    </span>
+                  </span>
+                </button>
+                {/* The rule worth saying before they commit, not after. */}
+                {redeem && (
+                  <p className="mt-space-xs text-label-md text-on-surface-variant">
+                    This order won't earn cashback, since it's using some.
+                  </p>
+                )}
+              </div>
+            )}
+
             {fulfilment === 'delivery' && (
               <div className="mt-space-md">
                 {locations === null ? (
@@ -629,14 +731,22 @@ export default function Checkout() {
               </span>
               <span className="text-success">Free</span>
             </div>
+            {applied > 0 && (
+              <div className="flex justify-between text-on-surface-variant">
+                <span>Cashback</span>
+                <span className="text-success">−{rupees(applied)}</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-end justify-between border-t border-outline-variant pt-space-sm">
             <div>
               <p className="text-headline-sm text-on-surface">Total due</p>
-              <p className="text-label-md text-on-surface-variant">Paid now, online</p>
+              <p className="text-label-md text-on-surface-variant">
+                {cashAtTheDoor ? 'Paid when it arrives' : 'Paid now, online'}
+              </p>
             </div>
-            <span className="text-headline-lg text-primary">{rupees(subtotal)}</span>
+            <span className="text-headline-lg text-primary">{rupees(payable)}</span>
           </div>
 
           {soldOut.length > 0 && (
@@ -697,12 +807,12 @@ export default function Checkout() {
               `Add ${rupees(shortOfMinimum)} to have this delivered`
             ) : cashAtTheDoor ? (
               <>
-                Place order &middot; pay {rupees(subtotal)} on delivery
+                Place order &middot; pay {rupees(payable)} on delivery
                 <Icon name="arrow_forward" className="text-[18px]" />
               </>
             ) : (
               <>
-                Pay {rupees(subtotal)}
+                Pay {rupees(payable)}
                 <Icon name="arrow_forward" className="text-[18px]" />
               </>
             )}

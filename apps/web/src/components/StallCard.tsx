@@ -1,9 +1,14 @@
 import { Link } from 'react-router-dom';
 import type { Vendor } from '../lib/types';
 import { placeholderGradient } from '../lib/format';
+import { isGourmet, rateFor, useCashbackConfig } from '../lib/cashback';
 import { Icon } from './ui';
 
 export default function StallCard({ vendor }: { vendor: Vendor }) {
+  const cashback = useCashbackConfig();
+  const percent = rateFor(vendor, cashback);
+  const gourmet = isGourmet(vendor, cashback);
+
   return (
     <Link
       to={`/stall/${vendor.id}`}
@@ -36,6 +41,21 @@ export default function StallCard({ vendor }: { vendor: Vendor }) {
           <Icon name={vendor.is_open ? 'schedule' : 'bedtime'} className="text-[14px]" />
           {vendor.is_open ? 'Open now' : 'Closed'}
         </span>
+
+        {/* Opposite corner from the open/closed pill, so neither has to make
+            room for the other. Only drawn when the server says there is a rate
+            - the numbers are never hardcoded here, or a badge would keep
+            promising 20% after somebody changed the Railway variable. */}
+        {percent !== null && (
+          <span
+            className={`absolute right-space-sm top-space-sm inline-flex h-6 items-center gap-space-xs rounded-full px-space-sm text-label-sm uppercase tracking-[0.02em] ${
+              gourmet ? 'bg-warning text-white' : 'bg-primary text-on-primary'
+            }`}
+          >
+            <Icon name="redeem" className="text-[14px]" />
+            {percent}% back
+          </span>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col gap-space-xs p-space-md">
