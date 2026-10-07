@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ApiError } from '../../lib/api';
-import { Spinner } from '../../components/ui';
+import { Icon, Spinner } from '../../components/ui';
 import type {
   AdminCoupon,
   AdminCouponInput,
@@ -61,7 +61,10 @@ export default function CouponForm({
   onSave: (body: AdminCouponInput) => Promise<void>;
 }) {
   const [code, setCode] = useState(coupon?.code ?? '');
-  const [vendorId, setVendorId] = useState(coupon?.vendor_id ?? '');
+  // Defaults to every stall on a new coupon, matching the server's own default
+  // and the common case.
+  const [allStalls, setAllStalls] = useState(coupon?.all_stalls ?? true);
+  const [vendorIds, setVendorIds] = useState<string[]>(coupon?.vendor_ids ?? []);
   const [discountType, setDiscountType] = useState<DiscountType>(
     coupon?.discount_type ?? 'percent',
   );
@@ -88,7 +91,11 @@ export default function CouponForm({
     try {
       await onSave({
         code: code.trim(),
-        vendor_id: vendorId || null,
+        all_stalls: allStalls,
+        // Cleared rather than sent alongside "every stall", so the payload says
+        // what it means and a set left behind by an earlier edit cannot come
+        // back if somebody narrows the coupon again.
+        vendor_ids: allStalls ? [] : vendorIds,
         discount_type: discountType,
         discount_value: discountValue,
         // Only meaningful on a percentage, and the server clears it anyway -
@@ -229,21 +236,104 @@ export default function CouponForm({
         )}
       </div>
 
-      <label className={field}>
+      <div className={field}>
         <span className={label}>Where it works</span>
-        <select
-          className="field"
-          value={vendorId}
-          onChange={(e) => setVendorId(e.target.value)}
-        >
-          <option value="">Every stall</option>
-          {stalls.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.stall_name}
-            </option>
-          ))}
-        </select>
-      </label>
+        {/* Two options rather than a dropdown with "Every stall" as its first
+            entry, because the two are different kinds of answer: one is a scope,
+            the other is a list. Asked explicitly so that unticking the last
+            stall cannot read as "every stall" - that would widen a code meant
+            for one kitchen to the whole campus, which is the direction this must
+            never fail in. The server refuses the pair too.
+
+            Stacked rather than side by side. This form is a sheet about 430px
+            wide whatever the window is, and Tailwind's `sm:` reads the viewport
+            rather than the container - so two columns here squeezed "Only the
+            stalls I pick" onto four lines and pushed its blurb off the card. */}
+        <div className="grid gap-space-sm">
+          {([
+            {
+              every: true,
+              title: 'Every stall',
+              blurb: 'Good anywhere on campus.',
+              icon: 'public',
+            },
+            {
+              every: false,
+              title: 'Only the stalls I pick',
+              blurb: 'Refused everywhere else.',
+              icon: 'storefront',
+            },
+          ] as const).map((option) => {
+            const selected = allStalls === option.every;
+            return (
+              <button
+                key={option.title}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setAllStalls(option.every)}
+                className={`flex items-start gap-space-sm rounded-lg border-[1.5px] p-space-md text-left transition-colors ${
+                  selected
+                    ? 'border-primary bg-primary-tint/40'
+                    : 'border-outline-variant bg-surface-container hover:bg-surface-container-high'
+                }`}
+              >
+                <Icon
+                  name={selected ? 'check_circle' : option.icon}
+                  className={`text-[22px] ${
+                    selected ? 'text-primary' : 'text-on-surface-variant'
+                  }`}
+                />
+                <span className="min-w-0">
+                  <span className="block text-label-lg text-on-surface">
+                    {option.title}
+                  </span>
+                  <span className="block text-body-sm text-on-surface-variant">
+                    {option.blurb}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {!allStalls && (
+          <div className="mt-space-xs flex max-h-64 flex-col gap-space-xs overflow-y-auto rounded border-[1.5px] border-outline-variant p-space-sm">
+            {stalls.length === 0 ? (
+              <p className="text-body-sm text-on-surface-variant">
+                No approved stalls yet.
+              </p>
+            ) : (
+              stalls.map((s) => (
+                <label key={s.id} className="flex items-center gap-space-sm">
+                  <input
+                    type="checkbox"
+                    checked={vendorIds.includes(s.id)}
+                    onChange={(e) =>
+                      setVendorIds((picked) =>
+                        e.target.checked
+                          ? [...picked, s.id]
+                          : picked.filter((id) => id !== s.id),
+                      )
+                    }
+                    className="h-4 w-4 accent-primary"
+                  />
+                  <span className="min-w-0 truncate text-body-md text-on-surface">
+                    {s.stall_name}
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+        )}
+
+        {!allStalls && (
+          <span className="text-label-md text-on-surface-variant">
+            {vendorIds.length === 0
+              ? 'Pick at least one stall.'
+              : `${vendorIds.length} stall${vendorIds.length === 1 ? '' : 's'} picked.`}
+          </span>
+        )}
+      </div>
 
       <label className={field}>
         <span className={label}>Who can use it</span>
@@ -327,7 +417,14 @@ export default function CouponForm({
       )}
 
       <div className="flex gap-space-sm">
-        <button type="submit" className="btn-primary flex-1" disabled={saving}>
+        {/* The server refuses a narrowed coupon that names no stall with a 422.
+            Disabled here so that refusal is never something a tap discovers -
+            the line under the stall list already says what is missing. */}
+        <button
+          type="submit"
+          className="btn-primary flex-1"
+          disabled={saving || (!allStalls && vendorIds.length === 0)}
+        >
           {saving ? <Spinner /> : 'Save coupon'}
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel} disabled={saving}>

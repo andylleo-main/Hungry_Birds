@@ -31,9 +31,11 @@ class CouponOut(BaseModel):
     discount_value: Decimal
     max_discount: Decimal | None
     min_order_value: Decimal
-    # Null when it is good at every stall.
-    vendor_id: uuid.UUID | None
-    stall_name: str | None
+    # True when it works at every stall, which the card renders as "At any stall".
+    all_stalls: bool
+    # The stalls it is pinned to, when it is not. Names rather than ids: nothing
+    # a customer sees needs the id, and a name is what they would recognise.
+    stall_names: list[str]
     # True when it applies itself without being typed.
     automatic: bool
     # What it would take off the cart that was asked about.
@@ -44,7 +46,13 @@ class AdminCouponIn(BaseModel):
     """What the admin's form sends. Validated here rather than in the handler."""
 
     code: str = Field(min_length=1, max_length=32)
-    vendor_id: uuid.UUID | None = None
+    # Where it works: everywhere, or at the stalls listed below. Defaults to
+    # everywhere, which is both the common case and what an older caller that
+    # sends neither field means.
+    all_stalls: bool = True
+    # Read only when `all_stalls` is false. Capped at a number no campus will
+    # reach, for the reason the email list is: this is one row each.
+    vendor_ids: list[uuid.UUID] = Field(default_factory=list, max_length=200)
     discount_type: DiscountType
     discount_value: Decimal = Field(gt=0, le=100000, decimal_places=2)
     max_discount: Decimal | None = Field(default=None, gt=0, le=100000, decimal_places=2)
@@ -93,14 +101,31 @@ class AdminCouponIn(BaseModel):
             raise ValueError("Add at least one email address, or change who can use it")
         return self
 
+    @model_validator(mode="after")
+    def a_narrowed_coupon_names_a_stall(self) -> "AdminCouponIn":
+        """Picking "only these stalls" and then picking none is not a setting.
+
+        Refused rather than read as either thing it could mean. Treating it as
+        "everywhere" would hand the campus a code meant for one kitchen, and
+        saving it as a coupon that works nowhere would be a code an admin thinks
+        they have made. The same shape as the NAMED check above, for the same
+        reason: a narrowing that narrows to nothing is a slip.
+        """
+        if not self.all_stalls and not self.vendor_ids:
+            raise ValueError("Pick at least one stall, or let it work at every stall")
+        return self
+
 
 class AdminCouponOut(BaseModel):
     """A coupon as the admin screen shows it, with its usage worked out."""
 
     id: uuid.UUID
     code: str
-    vendor_id: uuid.UUID | None
-    stall_name: str | None
+    all_stalls: bool
+    # Both, because the screen needs both: the ids to re-tick the form, the names
+    # to put in the list without a second lookup. Empty while `all_stalls` is on.
+    vendor_ids: list[uuid.UUID]
+    stall_names: list[str]
     discount_type: DiscountType
     discount_value: Decimal
     max_discount: Decimal | None

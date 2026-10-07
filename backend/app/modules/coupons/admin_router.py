@@ -21,6 +21,7 @@ from app.db.models.coupon import (
     CouponAudience,
     CouponAudienceMember,
     CouponRedemption,
+    CouponVendor,
     ExpiryType,
     RedemptionState,
 )
@@ -38,12 +39,22 @@ router = APIRouter(
 )
 
 
-async def _as_out(coupon: Coupon, stall_name: str | None, db: AsyncSession) -> AdminCouponOut:
+async def _as_out(
+    coupon: Coupon, names: dict[uuid.UUID, str], db: AsyncSession
+) -> AdminCouponOut:
+    # Sorted by name rather than by id, so the list column and the form read the
+    # same way twice running. A pinned stall that has since been deleted cannot
+    # appear here - the cascade takes its rows with it.
+    pinned = sorted(
+        ((s.vendor_id, names.get(s.vendor_id, "Unknown stall")) for s in coupon.stalls),
+        key=lambda pair: pair[1],
+    )
     return AdminCouponOut(
         id=coupon.id,
         code=coupon.code,
-        vendor_id=coupon.vendor_id,
-        stall_name=stall_name,
+        all_stalls=coupon.all_stalls,
+        vendor_ids=[vendor_id for vendor_id, _ in pinned],
+        stall_names=[name for _, name in pinned],
         discount_type=coupon.discount_type,
         discount_value=coupon.discount_value,
         max_discount=coupon.max_discount,
@@ -67,7 +78,7 @@ async def _load(coupon_id: uuid.UUID, db: AsyncSession) -> Coupon:
         await db.execute(
             select(Coupon)
             .where(Coupon.id == coupon_id)
-            .options(selectinload(Coupon.audience_members))
+            .options(selectinload(Coupon.audience_members), selectinload(Coupon.stalls))
         )
     ).scalar_one_or_none()
     if coupon is None:
@@ -78,6 +89,25 @@ async def _load(coupon_id: uuid.UUID, db: AsyncSession) -> Coupon:
 async def _stall_names(db: AsyncSession) -> dict[uuid.UUID, str]:
     rows = await db.execute(select(Vendor.id, Vendor.stall_name))
     return {row.id: row.stall_name for row in rows}
+
+
+def _forget(coupon: Coupon, collection: str, db: AsyncSession) -> None:
+    """Drop a collection this session has loaded, so the next read re-fetches it.
+
+    Both writers below replace their rows with a bulk DELETE and fresh INSERTs.
+    That is right for the database and invisible to the session, which still
+    holds the deleted rows in the loaded collection - and this session factory
+    sets `expire_on_commit=False`, so committing does not clear them either. The
+    re-read at the end of the handler then hands the admin back exactly the rows
+    their edit removed, on a screen whose whole job is to show what they just
+    saved. The database was always right; only the answer was stale.
+
+    Expiring the attribute is the narrow fix. Rewriting the writers to go through
+    the relationship would also work, but a clear-and-refill of the same set
+    makes the unit of work order an INSERT before its matching DELETE and trip
+    over the primary key.
+    """
+    db.expire(coupon, [collection])
 
 
 async def _write_audience(coupon: Coupon, payload: AdminCouponIn, db: AsyncSession) -> None:
@@ -92,15 +122,48 @@ async def _write_audience(coupon: Coupon, payload: AdminCouponIn, db: AsyncSessi
     await db.execute(
         delete(CouponAudienceMember).where(CouponAudienceMember.coupon_id == coupon.id)
     )
-    if payload.audience is not CouponAudience.NAMED:
-        return
-    for email in {str(e).strip().lower() for e in payload.audience_emails}:
-        db.add(CouponAudienceMember(coupon_id=coupon.id, email=email))
+    if payload.audience is CouponAudience.NAMED:
+        for email in {str(e).strip().lower() for e in payload.audience_emails}:
+            db.add(CouponAudienceMember(coupon_id=coupon.id, email=email))
+    _forget(coupon, "audience_members", db)
+
+
+async def _write_stalls(coupon: Coupon, payload: AdminCouponIn, db: AsyncSession) -> None:
+    """Replace the set of stalls this code works at.
+
+    A full replacement rather than a diff, for the reason `_write_audience`
+    gives: the admin's form is the whole truth. An empty list means every stall,
+    which is the model's own meaning for it.
+
+    The ids are checked against the stalls that exist first. Letting an unknown
+    one through would be a foreign key violation surfacing as a 500 on a form
+    somebody can see nothing wrong with - usually a stall deleted in another tab.
+    """
+    await db.execute(delete(CouponVendor).where(CouponVendor.coupon_id == coupon.id))
+
+    # Nothing to pin when it works everywhere - and the schema has already
+    # refused the other way round, a narrowed coupon naming no stall at all.
+    if not payload.all_stalls:
+        wanted = set(payload.vendor_ids)
+        real = set(
+            (await db.execute(select(Vendor.id).where(Vendor.id.in_(wanted))))
+            .scalars()
+            .all()
+        )
+        if wanted - real:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "One of the stalls you picked no longer exists. Reload and try again.",
+            )
+        for vendor_id in wanted:
+            db.add(CouponVendor(coupon_id=coupon.id, vendor_id=vendor_id))
+
+    _forget(coupon, "stalls", db)
 
 
 def _apply(coupon: Coupon, payload: AdminCouponIn) -> None:
     coupon.code = service.normalise(payload.code)
-    coupon.vendor_id = payload.vendor_id
+    coupon.all_stalls = payload.all_stalls
     coupon.discount_type = payload.discount_type
     coupon.discount_value = payload.discount_value
     # Only meaningful on a percentage. Cleared on a flat coupon rather than
@@ -131,12 +194,12 @@ async def list_coupons(db: AsyncSession = Depends(get_db)) -> list[AdminCouponOu
     coupons = (
         await db.execute(
             select(Coupon)
-            .options(selectinload(Coupon.audience_members))
+            .options(selectinload(Coupon.audience_members), selectinload(Coupon.stalls))
             .order_by(Coupon.created_at.desc())
         )
     ).scalars().all()
     names = await _stall_names(db)
-    return [await _as_out(c, names.get(c.vendor_id), db) for c in coupons]
+    return [await _as_out(c, names, db) for c in coupons]
 
 
 @router.post(
@@ -162,10 +225,11 @@ async def create_coupon(
             status.HTTP_409_CONFLICT, f"A coupon with the code {service.normalise(payload.code)} already exists"
         )
     await _write_audience(coupon, payload, db)
+    await _write_stalls(coupon, payload, db)
     await db.commit()
     coupon = await _load(coupon.id, db)
     names = await _stall_names(db)
-    return await _as_out(coupon, names.get(coupon.vendor_id), db)
+    return await _as_out(coupon, names, db)
 
 
 @router.put(
@@ -193,10 +257,11 @@ async def update_coupon(
             status.HTTP_409_CONFLICT, "Another coupon already has that code"
         )
     await _write_audience(coupon, payload, db)
+    await _write_stalls(coupon, payload, db)
     await db.commit()
     coupon = await _load(coupon.id, db)
     names = await _stall_names(db)
-    return await _as_out(coupon, names.get(coupon.vendor_id), db)
+    return await _as_out(coupon, names, db)
 
 
 @router.delete(

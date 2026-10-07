@@ -22,6 +22,12 @@ function daysUntil(iso: string) {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
 }
 
+/** "A", "A and B", "A, B and C" — a list a person would read aloud. */
+function listed(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? 'no stalls';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
 function Wallet({ wallet }: { wallet: CashbackWallet }) {
   const gourmet = wallet.kind === 'gourmet';
   const balance = Number(wallet.balance);
@@ -115,7 +121,10 @@ function CouponCard({ coupon }: { coupon: Coupon }) {
       </p>
 
       <p className="text-label-md text-on-surface-variant">
-        {coupon.stall_name ? `At ${coupon.stall_name}` : 'At any stall'}
+        {/* Named in full rather than counted. A student deciding where to eat
+            needs to know which kitchens, and a card has the room a one-line
+            admin row does not. */}
+        {coupon.all_stalls ? 'At any stall' : `At ${listed(coupon.stall_names)}`}
         {Number(coupon.min_order_value) > 0
           ? ` · orders over ${rupees(coupon.min_order_value)}`
           : ''}

@@ -14,6 +14,13 @@ differently under a refusal would be two things to remember instead of one.
 The number of uses is **derived** from these rows, never stored. A stored counter
 drifts from the rows behind it and then needs a repair button; a count of rows
 cannot.
+
+Where a code works is `all_stalls` plus a set of rows in `coupon_vendors`. It
+began as a single nullable column, which could say "this stall" or "all of them"
+but not "these three".
+
+The flag is not redundant with "the set is empty", and that is the whole reason
+it exists - see `all_stalls` below.
 """
 
 import uuid
@@ -112,16 +119,6 @@ class Coupon(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # and typed by a hungry person; "welcome100" has to be the same code.
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
 
-    # Which stall it works at. **Null means every stall**, which is the common
-    # case and the reason this is nullable rather than carrying a sentinel.
-    #
-    # CASCADE: a stall that is deleted takes its own promotions with it. Unlike
-    # an order, a coupon pinned to a stall that no longer exists has no meaning
-    # worth keeping.
-    vendor_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=True
-    )
-
     discount_type: Mapped[DiscountType] = mapped_column(_enum(DiscountType, 16), nullable=False)
     # A percentage when the type is PERCENT, rupees when it is FLAT.
     discount_value: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
@@ -145,6 +142,25 @@ class Coupon(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         _enum(CouponAudience, 16), default=CouponAudience.ANYONE, nullable=False
     )
 
+    # Whether this code works at every stall on campus, or only at the ones in
+    # `coupon_vendors`.
+    #
+    # **Deliberately a flag rather than "the set is empty"**, which is what it
+    # looked like it could be. Two reasons, and both are about failing in the
+    # safe direction:
+    #
+    #   * A stall can be deleted - `remove_demo_stalls.py` does exactly that -
+    #     and CASCADE takes its pinning rows with it. Without the flag, a coupon
+    #     pinned only to a removed stall would have an empty set, and an empty
+    #     set meaning "everywhere" would turn it loose on the whole campus. With
+    #     the flag it works nowhere instead, which is the direction a money bug
+    #     should fail in. The nullable `vendor_id` this replaced had the same
+    #     protection by accident: CASCADE deleted the coupon outright.
+    #   * An admin who unticks the last stall has not said "every stall". Nothing
+    #     could tell that apart from "I meant to pick some and did not", so the
+    #     form asks for the choice and the row records the answer.
+    all_stalls: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Off without deleting. An exhausted or withdrawn code keeps its redemption
@@ -163,6 +179,41 @@ class Coupon(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     audience_members: Mapped[list["CouponAudienceMember"]] = relationship(
         back_populates="coupon", cascade="all, delete-orphan", lazy="raise"
+    )
+    stalls: Mapped[list["CouponVendor"]] = relationship(
+        back_populates="coupon", cascade="all, delete-orphan", lazy="raise"
+    )
+
+
+class CouponVendor(Base):
+    """One stall a code is pinned to. Read only when `Coupon.all_stalls` is off.
+
+    A row per stall rather than a column of them, for the reason
+    `coupon_audience_members` gives: one stall can be added or removed without
+    rewriting the set, and "does this code work here?" is an indexed lookup
+    rather than a scan.
+
+    CASCADE on both sides: a deleted coupon takes its pinning, and a deleted
+    stall takes its own. A coupon left pinned to nothing then works nowhere
+    rather than everywhere - see `Coupon.all_stalls` for why that matters.
+    """
+
+    __tablename__ = "coupon_vendors"
+
+    coupon_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("coupons.id", ondelete="CASCADE"), primary_key=True
+    )
+    vendor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    coupon: Mapped["Coupon"] = relationship(back_populates="stalls")
+
+    __table_args__ = (
+        # "Which codes work at this stall", for the delete-cascade and for any
+        # future question asked from the stall's side. The composite primary key
+        # already indexes the other direction.
+        Index("ix_coupon_vendors_vendor", "vendor_id"),
     )
 
 

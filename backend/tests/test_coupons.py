@@ -22,6 +22,7 @@ from app.db.models.coupon import (  # noqa: E402
     Coupon,
     CouponAudience,
     CouponRedemption,
+    CouponVendor,
     DiscountType,
     ExpiryType,
 )
@@ -130,9 +131,11 @@ async def _stall(db, name="Coupon Stall", price="200.00"):
     return stall, item, _token(owner.id, TokenAudience.MERCHANT)
 
 
-async def _coupon(db, **kw):
+async def _coupon(db, *, stalls=None, **kw):
+    """A coupon row. `stalls=None` means every stall; a list pins it to those."""
     now = datetime.now(timezone.utc)
     fields = {
+        "all_stalls": stalls is None,
         "code": f"SAVE{uuid.uuid4().hex[:6].upper()}",
         "discount_type": DiscountType.FLAT,
         "discount_value": Decimal("50.00"),
@@ -151,6 +154,10 @@ async def _coupon(db, **kw):
     db.add(row)
     await db.commit()
     await db.refresh(row)
+    for vendor_id in stalls or ():
+        db.add(CouponVendor(coupon_id=row.id, vendor_id=vendor_id))
+    if stalls:
+        await db.commit()
     return row
 
 
@@ -374,7 +381,7 @@ class TestTheLimits:
         _, headers = customer
         mine, my_item, _ = await _stall(db, name="Mine")
         theirs, _, _ = await _stall(db, name="Theirs")
-        c = await _coupon(db, vendor_id=theirs.id)
+        c = await _coupon(db, stalls=[theirs.id])
 
         placed = await _place(client, headers, mine, my_item, code=c.code)
 
@@ -388,9 +395,58 @@ class TestTheLimits:
     ):
         _, headers = customer
         stall, item, _ = await _stall(db)
-        c = await _coupon(db, vendor_id=stall.id)
+        c = await _coupon(db, stalls=[stall.id])
 
         assert (await _place(client, headers, stall, item, code=c.code)).status_code == 201
+
+    async def test_a_code_can_be_pinned_to_several_stalls(self, client, customer, db):
+        """The whole point of the set: a deal running across a few kitchens."""
+        _, headers = customer
+        one, one_item, _ = await _stall(db, name="One")
+        two, two_item, _ = await _stall(db, name="Two")
+        c = await _coupon(db, stalls=[one.id, two.id], one_per_customer=False)
+
+        assert (
+            await _place(client, headers, one, one_item, code=c.code)
+        ).status_code == 201
+        assert (
+            await _place(client, headers, two, two_item, code=c.code)
+        ).status_code == 201
+
+    async def test_a_stall_outside_the_set_is_still_refused(self, client, customer, db):
+        _, headers = customer
+        one, _, _ = await _stall(db, name="One")
+        two, _, _ = await _stall(db, name="Two")
+        three, three_item, _ = await _stall(db, name="Three")
+        c = await _coupon(db, stalls=[one.id, two.id])
+
+        refused = await _place(client, headers, three, three_item, code=c.code)
+
+        assert refused.status_code == 400
+        assert "this stall" in refused.json()["detail"]
+
+    async def test_losing_its_last_stall_makes_a_code_work_nowhere(
+        self, client, customer, db
+    ):
+        """**Not everywhere**, which is the trap this flag exists to avoid.
+
+        Deleting a stall cascades its pinning rows away, so a coupon pinned only
+        there is left naming nothing. Reading that as "every stall" would hand
+        the campus a code meant for one kitchen - and `remove_demo_stalls.py`
+        deletes stalls for real, so this is not a hypothetical.
+        """
+        _, headers = customer
+        doomed, _, _ = await _stall(db, name="Doomed")
+        other, other_item, _ = await _stall(db, name="Other")
+        c = await _coupon(db, stalls=[doomed.id])
+
+        await db.delete(doomed)
+        await db.commit()
+
+        refused = await _place(client, headers, other, other_item, code=c.code)
+
+        assert refused.status_code == 400
+        assert "this stall" in refused.json()["detail"]
 
 
 class TestWhoCanUseIt:
@@ -849,7 +905,7 @@ class TestWhatAStudentIsOffered:
         _, headers = customer
         stall, _, _ = await _stall(db)
         everywhere = await _coupon(db, show_in_offers=True)
-        pinned = await _coupon(db, show_in_offers=True, vendor_id=stall.id)
+        pinned = await _coupon(db, show_in_offers=True, stalls=[stall.id])
 
         r = await client.get(
             "/coupons/available", headers=headers, params={"subtotal": "200.00"}
@@ -940,6 +996,133 @@ class TestTheAdminDesk:
             json=_form(audience="named", audience_emails=[]),
         )
         assert r.status_code == 422
+
+    async def test_a_coupon_narrowed_to_no_stalls_at_all_is_refused(
+        self, client, admin
+    ):
+        """Neither reading of it is a setting somebody meant.
+
+        "Everywhere" would hand the campus a code meant for one kitchen;
+        "nowhere" would be a coupon the admin believes they have made.
+        """
+        _, headers = admin
+        r = await client.post(
+            "/admin/coupons", headers=headers, json=_form(all_stalls=False, vendor_ids=[])
+        )
+        assert r.status_code == 422
+
+    async def test_stalls_are_saved_and_read_back(self, client, admin, db):
+        _, headers = admin
+        one, _, _ = await _stall(db, name="Aaa Stall")
+        two, _, _ = await _stall(db, name="Bbb Stall")
+
+        made = (
+            await client.post(
+                "/admin/coupons",
+                headers=headers,
+                json=_form(all_stalls=False, vendor_ids=[str(two.id), str(one.id)]),
+            )
+        ).json()
+
+        assert made["all_stalls"] is False
+        # Sorted by name, so the form and the list read the same way twice.
+        assert made["stall_names"] == ["Aaa Stall", "Bbb Stall"]
+        assert set(made["vendor_ids"]) == {str(one.id), str(two.id)}
+
+    async def test_editing_replaces_the_whole_set(self, client, admin, db):
+        """A full replacement, like the email list - the form is the whole truth."""
+        _, headers = admin
+        one, _, _ = await _stall(db, name="Keep")
+        two, _, _ = await _stall(db, name="Drop")
+
+        made = (
+            await client.post(
+                "/admin/coupons",
+                headers=headers,
+                json=_form(all_stalls=False, vendor_ids=[str(one.id), str(two.id)]),
+            )
+        ).json()
+
+        edited = (
+            await client.put(
+                f"/admin/coupons/{made['id']}",
+                headers=headers,
+                json=_form(
+                    code=made["code"], all_stalls=False, vendor_ids=[str(one.id)]
+                ),
+            )
+        ).json()
+
+        assert edited["stall_names"] == ["Keep"]
+
+    async def test_widening_a_coupon_clears_its_stalls(self, client, admin, db):
+        _, headers = admin
+        stall, _, _ = await _stall(db)
+
+        made = (
+            await client.post(
+                "/admin/coupons",
+                headers=headers,
+                json=_form(all_stalls=False, vendor_ids=[str(stall.id)]),
+            )
+        ).json()
+
+        widened = (
+            await client.put(
+                f"/admin/coupons/{made['id']}",
+                headers=headers,
+                json=_form(code=made["code"], all_stalls=True),
+            )
+        ).json()
+
+        assert widened["all_stalls"] is True
+        assert widened["stall_names"] == []
+
+    async def test_editing_the_email_list_answers_with_the_new_one(
+        self, client, admin
+    ):
+        """The reply has to show what was just saved, not what was replaced.
+
+        Both list writers replace their rows with a bulk DELETE the session
+        cannot see, and this session factory does not expire on commit - so the
+        re-read at the end of the handler used to hand back exactly the rows the
+        edit removed. The database was right; the answer was a lie.
+        """
+        _, headers = admin
+        made = (
+            await client.post(
+                "/admin/coupons",
+                headers=headers,
+                json=_form(audience="named", audience_emails=["before@bitmesra.ac.in"]),
+            )
+        ).json()
+
+        edited = (
+            await client.put(
+                f"/admin/coupons/{made['id']}",
+                headers=headers,
+                json=_form(
+                    code=made["code"],
+                    audience="named",
+                    audience_emails=["after@bitmesra.ac.in"],
+                ),
+            )
+        ).json()
+
+        assert edited["audience_emails"] == ["after@bitmesra.ac.in"]
+
+    async def test_an_unknown_stall_is_a_400_not_a_500(self, client, admin):
+        """Usually a stall deleted in another tab. A foreign key violation
+        surfacing as a 500 on a form nobody can see anything wrong with is the
+        worst version of this."""
+        _, headers = admin
+        r = await client.post(
+            "/admin/coupons",
+            headers=headers,
+            json=_form(all_stalls=False, vendor_ids=[str(uuid.uuid4())]),
+        )
+        assert r.status_code == 400
+        assert "no longer exists" in r.json()["detail"]
 
     async def test_editing_keeps_the_uses_it_already_had(
         self, client, admin, customer, db

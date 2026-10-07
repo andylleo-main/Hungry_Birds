@@ -35,6 +35,23 @@ function expiryOf(c: AdminCoupon) {
     : 'Dated';
 }
 
+/**
+ * Where a code works, in a few words for a one-line row.
+ *
+ * Names up to two, then counts — three stall names is longer than the rest of
+ * the row put together, and the form is where the full set belongs.
+ *
+ * "Nowhere" is a real state, not a defensive branch: a coupon narrowed to stalls
+ * that have since been deleted keeps its choice and loses its list, and it works
+ * nowhere rather than everywhere. Saying so is the whole point of showing it.
+ */
+function whereItWorks(c: AdminCoupon): string {
+  if (c.all_stalls) return 'Every stall';
+  if (c.stall_names.length === 0) return 'No stalls left';
+  if (c.stall_names.length <= 2) return c.stall_names.join(' and ');
+  return `${c.stall_names.length} stalls`;
+}
+
 const AUDIENCE_LABEL: Record<AdminCoupon['audience'], string> = {
   anyone: 'Anyone with the code',
   first_order: 'First order only',
@@ -75,7 +92,7 @@ function CouponRow({
           )}
         </div>
         <p className="truncate text-body-sm text-on-surface-variant">
-          {expiryOf(coupon)} · {coupon.stall_name ?? 'Every stall'} ·{' '}
+          {expiryOf(coupon)} · {whereItWorks(coupon)} ·{' '}
           {AUDIENCE_LABEL[coupon.audience]}
           {Number(coupon.min_order_value) > 0
             ? ` · min ${rupees(coupon.min_order_value)}`

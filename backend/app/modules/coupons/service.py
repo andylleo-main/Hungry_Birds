@@ -28,6 +28,7 @@ from app.db.models.coupon import (
     CouponAudience,
     CouponAudienceMember,
     CouponRedemption,
+    CouponVendor,
     DiscountType,
     ExpiryType,
     RedemptionState,
@@ -127,6 +128,25 @@ async def live_uses(coupon_id: uuid.UUID, db: AsyncSession) -> int:
     ) or 0
 
 
+async def stalls_for(coupon_id: uuid.UUID, db: AsyncSession) -> set[uuid.UUID]:
+    """The stalls this code is pinned to.
+
+    Only meaningful when the coupon's `all_stalls` is off; a code good everywhere
+    has no rows here and nobody should be asking. An empty set on a pinned coupon
+    means it works **nowhere** - every stall it named has since been deleted -
+    which is the safe way round, and `Coupon.all_stalls` says why at length.
+
+    Read here rather than through the relationship, which is `lazy="raise"` like
+    every other collection on Coupon: the coupon is usually loaded by a locking
+    SELECT with nothing eager-loaded, and a lazy load inside an async session is
+    the kind of thing that works in a test and deadlocks under load.
+    """
+    rows = await db.execute(
+        select(CouponVendor.vendor_id).where(CouponVendor.coupon_id == coupon_id)
+    )
+    return set(rows.scalars().all())
+
+
 async def _used_by(coupon_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> int:
     return (
         await db.scalar(
@@ -203,6 +223,7 @@ async def assert_usable(
     pinned ones out before getting here, because a stall-pinned code cannot be
     judged without knowing which stall.
     """
+    pinned = set() if coupon.all_stalls else await stalls_for(coupon.id, db)
     now = datetime.now(timezone.utc)
 
     if not coupon.is_active:
@@ -214,10 +235,13 @@ async def assert_usable(
     elif coupon.max_uses is not None and await live_uses(coupon.id, db) >= coupon.max_uses:
         raise CouponError("That code has been fully claimed.")
 
-    if vendor_id is not None and coupon.vendor_id is not None and coupon.vendor_id != vendor_id:
-        # Deliberately does not name the stall it *is* for. A code pinned to one
-        # stall is usually a deal that stall is running, and turning a wrong
-        # guess into an advertisement for somebody else is not ours to do.
+    if vendor_id is not None and not coupon.all_stalls and vendor_id not in pinned:
+        # Deliberately does not name the stalls it *is* for. A pinned code is
+        # usually a deal those stalls are running, and turning a wrong guess into
+        # an advertisement for somebody else is not ours to do.
+        #
+        # An empty `pinned` lands here too, which is deliberate: every stall the
+        # code named has been deleted, so it works nowhere. See Coupon.all_stalls.
         raise CouponError("That code doesn't work at this stall.")
 
     if Decimal(subtotal) < Decimal(coupon.min_order_value):
@@ -401,7 +425,7 @@ async def available_for(
 
     out: list[Applied] = []
     for coupon in rows:
-        if vendor_id is None and coupon.vendor_id is not None:
+        if vendor_id is None and not coupon.all_stalls:
             continue
         try:
             out.append(await assert_usable(coupon, user, vendor_id, subtotal, db))

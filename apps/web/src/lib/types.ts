@@ -396,9 +396,10 @@ export interface Coupon {
   discount_value: string;
   max_discount: string | null;
   min_order_value: string;
-  /** Null when it works at every stall. */
-  vendor_id: string | null;
-  stall_name: string | null;
+  /** True when it works at every stall on campus. */
+  all_stalls: boolean;
+  /** The stalls it is pinned to when it does not, by name and sorted. */
+  stall_names: string[];
   /** True when it applies itself with no code to type. */
   automatic: boolean;
   /** What it takes off the cart that was asked about. */
@@ -409,8 +410,16 @@ export interface Coupon {
 export interface AdminCoupon {
   id: string;
   code: string;
-  vendor_id: string | null;
-  stall_name: string | null;
+  /**
+   * Where it works. `all_stalls` is the choice the admin made, and is
+   * deliberately not the same thing as an empty `vendor_ids` — a coupon can be
+   * narrowed to stalls that have since been deleted, and that one works
+   * nowhere rather than everywhere.
+   */
+  all_stalls: boolean;
+  vendor_ids: string[];
+  /** The same stalls by name, sorted, so the list needs no second lookup. */
+  stall_names: string[];
   discount_type: DiscountType;
   discount_value: string;
   max_discount: string | null;
@@ -431,7 +440,9 @@ export interface AdminCoupon {
 /** What the admin's form sends. Mirrors AdminCouponIn on the server. */
 export interface AdminCouponInput {
   code: string;
-  vendor_id: string | null;
+  all_stalls: boolean;
+  /** Read only when `all_stalls` is false, and then it must not be empty. */
+  vendor_ids: string[];
   discount_type: DiscountType;
   discount_value: string;
   max_discount: string | null;

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import limits
 from app.core.deps import ORDERING_ROLES, require_role
 from app.core.ratelimit import limit_by_user
-from app.db.models.coupon import CouponAudience
+from app.db.models.coupon import Coupon, CouponAudience
 from app.db.models.user import User
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
@@ -25,13 +25,23 @@ from app.modules.coupons.schemas import CouponCheckIn, CouponOut
 router = APIRouter(prefix="/coupons", tags=["coupons"])
 
 
-async def _stall_name(vendor_id: uuid.UUID | None, db: AsyncSession) -> str | None:
-    if vendor_id is None:
-        return None
-    return await db.scalar(select(Vendor.stall_name).where(Vendor.id == vendor_id))
+async def _stall_names(coupon: Coupon, db: AsyncSession) -> list[str]:
+    """The names of the stalls a code is pinned to, or empty for every stall.
+
+    Sorted, so a card showing two of three names shows the same two each time.
+    """
+    if coupon.all_stalls:
+        return []
+    pinned = await service.stalls_for(coupon.id, db)
+    if not pinned:
+        return []
+    rows = await db.execute(
+        select(Vendor.stall_name).where(Vendor.id.in_(pinned)).order_by(Vendor.stall_name)
+    )
+    return list(rows.scalars().all())
 
 
-def _out(applied: service.Applied, stall_name: str | None) -> CouponOut:
+def _out(applied: service.Applied, stall_names: list[str]) -> CouponOut:
     c = applied.coupon
     return CouponOut(
         code=c.code,
@@ -40,8 +50,8 @@ def _out(applied: service.Applied, stall_name: str | None) -> CouponOut:
         discount_value=c.discount_value,
         max_discount=c.max_discount,
         min_order_value=c.min_order_value,
-        vendor_id=c.vendor_id,
-        stall_name=stall_name,
+        all_stalls=c.all_stalls,
+        stall_names=stall_names,
         automatic=c.audience is CouponAudience.AUTOMATIC,
         discount=applied.discount,
     )
@@ -80,7 +90,7 @@ async def check(
     except service.CouponError as exc:
         raise exc.as_http()
 
-    return _out(applied, await _stall_name(applied.coupon.vendor_id, db))
+    return _out(applied, await _stall_names(applied.coupon, db))
 
 
 @router.get(
@@ -105,7 +115,4 @@ async def available(
     without knowing the cart it would apply to.
     """
     found = await service.available_for(user, vendor_id, subtotal, db)
-    names = {
-        a.coupon.vendor_id: await _stall_name(a.coupon.vendor_id, db) for a in found
-    }
-    return [_out(a, names.get(a.coupon.vendor_id)) for a in found]
+    return [_out(a, await _stall_names(a.coupon, db)) for a in found]

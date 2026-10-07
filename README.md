@@ -1412,14 +1412,39 @@ for the bigger number, which is the wrong thing.
 
 ## Coupons
 
-Discount codes an admin makes. Percent or flat, count-based or dated, site-wide
-or pinned to one stall, with a minimum order value and - on a percentage - a
-cap. Four audiences: anyone with the code, a first order only, a named list of
-addresses, and one that applies itself with no code to type.
+Discount codes an admin makes. Percent or flat, count-based or dated, good at
+every stall or at a set of them, with a minimum order value and - on a
+percentage - a cap. Four audiences: anyone with the code, a first order only, a
+named list of addresses, and one that applies itself with no code to type.
 
 Built from a description of the coupon admin in another project of the user's,
 not from its code. `CLAUDE.md` forbids moving code between the two, and a
 screenshot of a form is a description of behaviour.
+
+### Where a code works
+
+`coupons.all_stalls`, plus a row per stall in `coupon_vendors`. It was a nullable
+`coupons.vendor_id`, which could say "this stall" or "all of them" but not "these
+three".
+
+**The flag is not the same thing as "the set is empty"**, and that is the whole
+reason it is there. Two ways the empty set would have been read as "everywhere",
+both bad:
+
+- A stall can be deleted - `remove_demo_stalls.py` does exactly that - and
+  CASCADE takes its pinning rows with it. A coupon pinned only to a removed stall
+  would be left naming nothing, and would come loose on the entire campus. With
+  the flag it works **nowhere**, which is the direction a money bug should fail
+  in. The old `vendor_id` had the same protection by accident: CASCADE deleted
+  the coupon outright.
+- An admin who unticks the last stall has not said "every stall". Nothing can
+  tell that from "I meant to pick some and did not", so the form asks for the
+  choice - two options, then the checkboxes - and the row records the answer. The
+  schema refuses the pair too, so it is not a rule only the screen knows.
+
+The admin list says "Every stall", the names when there are one or two, a count
+beyond that, and **"No stalls left"** for the case above. The offers card names
+them in full: a student deciding where to eat needs to know which kitchens.
 
 ### A use is a thing that can be given back
 
