@@ -147,9 +147,27 @@ class Receipt {
     }
 
     bytes.addAll(_line(_rule()));
-    bytes.addAll(_bold(true));
-    bytes.addAll(_line(_spread('TOTAL', 'Rs.${order.totalAmount.toStringAsFixed(0)}')));
-    bytes.addAll(_bold(false));
+
+    // Three lines rather than one when cashback was spent, because the COLLECT
+    // figure below is then smaller than the food and the stall has to be able to
+    // see why from the slip alone. Printed as a subtraction - order value, the
+    // discount, then what is owed - so it reads the way a bill reads.
+    //
+    // TOTAL stays the value of the food, because that is what the stall is owed
+    // and what it reconciles against. Hungry Birds funds the discount.
+    if (order.hasDiscount) {
+      bytes.addAll(_line(_spread('Order', 'Rs.${order.totalAmount.toStringAsFixed(0)}')));
+      bytes.addAll(
+        _line(_spread('Cashback', '-Rs.${order.cashbackApplied.toStringAsFixed(0)}')),
+      );
+      bytes.addAll(_bold(true));
+      bytes.addAll(_line(_spread('TO PAY', 'Rs.${order.amountDue.toStringAsFixed(0)}')));
+      bytes.addAll(_bold(false));
+    } else {
+      bytes.addAll(_bold(true));
+      bytes.addAll(_line(_spread('TOTAL', 'Rs.${order.totalAmount.toStringAsFixed(0)}')));
+      bytes.addAll(_bold(false));
+    }
 
     // The one line that changes what somebody does with the bag. A prepaid order
     // is handed over; a cash one is handed over *and* money comes back. Printing
@@ -160,7 +178,10 @@ class Receipt {
       bytes.addAll(_align(1));
       bytes.addAll(_size(1, 1));
       bytes.addAll(_bold(true));
-      bytes.addAll(_line('COLLECT Rs.${order.totalAmount.toStringAsFixed(0)}'));
+      // amountDue, not the total. Whoever is packing the bag reads this line
+      // and nothing else, so printing the gross here would have them ask the
+      // customer for money the customer does not owe.
+      bytes.addAll(_line('COLLECT Rs.${order.amountDue.toStringAsFixed(0)}'));
       bytes.addAll(_size(0, 0));
       bytes.addAll(_line('ON DELIVERY'));
       bytes.addAll(_bold(false));

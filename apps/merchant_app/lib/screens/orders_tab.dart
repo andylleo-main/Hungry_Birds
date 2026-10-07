@@ -875,7 +875,10 @@ class _PaymentLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final amount = '₹${order.totalAmount.toStringAsFixed(0)}';
+    // What is owed, which is what this line is about: collecting, or having
+    // collected. The stall's own takings are the gross, and the finance screen
+    // is where that figure belongs - not on a line next to the word "collect".
+    final amount = '₹${order.amountDue.toStringAsFixed(0)}';
 
     if (order.isAwaitingCollection) {
       return Container(
@@ -891,9 +894,26 @@ class _PaymentLine extends StatelessWidget {
             const Icon(Icons.payments_outlined, size: 18),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                '$amount to collect on delivery',
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$amount to collect on delivery',
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                  ),
+                  // Only when the figures differ. Whoever is carrying the order
+                  // needs to know the smaller number is deliberate, or the safe
+                  // thing for them to do - ask for the bigger one - is wrong.
+                  if (order.hasDiscount)
+                    Text(
+                      '₹${order.totalAmount.toStringAsFixed(0)} order, '
+                      '₹${order.cashbackApplied.toStringAsFixed(0)} paid by cashback',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                ],
               ),
             ),
           ],
@@ -971,7 +991,7 @@ class _CollectActionsState extends State<_CollectActions> {
             // worth one tap of confirmation rather than being a button that
             // settles the money by accident.
             content: Text(
-              'This records \u20b9${widget.order.totalAmount.toStringAsFixed(0)} '
+              'This records \u20b9${widget.order.amountDue.toStringAsFixed(0)} '
               'as collected in cash.',
             ),
             actions: [

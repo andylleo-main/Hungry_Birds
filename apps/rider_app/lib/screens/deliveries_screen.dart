@@ -204,7 +204,7 @@ class _DeliveryCardState extends State<_DeliveryCard> {
     final sure = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Collected \u20b9${order.totalAmount.toStringAsFixed(0)}?'),
+        title: Text('Collected \u20b9${order.amountDue.toStringAsFixed(0)}?'),
         content: const Text(
           'Only tap yes once the customer has handed you the cash. '
           'This marks the order paid.',
@@ -290,11 +290,24 @@ class _DeliveryCardState extends State<_DeliveryCard> {
               const Icon(Icons.payments_outlined, size: 18),
               const SizedBox(width: 8),
               Text(
-                'COLLECT \u20b9${order.totalAmount.toStringAsFixed(0)}',
+                'COLLECT \u20b9${order.amountDue.toStringAsFixed(0)}',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
               ),
             ],
           ),
+          // Only when the two figures differ, which is rare. Without it a rider
+          // handed a Rs.200 order asking for Rs.160 has no way to tell whether
+          // the app is wrong, and the safe thing for them to do - ask for the
+          // bigger number - is the wrong thing.
+          if (order.hasDiscount)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Order is \u20b9${order.totalAmount.toStringAsFixed(0)}; '
+                '\u20b9${order.cashbackApplied.toStringAsFixed(0)} paid by cashback',
+                style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+              ),
+            ),
           const SizedBox(height: 10),
           Row(
             children: [
@@ -368,7 +381,7 @@ class _DeliveryCardState extends State<_DeliveryCard> {
                   ),
                 ),
                 Text(
-                  '₹${order.totalAmount.toStringAsFixed(0)}',
+                  '₹${order.amountDue.toStringAsFixed(0)}',
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                 ),
               ],

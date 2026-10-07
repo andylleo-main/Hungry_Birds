@@ -25,6 +25,7 @@ void main() {
     bool delivery = false,
     String? location,
     double total = 150,
+    double cashback = 0,
   }) =>
       Order(
         id: 'o1',
@@ -37,6 +38,7 @@ void main() {
         paymentStatus: paymentStatus,
         readyBy: readyBy,
         totalAmount: total,
+        cashbackApplied: cashback,
         note: note,
         createdAt: DateTime(2026, 1, 1, 13, 42),
         updatedAt: DateTime(2026, 1, 1, 13, 42),
@@ -333,6 +335,47 @@ void main() {
       final text = latin1.decode(Receipt(columns: 32).testPage());
       expect(text, contains('1234567890'));
       expect(text, contains('32 columns'));
+    });
+  });
+
+  group('an order that spent cashback', () {
+    test('COLLECT is the reduced figure, not the value of the food', () {
+      // The line whoever packs the bag reads, and nothing else. Printing the
+      // gross here would have them ask the customer for money they do not owe.
+      final lines = printed(
+        order(paymentStatus: PaymentStatus.due, total: 200, cashback: 40),
+      );
+      expect(lines, contains('COLLECT Rs.160'));
+      expect(lines.any((l) => l.contains('COLLECT Rs.200')), isFalse);
+    });
+
+    test('the slip shows the subtraction, so the smaller number is explained', () {
+      // A stall handed a ticket saying COLLECT Rs.160 on a Rs.200 order needs to
+      // see why from the slip alone - otherwise the safe thing for them to do is
+      // ask for the bigger number, which is the wrong thing.
+      final lines = printed(
+        order(paymentStatus: PaymentStatus.due, total: 200, cashback: 40),
+      );
+      expect(lines.any((l) => l.startsWith('Order') && l.contains('Rs.200')), isTrue);
+      expect(lines.any((l) => l.contains('Cashback') && l.contains('-Rs.40')), isTrue);
+      expect(lines.any((l) => l.startsWith('TO PAY') && l.contains('Rs.160')), isTrue);
+    });
+
+    test('a prepaid discounted order still shows the breakdown', () {
+      // No COLLECT line - nothing is owed - but the stall still reconciles
+      // against the order value, so the three lines are worth printing.
+      final lines = printed(order(total: 200, cashback: 40));
+      expect(lines.any((l) => l.contains('COLLECT')), isFalse);
+      expect(lines.any((l) => l.startsWith('TO PAY') && l.contains('Rs.160')), isTrue);
+    });
+
+    test('an ordinary order still prints one TOTAL line', () {
+      // Almost every order. The three-line breakdown must not become the normal
+      // shape of a ticket on 58mm paper.
+      final lines = printed(order(total: 150));
+      expect(lines.any((l) => l.startsWith('TOTAL') && l.contains('Rs.150')), isTrue);
+      expect(lines.any((l) => l.contains('Cashback')), isFalse);
+      expect(lines.any((l) => l.contains('TO PAY')), isFalse);
     });
   });
 }

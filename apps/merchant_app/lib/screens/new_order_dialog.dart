@@ -158,10 +158,23 @@ class NewOrderDialog extends StatelessWidget {
                         ),
                       ),
                       const Divider(height: 18),
+                      // The order's value, because this popup is the stall
+                      // deciding whether to cook it - not a figure anybody
+                      // collects. The line below says what will actually be
+                      // handed over, on the rare order where that differs.
                       Text(
                         '₹${order.totalAmount.toStringAsFixed(0)}',
                         style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
                       ),
+                      if (order.hasDiscount)
+                        Text(
+                          '₹${order.amountDue.toStringAsFixed(0)} to pay '
+                          '(₹${order.cashbackApplied.toStringAsFixed(0)} cashback)',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
                     ],
                   ),
                 ),

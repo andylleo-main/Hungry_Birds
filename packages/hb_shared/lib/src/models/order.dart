@@ -192,7 +192,19 @@ class Order {
   /// between the student's browser and the stall's tablet is worse than none.
   final DateTime? readyBy;
 
+  /// What the food is worth, and what the stall is owed for it.
+  ///
+  /// **Not what the customer pays** when promotional cashback was spent on the
+  /// order. Hungry Birds funds that discount rather than the stall, so this
+  /// stays the full figure and [amountDue] is what anybody hands over. Put
+  /// [amountDue] next to the words "pay" and "collect"; put this next to
+  /// "order value".
   final double totalAmount;
+
+  /// Promotional credit the student put towards this order. Zero on almost all
+  /// of them.
+  final double cashbackApplied;
+
   final String? note;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -243,6 +255,7 @@ class Order {
     this.prepMinutes,
     this.readyBy,
     required this.totalAmount,
+    this.cashbackApplied = 0,
     required this.note,
     required this.createdAt,
     required this.updatedAt,
@@ -264,6 +277,18 @@ class Order {
 
   /// Paid at the door rather than up front.
   bool get isCod => paymentMethod == 'cod';
+
+  /// What the customer actually hands over.
+  ///
+  /// The only figure that belongs next to "pay" or "collect": the cash a rider
+  /// takes at the door, the amount on a UPI QR, and the COLLECT line on a
+  /// printed ticket. Equal to [totalAmount] on every order where no cashback was
+  /// spent, which is most of them.
+  double get amountDue => totalAmount - cashbackApplied;
+
+  /// Whether promotional credit came off this order, so a screen knows whether
+  /// the discount line is worth drawing at all.
+  bool get hasDiscount => cashbackApplied > 0;
 
   /// Money the rider still has to collect before this can be marked delivered.
   bool get isAwaitingCollection => paymentStatus == PaymentStatus.due;
@@ -291,6 +316,12 @@ class Order {
             ? null
             : DateTime.parse(json['ready_by'] as String),
         totalAmount: double.parse(json['total_amount'].toString()),
+        // Absent on a server that predates cashback, which an installed APK
+        // outlives - the same tolerance FulfilmentSettings gives its minimum.
+        // Zero is the right fallback: it makes amountDue equal the total, which
+        // is exactly how every order behaved before this existed.
+        cashbackApplied:
+            double.tryParse(json['cashback_applied']?.toString() ?? '') ?? 0,
         note: json['note'] as String?,
         createdAt: DateTime.parse(json['created_at'] as String),
         updatedAt: DateTime.parse(json['updated_at'] as String),
