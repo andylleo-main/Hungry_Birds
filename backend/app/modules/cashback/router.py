@@ -28,6 +28,10 @@ from app.modules.cashback import service
 from app.modules.orders.schemas import PaymentMethod
 from app.modules.cashback.schemas import CashbackOut, EntryOut, QuoteOut, WalletOut
 
+# How many movements the offers page gets. Enough to account for a balance
+# several times over, bounded so the response stops growing with the account.
+HISTORY_PAGE = 100
+
 router = APIRouter(prefix="/cashback", tags=["cashback"])
 
 
@@ -50,9 +54,14 @@ async def my_cashback(
     Newest first for display, though the balance walk needs them oldest first -
     hence the reversal here rather than a second query.
     """
-    entries = await service.entries_for(user.id, db)
     now = datetime.now(timezone.utc)
-    balances = service.live_balances(entries, now)
+    # Three different slices, on purpose. `spendable` is the bounded window the
+    # balance walk needs, `shown` is the newest page of history, and the lifetime
+    # total is an aggregate - one list serving all three is what made this read
+    # the entire ledger on every call.
+    spendable = await service.entries_for(user.id, db, now=now)
+    shown = await service.recent_entries(user.id, db, HISTORY_PAGE)
+    balances = service.live_balances(spendable, now)
 
     # The stall and order number for each movement, in one query rather than one
     # per row, and as a join rather than a relationship: Order has no vendor
@@ -61,7 +70,7 @@ async def my_cashback(
     #
     # An entry whose order has since been deleted keeps its row with no name,
     # which the schema allows. The money is still the student's.
-    order_ids = {e.order_id for e in entries if e.order_id is not None}
+    order_ids = {e.order_id for e in shown if e.order_id is not None}
     named: dict[uuid.UUID, tuple[str, str]] = {}
     if order_ids:
         rows = await db.execute(
@@ -77,7 +86,7 @@ async def my_cashback(
             balance=balances[kind],
             percent=service.rate_for(kind, settings, on=now).percent,
             cap=service.rate_for(kind, settings, on=now).cap,
-            expires_next=service.next_expiry(entries, kind, now),
+            expires_next=service.next_expiry(spendable, kind, now),
         )
         for kind in CashbackKind
     ]
@@ -96,9 +105,10 @@ async def my_cashback(
                 expires_at=e.expires_at,
                 created_at=e.created_at,
             )
-            for e in reversed(entries)
+            # Already newest first from the query, so no reversal here.
+            for e in shown
         ],
-        saved_so_far=service.saved_so_far(entries),
+        saved_so_far=await service.saved_so_far_for(user.id, db),
     )
 
 
@@ -145,7 +155,7 @@ async def quote(
     now = datetime.now(timezone.utc)
     kind = service.kind_for(vendor, settings)
     rate = service.rate_for(kind, settings, on=now)
-    entries = await service.entries_for(user.id, db)
+    entries = await service.entries_for(user.id, db, now=now)
     balance = service.live_balances(entries, now)[kind]
     redeemable = service.spendable_on(subtotal, balance, rate)
 

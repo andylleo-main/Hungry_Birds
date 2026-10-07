@@ -195,6 +195,73 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# The origins the page is genuinely allowed to reach, enumerated rather than
+# waved at with a wildcard - a CSP that permits everything documents nothing.
+#
+#   fonts.googleapis.com / fonts.gstatic.com  Plus Jakarta Sans and the Material
+#                                             Symbols icon font, both <link>ed
+#                                             from index.html.
+#   checkout.razorpay.com                     Checkout injects itself as a
+#                                             <script> (see lib/razorpay.ts) and
+#                                             then opens its sheet in an iframe.
+#   api/lumberjack.razorpay.com               what that sheet talks to.
+#   res.cloudinary.com                        menu photographs, whose URLs come
+#                                             back from our own API.
+_CSP = '; '.join(
+    (
+        "default-src 'self'",
+        "script-src 'self' https://checkout.razorpay.com",
+        # 'unsafe-inline' is here because React sets inline styles and the font
+        # links carry their own, and it is the first thing to try removing once
+        # the report endpoint is quiet. Styles are a far smaller lever than
+        # scripts, which is why script-src above does not have it.
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data: https://res.cloudinary.com https://*.razorpay.com",
+        "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com",
+        "frame-src https://api.razorpay.com https://checkout.razorpay.com",
+        # Nothing here is ever meant to be framed, which is the clickjacking
+        # half of this and the modern spelling of X-Frame-Options below.
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+    )
+)
+
+
+@app.middleware('http')
+async def security_headers(request: Request, call_next):
+    """Set the headers a browser needs to be told, on every response.
+
+    Outermost deliberately - declared after the CORS middleware, which in
+    Starlette makes it the last wrapper applied and so the first to see the
+    response - because an early 413 or 429 from the limiter above is still a
+    response a browser renders, and should carry the same protections.
+
+    **The CSP is report-only, and that is not laziness.** Razorpay Checkout
+    pulls from several of its own origins and the exact set is theirs to change;
+    a policy guessed slightly wrong does not degrade, it stops people paying.
+    Report-only gets the violations into the console where they can be read
+    against a real checkout, and the policy is promoted to enforcing once a full
+    payment runs clean. The other three headers have no such failure mode and
+    are enforced now.
+
+    HSTS is set only outside development. On localhost a browser would pin the
+    whole origin to HTTPS, which breaks the dev server in a way that outlives
+    the setting - it is cached in the browser, not here.
+    """
+    response = await call_next(request)
+    response.headers.setdefault('Content-Security-Policy-Report-Only', _CSP)
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    if not settings.is_development:
+        response.headers.setdefault(
+            'Strict-Transport-Security', 'max-age=31536000; includeSubDomains'
+        )
+    return response
+
+
 # Everything the API serves lives under /api so it can never collide with a
 # client-side route of the same name. Without this the SPA's /orders/<id>
 # tracking page is shadowed by GET /orders/{order_id} and a refresh returns

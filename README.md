@@ -1732,3 +1732,82 @@ XML on API 26+ and to the PNGs below that.
 - **Distributing the apps** is not covered here. Android can be sideloaded as
   an APK; iOS requires an Apple Developer account ($99/yr) even for TestFlight.
 - **No ratings or reviews** — deliberately out of scope for the first version.
+
+## Two gates worth knowing about
+
+**An upload permit needs an approved stall.** `GET /media/signature` hands back a
+signed permit to write into the Cloudinary account, and it used to require only
+`get_own_vendor` — "signed in as a vendor, with a stall row". That is two
+requests away from a stranger with any inbox, because merchant sign-in takes any
+email address on the internet (a stall owner has no institute one) and
+`POST /vendors/apply` adds the row. It now requires `require_approved_vendor`.
+
+`get_own_vendor` still does **not** check approval, deliberately. A stall waiting
+on an admin has to be able to build its menu and set its hours — that is the work
+approval is granted for — and a suspended one has to be able to finish the orders
+it already took. Approval gates money and other people's resources: placing an
+order, paying for one, quoting cashback, and now upload permits.
+
+**Response headers.** `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`
+and `Referrer-Policy` are set on every response, with HSTS outside development —
+on localhost a browser pins the origin to HTTPS and keeps the pin long after the
+setting changes, because it is cached there rather than here.
+
+The CSP ships as **`Content-Security-Policy-Report-Only`**, and that is a
+decision rather than a half-measure. Razorpay Checkout pulls from several of its
+own origins and the set is theirs to change; a policy guessed slightly wrong does
+not degrade, it stops people paying. Watch the console through a real checkout,
+then promote it to enforcing. The origins it names are the ones `index.html` and
+`lib/razorpay.ts` actually reach for — Google Fonts, Material Symbols, Checkout,
+and Cloudinary for menu photographs.
+
+## What is bounded, and what is not
+
+Two kinds of thing were returning everything they had. Both grew for as long as
+the service ran, which is the sort of cost that is invisible on launch day and
+obvious by mid-term.
+
+**The order lists.** `GET /vendors/me/orders` returned every order a stall had
+ever served — with its items, customer and rider loaded — on a route the merchant
+app re-fetches on every start and every reconnect. It is now **today and
+yesterday, or still live, whatever its age**. `GET /orders` is the same shape for
+a student: the most recent 50, or still live.
+
+> The `or still live` half is the whole trick. A date window on its own takes an
+> order sitting in `PREPARING` since Tuesday straight out of the queue it is
+> being cooked from — the one row on that screen that must never disappear. Both
+> halves have a test, and removing either one fails it.
+
+Cut on the stall's own day via `service_days_ago`, Asia/Kolkata, for the same
+reason the token counter is: a UTC window would move at 05:30 IST and take the
+morning's orders with it. The merchant APK degrades gracefully — its past-orders
+section is `orders.where(isTerminal)` computed client-side, so it stops growing
+rather than breaking, and `OrderHistoryScreen` already has its own endpoint.
+
+**The cashback replay.** `live_balances` walks a ledger, and it used to be handed
+the whole thing on every quote, every balance read, every redemption and every
+completion. It is now handed only the rows that can still change the answer.
+
+The cutoff is the creation time of the **oldest credit that has not expired**,
+and the argument is in `_replay_from`: a credit older than that is not live, and
+a debit older than that can only have consumed lots that are older still. Both
+contribute nothing to a surviving balance.
+
+> It is derived from the rows, not from `CASHBACK_EXPIRY_DAYS`, and that is what
+> makes it safe rather than merely smaller. Set the expiry to zero and credits
+> never die; the undying one then *is* the oldest live credit, so the window
+> opens back to the start of the ledger on its own. A cutoff computed from the
+> setting gets that case wrong and quietly under-reports somebody's balance —
+> there is a test that fails exactly that way.
+
+`saved_so_far` is a lifetime figure, so it deliberately does **not** inherit the
+window; it is its own aggregate. The offers page's movement list is capped at
+`HISTORY_PAGE`.
+
+**Not done, and why.** `available_for` still calls `assert_usable` once per
+candidate coupon, each of which may issue a count and a per-customer lookup.
+Batching those would mean threading pre-fetched facts through the function that
+decides what a discount is worth, and the win is bounded by the number of
+coupons — a handful, not a growing table. The one free part was taken: the
+pinned-stalls lookup moved from the top of `assert_usable` to the single branch
+that uses it, so site-wide coupons and already-refused ones no longer pay for it.

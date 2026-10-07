@@ -423,6 +423,139 @@ class TestWhatHasBeenSaved:
         assert saved_so_far([entry(40, reason=CashbackReason.RETURNED)]) == Decimal("0")
 
 
+class TestTheBoundedReplay:
+    """The balance walk no longer reads the whole ledger. It has to agree anyway.
+
+    This is the test that makes that bound safe to ship: the arithmetic is about
+    real money, and a window chosen slightly too narrow does not fail loudly - it
+    quietly returns a smaller balance than somebody is owed.
+    """
+
+    async def test_it_agrees_with_the_full_ledger(self, client, customer, db, cashback_on):
+        """Over a ledger with one of everything: an expired credit, a credit
+        spent in full, the return of a refused order, and a live credit."""
+        from app.db.models.cashback import CashbackEntry as Row
+        from app.modules.cashback.service import all_entries_for, entries_for
+
+        user, _ = customer
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(days=120)
+
+        for row in (
+            # Earned and expired long ago.
+            Row(user_id=user.id, kind=CashbackKind.NORMAL, amount=Decimal("40"),
+                reason=CashbackReason.EARNED, order_id=None,
+                expires_at=old + timedelta(days=30), created_at=old),
+            # Spent out of it while it was alive.
+            Row(user_id=user.id, kind=CashbackKind.NORMAL, amount=Decimal("-40"),
+                reason=CashbackReason.REDEEMED, order_id=None,
+                expires_at=None, created_at=old + timedelta(days=1)),
+            # A refusal gave some back, since expired too.
+            Row(user_id=user.id, kind=CashbackKind.NORMAL, amount=Decimal("40"),
+                reason=CashbackReason.RETURNED, order_id=None,
+                expires_at=old + timedelta(days=32), created_at=old + timedelta(days=2)),
+            # And one that is still good.
+            Row(user_id=user.id, kind=CashbackKind.NORMAL, amount=Decimal("25"),
+                reason=CashbackReason.EARNED, order_id=None,
+                expires_at=now + timedelta(days=10), created_at=now - timedelta(days=1)),
+        ):
+            db.add(row)
+        await db.commit()
+
+        bounded = live_balances(await entries_for(user.id, db, now=now), now)
+        whole = live_balances(await all_entries_for(user.id, db), now)
+
+        assert bounded == whole
+        assert bounded[CashbackKind.NORMAL] == Decimal("25")
+
+    async def test_a_credit_that_never_expires_reopens_the_window(
+        self, client, customer, db, cashback_on
+    ):
+        """CASHBACK_EXPIRY_DAYS of zero or less means credits never die, which is
+        a setting this allows. The cutoff comes from the rows rather than from
+        the setting precisely so that case handles itself: the undying credit is
+        the oldest live one, so the window opens back to it."""
+        from app.db.models.cashback import CashbackEntry as Row
+        from app.modules.cashback.service import all_entries_for, entries_for
+
+        user, _ = customer
+        now = datetime.now(timezone.utc)
+        ancient = now - timedelta(days=400)
+
+        db.add(
+            Row(user_id=user.id, kind=CashbackKind.NORMAL, amount=Decimal("60"),
+                reason=CashbackReason.EARNED, order_id=None,
+                expires_at=None, created_at=ancient)
+        )
+        db.add(
+            Row(user_id=user.id, kind=CashbackKind.NORMAL, amount=Decimal("-10"),
+                reason=CashbackReason.REDEEMED, order_id=None,
+                expires_at=None, created_at=ancient + timedelta(days=1))
+        )
+        await db.commit()
+
+        bounded = live_balances(await entries_for(user.id, db, now=now), now)
+        whole = live_balances(await all_entries_for(user.id, db), now)
+
+        assert bounded == whole
+        assert bounded[CashbackKind.NORMAL] == Decimal("50")
+
+    async def test_nothing_live_loads_nothing(self, client, customer, db, cashback_on):
+        """No live credit means every balance is zero, so there is no walk worth
+        doing - and the query says so without reading a row."""
+        from app.db.models.cashback import CashbackEntry as Row
+        from app.modules.cashback.service import entries_for
+
+        user, _ = customer
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(days=90)
+
+        db.add(
+            Row(user_id=user.id, kind=CashbackKind.NORMAL, amount=Decimal("40"),
+                reason=CashbackReason.EARNED, order_id=None,
+                expires_at=old + timedelta(days=30), created_at=old)
+        )
+        await db.commit()
+
+        assert await entries_for(user.id, db, now=now) == []
+
+    async def test_the_lifetime_total_still_sees_everything(
+        self, client, customer, db, cashback_on
+    ):
+        """`saved_so_far` is a lifetime figure, so it must *not* inherit the
+        window - it gets its own aggregate. A redemption from before the cutoff
+        still bought food."""
+        from app.db.models.cashback import CashbackEntry as Row
+        from app.modules.cashback.service import (
+            all_entries_for,
+            saved_so_far,
+            saved_so_far_for,
+        )
+
+        user, _ = customer
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(days=200)
+
+        db.add(
+            Row(user_id=user.id, kind=CashbackKind.NORMAL, amount=Decimal("40"),
+                reason=CashbackReason.EARNED, order_id=None,
+                expires_at=old + timedelta(days=30), created_at=old)
+        )
+        db.add(
+            Row(user_id=user.id, kind=CashbackKind.NORMAL, amount=Decimal("-40"),
+                reason=CashbackReason.REDEEMED, order_id=None,
+                expires_at=None, created_at=old + timedelta(days=1))
+        )
+        await db.commit()
+
+        from_db = await saved_so_far_for(user.id, db)
+
+        assert from_db == Decimal("40")
+        # And the aggregate agrees with the pure function it replaced, which is
+        # what keeps two implementations of one rule from drifting.
+        assert from_db == saved_so_far(await all_entries_for(user.id, db))
+
+
 class TestOnePromotionPerOrder:
     """The rule below the schema.
 

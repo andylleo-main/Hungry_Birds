@@ -223,7 +223,6 @@ async def assert_usable(
     pinned ones out before getting here, because a stall-pinned code cannot be
     judged without knowing which stall.
     """
-    pinned = set() if coupon.all_stalls else await stalls_for(coupon.id, db)
     now = datetime.now(timezone.utc)
 
     if not coupon.is_active:
@@ -235,14 +234,23 @@ async def assert_usable(
     elif coupon.max_uses is not None and await live_uses(coupon.id, db) >= coupon.max_uses:
         raise CouponError("That code has been fully claimed.")
 
-    if vendor_id is not None and not coupon.all_stalls and vendor_id not in pinned:
-        # Deliberately does not name the stalls it *is* for. A pinned code is
-        # usually a deal those stalls are running, and turning a wrong guess into
-        # an advertisement for somebody else is not ours to do.
-        #
-        # An empty `pinned` lands here too, which is deliberate: every stall the
-        # code named has been deleted, so it works nowhere. See Coupon.all_stalls.
-        raise CouponError("That code doesn't work at this stall.")
+    # Read here rather than at the top of this function, which is where it used
+    # to be. The lookup is only ever needed by this one branch, and hoisting it
+    # meant every coupon paid for it - including the site-wide ones, which are
+    # most of them, and the ones already refused as inactive or expired a few
+    # lines above. `available_for` runs this whole function once per candidate on
+    # every cart change, so a query that is usually unnecessary is worth not
+    # issuing.
+    if vendor_id is not None and not coupon.all_stalls:
+        if vendor_id not in await stalls_for(coupon.id, db):
+            # Deliberately does not name the stalls it *is* for. A pinned code is
+            # usually a deal those stalls are running, and turning a wrong guess
+            # into an advertisement for somebody else is not ours to do.
+            #
+            # An empty set lands here too, which is deliberate: every stall the
+            # code named has been deleted, so it works nowhere. See
+            # Coupon.all_stalls.
+            raise CouponError("That code doesn't work at this stall.")
 
     if Decimal(subtotal) < Decimal(coupon.min_order_value):
         short = Decimal(coupon.min_order_value) - Decimal(subtotal)

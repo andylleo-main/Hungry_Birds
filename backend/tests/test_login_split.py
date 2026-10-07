@@ -203,3 +203,90 @@ async def test_a_customer_cannot_get_a_cloudinary_upload_permit(client, customer
     user, headers = customer
     r = await client.get("/media/signature", headers=headers)
     assert r.status_code == 403
+
+
+async def test_an_unapproved_stall_cannot_get_an_upload_permit(client, db):
+    """The gate used to be "signed up and pressed Apply", which is two requests
+    away from a stranger with any inbox - the merchant sign-in takes any email
+    address on the internet, because a stall owner has no institute one. That
+    made a permit to spend our Cloudinary quota available to anybody who wanted
+    one. Approval is the first point at which a human has looked.
+    """
+    import uuid as _uuid
+
+    from app.core.security import TokenAudience
+    from app.db.models.user import User, UserRole
+    from app.db.models.vendor import Vendor
+
+    from tests.conftest import _token
+
+    owner = User(email=f"new.{_uuid.uuid4().hex[:8]}@example.com", role=UserRole.VENDOR)
+    db.add(owner)
+    await db.commit()
+    await db.refresh(owner)
+    db.add(Vendor(user_id=owner.id, stall_name="Waiting Room", is_approved=False))
+    await db.commit()
+
+    headers = _token(owner.id, TokenAudience.MERCHANT)
+    r = await client.get("/media/signature", headers=headers)
+
+    assert r.status_code == 403
+    assert "approval" in r.json()["detail"]
+
+
+async def test_an_approved_stall_still_gets_one(client, vendor):
+    """The other half: the gate must not have closed on the stalls it is for.
+
+    Cloudinary has to be configured for this route to answer at all, and the
+    suite's settings leave it blank - so this one names credentials the same way
+    `cashback_on` names rates.
+    """
+    from app.core.config import get_settings
+    from app.main import app
+    from tests.conftest import _test_settings
+
+    configured = _test_settings().model_copy(
+        update={
+            "cloudinary_cloud_name": "test-cloud",
+            "cloudinary_api_key": "test-key",
+            "cloudinary_api_secret": "test-secret",
+        }
+    )
+    app.dependency_overrides[get_settings] = lambda: configured
+    try:
+        _, headers = vendor
+        r = await client.get("/media/signature", headers=headers)
+    finally:
+        app.dependency_overrides[get_settings] = lambda: _test_settings()
+
+    assert r.status_code == 200, r.text
+    assert r.json()["signature"]
+
+
+async def test_an_unapproved_stall_can_still_build_its_menu(client, db):
+    """Approval gates money and other people's resources, not a stall's own
+    preparation. Somebody waiting on an admin has to be able to do the work the
+    approval is *for*, or the queue becomes a dead end."""
+    import uuid as _uuid
+
+    from app.core.security import TokenAudience
+    from app.db.models.user import User, UserRole
+    from app.db.models.vendor import Vendor
+
+    from tests.conftest import _token
+
+    owner = User(email=f"prep.{_uuid.uuid4().hex[:8]}@example.com", role=UserRole.VENDOR)
+    db.add(owner)
+    await db.commit()
+    await db.refresh(owner)
+    db.add(Vendor(user_id=owner.id, stall_name="Prepping", is_approved=False))
+    await db.commit()
+
+    headers = _token(owner.id, TokenAudience.MERCHANT)
+    r = await client.post(
+        "/vendors/me/items",
+        headers=headers,
+        json={"name": "Thali", "price": "120.00"},
+    )
+
+    assert r.status_code == 201, r.text

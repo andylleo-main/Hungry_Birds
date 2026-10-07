@@ -1,7 +1,7 @@
 import secrets
 import uuid
 from collections.abc import Iterable
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import HTTPException, status as http_status
 from redis.asyncio import Redis
@@ -200,6 +200,17 @@ def service_date_now() -> date:
     restart the token counter in the middle of breakfast service.
     """
     return datetime.now(IST).date()
+
+
+def service_days_ago(days: int) -> datetime:
+    """Midnight IST, `days` service days back - the start of that day's trading.
+
+    For bounding the lists that would otherwise return everything ever. On the
+    stall's own calendar for the same reason the token counter is: a UTC cutoff
+    would move at 05:30 IST and take the morning's orders with it.
+    """
+    start = service_date_now() - timedelta(days=days)
+    return datetime.combine(start, time.min, tzinfo=IST)
 
 
 # How much each additional dish adds to an order's estimate.

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_DOWN, Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -232,13 +232,112 @@ def next_expiry(entries: list[CashbackEntry], kind: CashbackKind, now: datetime)
     return min(dates) if dates else None
 
 
-async def entries_for(user_id: uuid.UUID, db: AsyncSession) -> list[CashbackEntry]:
+async def _replay_from(user_id: uuid.UUID, db: AsyncSession, now: datetime) -> datetime | None:
+    """The earliest moment that can still affect a balance, or None if nothing can.
+
+    **The whole of the bound, and the argument for why it is safe.** This is the
+    creation time of the oldest credit that has not expired. Take any entry older
+    than it:
+
+      * A **credit** older than it is, by definition, not live - if it were, it
+        would be this one. An expired lot contributes nothing to the balance
+        `live_balances` returns, so dropping it changes nothing.
+      * A **debit** older than it consumed lots that were alive *at the time of
+        the debit*, and every one of those was created even earlier - so by the
+        line above they have all since expired too. Dropping the debit with them
+        leaves every surviving lot untouched.
+
+    What makes it safe is that it is derived from the rows rather than from
+    CASHBACK_EXPIRY_DAYS. A credit that never expires - the setting allows it,
+    at zero or less - is live forever, so it becomes the minimum and the window
+    opens back to the beginning of the ledger. Correct, and automatically.
+
+    None means no live credits at all, so every balance is zero and there is
+    nothing worth loading.
+    """
+    return await db.scalar(
+        select(func.min(CashbackEntry.created_at)).where(
+            CashbackEntry.user_id == user_id,
+            CashbackEntry.amount > 0,
+            or_(CashbackEntry.expires_at.is_(None), CashbackEntry.expires_at > now),
+        )
+    )
+
+
+async def entries_for(
+    user_id: uuid.UUID, db: AsyncSession, *, now: datetime | None = None
+) -> list[CashbackEntry]:
+    """The ledger rows that can still affect this student's balance.
+
+    Not the whole ledger, which is what this used to be: every row the account
+    had ever accumulated, loaded and replayed on every quote, every balance read,
+    every redemption and every completion. That grows for as long as somebody
+    keeps ordering, and Phase 5 made the quote re-fire whenever the fulfilment or
+    payment method changes, so it is read more often than when it was written.
+
+    `_replay_from` above is the bound and carries the proof. Callers that need
+    the *history* rather than the balance - the offers page's list, and
+    `saved_so_far_for` - have their own queries, because history and arithmetic
+    want different slices and conflating them is what made this unbounded.
+    """
+    now = now or datetime.now(timezone.utc)
+    since = await _replay_from(user_id, db, now)
+    if since is None:
+        return []
+
+    result = await db.execute(
+        select(CashbackEntry)
+        .where(CashbackEntry.user_id == user_id, CashbackEntry.created_at >= since)
+        .order_by(CashbackEntry.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def all_entries_for(user_id: uuid.UUID, db: AsyncSession) -> list[CashbackEntry]:
+    """Every row, oldest first. For tests that pin the bound against the truth."""
     result = await db.execute(
         select(CashbackEntry)
         .where(CashbackEntry.user_id == user_id)
         .order_by(CashbackEntry.created_at)
     )
     return list(result.scalars().all())
+
+
+async def recent_entries(
+    user_id: uuid.UUID, db: AsyncSession, limit: int
+) -> list[CashbackEntry]:
+    """The newest movements, for the offers page to show its working.
+
+    Capped for the same reason the balance walk is bounded: this list was every
+    row the account had, and a page nobody can scroll to the end of is not worth
+    the bytes. Newest first, which is the order it is displayed in.
+    """
+    result = await db.execute(
+        select(CashbackEntry)
+        .where(CashbackEntry.user_id == user_id)
+        .order_by(CashbackEntry.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def saved_so_far_for(user_id: uuid.UUID, db: AsyncSession) -> Decimal:
+    """`saved_so_far`, as one aggregate rather than a walk.
+
+    A lifetime total has to see the whole ledger, which is exactly what the
+    balance walk no longer does - so it gets its own query instead of riding on
+    a list that is now deliberately short. Same arithmetic: the signed sum of
+    redemptions and returns, negated, floored at zero.
+    """
+    total = await db.scalar(
+        select(func.coalesce(func.sum(CashbackEntry.amount), 0)).where(
+            CashbackEntry.user_id == user_id,
+            CashbackEntry.reason.in_(
+                (CashbackReason.REDEEMED, CashbackReason.RETURNED)
+            ),
+        )
+    )
+    return max(-Decimal(total or 0), Decimal("0"))
 
 
 async def balance_for(

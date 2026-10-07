@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import limits
@@ -52,9 +52,16 @@ from app.modules.orders.service import (
     order_query,
     publish_order_event,
     ready_by_from,
+    service_days_ago,
 )
 from app.modules.menu.service import resolve_line_price
 from app.modules.vendors.deps import get_own_vendor
+
+# How much of their own history a customer gets in one call. Generous enough
+# that nobody on this campus scrolls past it in a term, small enough that the
+# response stops growing - which is the whole point, since this used to return
+# every order the account had ever placed.
+MY_ORDERS_PAGE = 50
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 vendor_orders_router = APIRouter(prefix="/vendors/me/orders", tags=["orders"])
@@ -353,8 +360,24 @@ async def list_my_orders(
     # read to hang the retry on.
     await payments.drain_stuck_refunds(db, settings, background, customer_id=user.id)
 
+    # The most recent page of history, **or still live, however old** - the same
+    # shape as the stall's queue above and for the same reason: an unfinished
+    # order must never fall off the list somebody is watching it on.
+    #
+    # A row count rather than a date window here, because a student's history is
+    # something they scroll rather than a shift they are working. Before this it
+    # was every order they had ever placed, with items and rider loaded for each.
+    recent = (
+        select(Order.id)
+        .where(Order.customer_id == user.id)
+        .order_by(Order.created_at.desc())
+        .limit(MY_ORDERS_PAGE)
+    )
     result = await db.execute(
-        order_query(Order.customer_id == user.id).order_by(Order.created_at.desc())
+        order_query(
+            Order.customer_id == user.id,
+            or_(Order.status.not_in(TERMINAL_STATUSES), Order.id.in_(recent)),
+        ).order_by(Order.created_at.desc())
     )
     return [OrderWithCodeOut.model_validate(o) for o in result.scalars().all()]
 
@@ -419,6 +442,27 @@ async def list_vendor_orders(
             # for a reason: a predicate that cannot be expressed once has to be
             # changed twice, and this is the pair that drifted before.
             Order.status != OrderStatus.AWAITING_PAYMENT,
+            # Today and yesterday - **or still live, however old**.
+            #
+            # This used to return every order the stall had ever served, each
+            # with its items, customer and rider loaded, on a route the merchant
+            # app re-fetches on every start and every reconnect. At a hundred
+            # orders a day that is thousands of rows a poll by mid-term, and it
+            # never stops growing.
+            #
+            # The `or` half is not belt and braces. A date window on its own
+            # would drop an order still sitting in PREPARING from three days ago
+            # straight out of the queue - the one kind of row that must never
+            # disappear from this list. Anything unfinished stays, whatever its
+            # age; only settled orders age out.
+            #
+            # The merchant app's past-orders section is `orders.where(isTerminal)`
+            # computed client-side, so it degrades to "recent" rather than
+            # breaking, and longer ranges already have the analytics endpoint.
+            or_(
+                Order.status.not_in(TERMINAL_STATUSES),
+                Order.created_at >= service_days_ago(1),
+            ),
         ).order_by(Order.created_at.desc())
     )
     return [OrderWithCodeOut.model_validate(o) for o in result.scalars().all()]
