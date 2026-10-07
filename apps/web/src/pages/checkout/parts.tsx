@@ -130,7 +130,17 @@ export function Totals() {
             {cashAtTheDoor ? 'Paid when it arrives' : 'Paid now, online'}
           </p>
         </div>
-        <span className="text-headline-lg text-primary">{rupees(payable)}</span>
+        <div className="text-right">
+          <span className="block text-headline-lg text-primary">{rupees(payable)}</span>
+          {/* The discount said as a saving rather than only as a line item above.
+              The subtraction tells somebody reading carefully what came off;
+              this tells everybody else. */}
+          {applied > 0 && (
+            <span className="block text-label-md text-success">
+              You save {rupees(applied)}
+            </span>
+          )}
+        </div>
       </div>
     </>
   );

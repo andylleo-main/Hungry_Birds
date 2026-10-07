@@ -248,27 +248,6 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
     };
   }, [vendorId]);
 
-  // Re-quoted whenever the basket changes, because the ceiling is a share of the
-  // cart: removing a dish lowers what can be spent, and a stale figure would
-  // promise a discount the server then declines to apply.
-  useEffect(() => {
-    if (!vendorId || subtotal <= 0) return;
-    let cancelled = false;
-    api
-      .cashbackQuote(vendorId, subtotal.toFixed(2))
-      .then((q) => {
-        if (!cancelled) setQuote(q);
-      })
-      // Silent. Cashback is a bonus, and a failed read should cost the student
-      // the chance to spend it rather than the chance to order.
-      .catch(() => {
-        if (!cancelled) setQuote(null);
-      })
-    return () => {
-      cancelled = true;
-    };
-  }, [vendorId, subtotal]);
-
   // Derived rather than stored, so removing a struck-through dish updates the
   // banner immediately instead of leaving it claiming a problem that is gone.
   const soldOut = useMemo(() => {
@@ -298,6 +277,53 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
   /// a stale choice behind - the server would refuse the order and the customer
   /// would have no idea why.
   const cashAtTheDoor = payLater && fulfilment === 'delivery';
+
+  /**
+   * Re-quoted whenever anything it depends on moves.
+   *
+   * The basket, because both figures are a share of the cart: removing a dish
+   * lowers what can be spent, and a stale figure would promise a discount the
+   * server then declines to apply.
+   *
+   * And how the order is being paid for and handed over, because those decide
+   * the *earning* half - a cash delivery earns nothing, and so does a cart with
+   * a code on it. The server owns that rule; the job here is to tell it the
+   * truth about the order so it can apply it. Switching to pay-on-delivery with
+   * a stale quote on screen would leave "earn ₹40 back" offered on an order
+   * that earns zero.
+   *
+   * Declared below `cashAtTheDoor` rather than up with the other fetches
+   * because its dependency array reads it, and a dependency array is evaluated
+   * during the render that the const has not reached yet.
+   *
+   * `redeem` is deliberately not a dependency. The earning figure is what the
+   * cart earns *if nothing is applied*, which is what makes it comparable with
+   * the saving beside it; re-reading it because somebody picked one of the two
+   * would collapse the choice into whichever they tapped last.
+   */
+  const hasCoupon = coupon !== null;
+
+  useEffect(() => {
+    if (!vendorId || subtotal <= 0) return;
+    let cancelled = false;
+    api
+      .cashbackQuote(vendorId, subtotal.toFixed(2), {
+        fulfilment,
+        cod: cashAtTheDoor,
+        withCoupon: hasCoupon,
+      })
+      .then((q) => {
+        if (!cancelled) setQuote(q);
+      })
+      // Silent. Cashback is a bonus, and a failed read should cost the student
+      // the chance to spend it rather than the chance to order.
+      .catch(() => {
+        if (!cancelled) setQuote(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorId, subtotal, fulfilment, cashAtTheDoor, hasCoupon]);
 
   /// How much short of the stall's minimum this basket is, or 0 if it is fine.
   ///

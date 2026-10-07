@@ -185,6 +185,34 @@ def live_balances(
     }
 
 
+def saved_so_far(entries: list[CashbackEntry]) -> Decimal:
+    """What redeeming has actually taken off this student's bills, all told.
+
+    Redemptions, **less returns**. A returned redemption is not a saving: the
+    stall refused the order, the food never arrived, and the money went back into
+    the wallet. Counting it would make the figure grow every time something went
+    wrong, which is the one way a "you have saved" number can quietly lie.
+
+    Not a walk like `live_balances`, and it deliberately does not share one:
+    expiry is irrelevant to a lifetime total. Money spent in August on food that
+    was eaten is saved whether or not the credit behind it would since have run
+    out.
+
+    Clamped at zero. A negative total would mean a return with no redemption
+    behind it, which `return_redemption` makes impossible - but "you have saved
+    minus forty rupees" is not a thing to put on a screen over it.
+    """
+    # One subtraction covers both, because a return is the exact reversal of its
+    # redemption: the debit is stored negative and the credit positive, so
+    # subtracting the signed amount adds the one and takes back the other.
+    # EARNED is left out - earning is not saving until it is spent.
+    reversible = (CashbackReason.REDEEMED, CashbackReason.RETURNED)
+    saved = -sum(
+        (Decimal(e.amount) for e in entries if e.reason in reversible), Decimal("0")
+    )
+    return max(saved, Decimal("0"))
+
+
 def next_expiry(entries: list[CashbackEntry], kind: CashbackKind, now: datetime) -> datetime | None:
     """When the soonest unexpired credit of this kind runs out.
 
@@ -234,29 +262,46 @@ async def lock_wallet(user_id: uuid.UUID, db: AsyncSession) -> None:
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
 
 
-def earns_cashback(order: Order) -> bool:
-    """Whether this order earns anything at all, per the user's three exclusions.
+def would_earn(
+    *, fulfilment_type: FulfilmentType, payment_method: str, discounted: bool
+) -> bool:
+    """Whether an order with these three facts earns anything at all.
 
-    Each one has a reason worth keeping:
+    The user's two exclusions, and each has a reason worth keeping:
 
       * **Pay on delivery, on a delivery.** The exposure pay-on-delivery already
         carries is a stall cooking food that is never paid for; crediting money
         back on top of it would make a cancelled-at-the-door order cost twice.
-      * **Cashback was redeemed.** Otherwise a balance refills itself and the
-        promotion never ends.
-      * **A coupon was applied.** One promotion per order. The column lands with
-        coupons in a later phase; the check is written now so that phase has
-        nothing to remember.
+      * **A promotion was already applied**, whether cashback or a coupon. For
+        cashback the reason is that a balance would otherwise refill itself and
+        the promotion never end; for a coupon it is simply the one-promotion rule.
+        One flag rather than two because nothing here needs to know which: an
+        order carries at most one, and either disqualifies it.
+
+    **A predicate over facts rather than over an `Order`**, because the figure a
+    student is shown at checkout has to come from this same rule and there is no
+    order yet when they are looking at it. The alternative - the quote
+    re-deriving "would this earn" for itself - is how a checkout comes to promise
+    cashback on a cash delivery, which earns nothing. That would be a promise of
+    money that never arrives, with nothing on any screen to say it was never
+    coming.
+
+    Same reasoning as `spendable_on`: one function behind the number shown and
+    the number paid.
     """
-    if order.payment_method == "cod" and order.fulfilment_type is FulfilmentType.DELIVERY:
+    if payment_method == "cod" and fulfilment_type is FulfilmentType.DELIVERY:
         return False
-    if Decimal(order.cashback_applied) > 0:
-        return False
-    # Coupons do not exist yet. getattr rather than a bare attribute so this
-    # keeps working either side of the phase that adds the column.
-    if Decimal(getattr(order, "coupon_discount", 0) or 0) > 0:
-        return False
-    return True
+    return not discounted
+
+
+def earns_cashback(order: Order) -> bool:
+    """`would_earn`, asked of an order that exists."""
+    return would_earn(
+        fulfilment_type=order.fulfilment_type,
+        payment_method=order.payment_method,
+        discounted=Decimal(order.cashback_applied) > 0
+        or Decimal(order.coupon_discount) > 0,
+    )
 
 
 def _expiry_from(now: datetime, settings: Settings) -> datetime | None:
@@ -303,7 +348,24 @@ async def redeem_onto(
     student asking to redeem with an empty balance is not an error: they ticked a
     box, the answer is "nothing to apply", and failing their order over it would
     be absurd.
+
+    A coupon already on the order is a different matter - see the guard below.
     """
+    # One promotion per order. `OrderCreate.one_promotion_at_a_time` refuses the
+    # pair at the boundary, so nothing reaches here that way and this is defence
+    # in depth - but the model comment on `coupon_discount` *asserts* the two are
+    # never both non-zero, and until now nothing in the code that writes them
+    # enforced it.
+    #
+    # Raised rather than returning zero. An empty balance is a student's
+    # situation; this is a caller that has broken the rule, and the two should
+    # not fail the same quiet way. Their user-facing refusal is the 422 from the
+    # schema, which is where a person's version of this mistake is caught.
+    if Decimal(order.coupon_discount) > 0:
+        raise ValueError(
+            "cannot redeem cashback onto an order that already has a coupon discount"
+        )
+
     await lock_wallet(order.customer_id, db)
 
     kind = kind_for(vendor, settings)

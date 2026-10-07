@@ -206,11 +206,30 @@ export default function Offers() {
 
   return (
     <div className="mx-auto max-w-content px-margin-mobile py-space-lg md:px-margin md:py-space-xl">
-      <div className="mb-space-lg">
-        <h1 className="text-headline-lg text-on-surface">Offers</h1>
-        <p className="text-body-md text-on-surface-variant">
-          Cashback you have earned, and what it is worth where.
-        </p>
+      <div className="mb-space-lg flex flex-wrap items-end justify-between gap-space-md">
+        <div>
+          <h1 className="text-headline-lg text-on-surface">Offers</h1>
+          <p className="text-body-md text-on-surface-variant">
+            Cashback you have earned, and what it is worth where.
+          </p>
+        </div>
+
+        {/* Only once there is something to report. "You have saved ₹0" is a
+            worse greeting than none, and the empty-wallet card below already
+            explains how any of this starts.
+
+            Named as cashback rather than as savings on purpose: coupon
+            discounts are not in this figure. */}
+        {Number(summary.saved_so_far) > 0 && (
+          <div className="text-right">
+            <p className="text-headline-lg text-success">
+              {rupees(summary.saved_so_far)}
+            </p>
+            <p className="text-label-md text-on-surface-variant">
+              saved with cashback so far
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="mb-space-lg grid gap-space-md md:grid-cols-2">

@@ -330,6 +330,15 @@ export interface CashbackEntry {
 export interface CashbackSummary {
   wallets: CashbackWallet[];
   entries: CashbackEntry[];
+  /**
+   * What redeeming has taken off this student's bills so far, across both
+   * wallets: redemptions less returns, summed server-side in Decimal.
+   *
+   * A refused order gave the money back, so it bought nothing and is not in
+   * here. Cashback only — coupon savings live in another table, which is why
+   * the page labels this as cashback rather than as savings.
+   */
+  saved_so_far: string;
 }
 
 /**
@@ -346,6 +355,15 @@ export interface CashbackQuote {
   redeemable: string;
   payable: string;
   percent: number;
+  /**
+   * What this cart earns if nothing is applied to it — the other half of the
+   * choice a student is making, and useless to work out here: it is zero on a
+   * cash delivery and zero with a code applied, and a page that decided that
+   * for itself would eventually offer somebody cashback that never arrives.
+   *
+   * Decided by the same predicate the completion path uses.
+   */
+  earning: string;
 }
 
 /** The promotion's shape, from /config, so the bundle hardcodes no rates. */

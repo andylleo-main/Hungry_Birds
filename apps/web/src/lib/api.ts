@@ -427,11 +427,31 @@ export const api = {
   cleanUpExpiredCoupons: () =>
     request<{ deleted: number }>('POST', '/admin/coupons/cleanup-expired'),
 
-  cashbackQuote: (vendorId: string, subtotal: string) =>
-    request<CashbackQuote>(
-      'GET',
-      `/cashback/quote?vendor_id=${vendorId}&subtotal=${encodeURIComponent(subtotal)}`,
-    ),
+  /**
+   * What spending would save on this cart, and what not spending would earn.
+   *
+   * The three optional facts are what make the earning figure honest: a cash
+   * delivery earns nothing, and neither does a cart with a code on it. The
+   * server defaults all three to the combination that does earn, so they are
+   * sent rather than assumed.
+   */
+  cashbackQuote: (
+    vendorId: string,
+    subtotal: string,
+    about?: {
+      fulfilment: FulfilmentType | null;
+      cod: boolean;
+      withCoupon: boolean;
+    },
+  ) => {
+    const query = new URLSearchParams({ vendor_id: vendorId, subtotal });
+    // Omitted while the customer has not chosen yet, so the server's own
+    // default answers: an unchosen mode is not a claim that it is dine-in.
+    if (about?.fulfilment) query.set('fulfilment_type', about.fulfilment);
+    if (about?.cod) query.set('payment_method', 'cod');
+    if (about?.withCoupon) query.set('with_coupon', 'true');
+    return request<CashbackQuote>('GET', `/cashback/quote?${query}`);
+  },
 
   /**
    * Stands in for paying, when the server reports mode "mock".

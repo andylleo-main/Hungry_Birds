@@ -20,11 +20,12 @@ from app.core.config import Settings, get_settings
 from app.core.deps import ORDERING_ROLES, require_role
 from app.core.ratelimit import limit_by_user
 from app.db.models.cashback import CashbackKind
-from app.db.models.order import Order
+from app.db.models.order import FulfilmentType, Order
 from app.db.models.user import User
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
 from app.modules.cashback import service
+from app.modules.orders.schemas import PaymentMethod
 from app.modules.cashback.schemas import CashbackOut, EntryOut, QuoteOut, WalletOut
 
 router = APIRouter(prefix="/cashback", tags=["cashback"])
@@ -97,6 +98,7 @@ async def my_cashback(
             )
             for e in reversed(entries)
         ],
+        saved_so_far=service.saved_so_far(entries),
     )
 
 
@@ -108,11 +110,14 @@ async def my_cashback(
 async def quote(
     vendor_id: uuid.UUID,
     subtotal: Decimal = Query(ge=0, le=100000, decimal_places=2),
+    fulfilment_type: FulfilmentType = FulfilmentType.DINE_IN,
+    payment_method: PaymentMethod = PaymentMethod.ONLINE,
+    with_coupon: bool = False,
     user: User = Depends(require_role(*ORDERING_ROLES)),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> QuoteOut:
-    """What would come off a cart of this size at this stall.
+    """Both halves of the choice: what spending would save, and what not would earn.
 
     `subtotal` is the client's figure and is used for nothing but this answer -
     it never reaches an order. The real redemption is computed again in
@@ -120,7 +125,18 @@ async def quote(
     here only lies to its own screen.
 
     Both paths call `spendable_on`, which is the point: the number a student is
-    shown and the number they are charged are produced by the same function.
+    shown and the number they are charged are produced by the same function. The
+    earning figure is the same arrangement one step further on - `would_earn` and
+    `earned_on`, exactly as the completion path calls them - because a checkout
+    that worked the rate out for itself would eventually promise cashback on a
+    cash delivery, which earns nothing.
+
+    The three new parameters all default to the combination that *does* earn, so
+    a client that has never heard of them (the released bundle, when this ships)
+    still gets a correct answer to the question it is actually asking. They are
+    spelled with the same enums `OrderCreate` uses rather than as loose strings:
+    one vocabulary for these facts, and a wrong value is a 422 rather than a
+    silently-zero earning figure.
     """
     vendor = await db.get(Vendor, vendor_id)
     if vendor is None or not vendor.is_approved:
@@ -133,10 +149,25 @@ async def quote(
     balance = service.live_balances(entries, now)[kind]
     redeemable = service.spendable_on(subtotal, balance, rate)
 
+    # "If nothing is applied" - so a redemption the student has not committed to
+    # is not counted against it. `with_coupon` is the one discount that can
+    # already be on the cart at the moment this is asked, since a coupon is
+    # applied by typing it and cashback only by choosing between these two.
+    earning = (
+        service.earned_on(subtotal, rate)
+        if service.would_earn(
+            fulfilment_type=fulfilment_type,
+            payment_method=payment_method.value,
+            discounted=with_coupon,
+        )
+        else Decimal("0")
+    )
+
     return QuoteOut(
         kind=kind,
         balance=balance,
         redeemable=redeemable,
         payable=Decimal(subtotal) - redeemable,
         percent=rate.percent,
+        earning=earning,
     )

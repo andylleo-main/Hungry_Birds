@@ -46,6 +46,13 @@ class EntryOut(BaseModel):
 class CashbackOut(BaseModel):
     wallets: list[WalletOut]
     entries: list[EntryOut]
+    # What redeeming has taken off this student's bills so far, across both
+    # wallets: redemptions less returns. Summed server-side in Decimal rather
+    # than added up in the page, like every other figure here.
+    #
+    # Cashback only. Coupon savings live in another table and are not in this
+    # number, which is why the page labels it as cashback rather than as savings.
+    saved_so_far: Decimal
 
 
 class QuoteOut(BaseModel):
@@ -67,3 +74,12 @@ class QuoteOut(BaseModel):
     # The ceiling that bound, so the page can explain itself: "20% of your cart"
     # reads very differently from "all the cashback you have".
     percent: int
+    # What this cart earns **if nothing is applied to it** - the other half of
+    # the choice, and the reason this endpoint exists in the shape it does. A
+    # student deciding whether to spend ₹40 now cannot weigh it against ₹40
+    # arriving afterwards unless somebody tells them the second figure.
+    #
+    # Zero where the order would earn nothing: a cash delivery, or a cart with a
+    # code on it. Decided by `would_earn`, the same predicate the completion path
+    # uses, so this cannot promise money that never arrives.
+    earning: Decimal

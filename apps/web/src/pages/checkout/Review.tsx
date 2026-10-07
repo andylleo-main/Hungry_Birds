@@ -32,7 +32,24 @@ export default function Review() {
     shortOfMinimum,
     blockedBecause,
     setError,
+    quote,
   } = useCheckout();
+
+  /**
+   * What cashback is worth on this basket, in one line, before anybody gets to
+   * the page that asks about it.
+   *
+   * Either half is worth saying and the saving comes first, because money off
+   * this order is the stronger reason to keep going. Both figures are the
+   * server's; nothing here works out a rate.
+   */
+  const cashbackAhead = !quote
+    ? null
+    : Number(quote.redeemable) > 0
+      ? `${rupees(quote.redeemable)} of your cashback can come off on the next page.`
+      : Number(quote.earning) > 0
+        ? `This order earns you ${rupees(quote.earning)} in cashback.`
+        : null;
 
   /**
    * Only the obstacles this page can do anything about.
@@ -208,6 +225,17 @@ export default function Review() {
         </div>
 
         <Totals />
+
+        {/* Said here because it is a reason to carry on, and page one is where
+            somebody decides whether to. Nothing to choose yet - the choice is
+            the payment page's, and offering it twice is how two screens come to
+            disagree about what was picked. */}
+        {cashbackAhead && (
+          <p className="flex items-start gap-space-xs rounded bg-primary-tint/50 px-space-sm py-space-sm text-label-md text-on-surface">
+            <Icon name="redeem" className="text-[16px] text-primary" />
+            {cashbackAhead}
+          </p>
+        )}
 
         <Obstacles />
 

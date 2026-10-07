@@ -283,7 +283,22 @@ async def hold_onto(
     the order rather than quietly placing it at full price: somebody who typed a
     code expects it to count, and an order that silently ignored it is a refund
     conversation.
+
+    Cashback already on the order is a different matter - see the guard below.
     """
+    # The mirror of the guard in `cashback.redeem_onto`, for the same reason and
+    # with the same reasoning about raising: one promotion per order, refused at
+    # the boundary by `OrderCreate.one_promotion_at_a_time`, so a caller that
+    # gets here has broken a rule rather than typed something wrong.
+    #
+    # Not a CouponError, deliberately: that is the type whose messages are
+    # written to be read by the person who typed the code, and "an order cannot
+    # carry two promotions" is not their mistake to fix.
+    if Decimal(order.cashback_applied) > 0:
+        raise ValueError(
+            "cannot hold a coupon against an order that already has cashback applied"
+        )
+
     coupon = await find(code, db, lock=True)
     applied = await assert_usable(coupon, user, order.vendor_id, subtotal, db)
 

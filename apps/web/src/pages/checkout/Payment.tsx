@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { rupees } from '../../lib/format';
+import { useCashbackConfig } from '../../lib/cashback';
 import { Icon, Spinner } from '../../components/ui';
 import { useCheckout } from '../../state/CheckoutContext';
 import { Obstacles, OrderLines, StallLine, Step, Totals } from './parts';
@@ -26,6 +27,7 @@ export default function Payment() {
     quote,
     redeem,
     setRedeem,
+    applied,
     payable,
     placing,
     ready,
@@ -39,17 +41,84 @@ export default function Payment() {
   } = useCheckout();
 
   const [typed, setTyped] = useState('');
+  // For the expiry in the earning blurb. Advertising, so a failed read costs a
+  // vaguer sentence rather than the step.
+  const config = useCashbackConfig();
 
   async function submitCode(e: React.FormEvent) {
     e.preventDefault();
     if (await applyCoupon(typed)) setTyped('');
   }
 
+  // What each side of the cashback choice is worth on this cart. Compared as
+  // numbers only to decide what to show; the figures themselves stay the
+  // server's strings and are formatted, never computed with.
+  const redeemable = quote ? Number(quote.redeemable) : 0;
+  const earning = quote ? Number(quote.earning) : 0;
+
   // Both promotions are offered, but only one can apply - the server refuses
   // the pair. Numbering the steps from what is actually on screen keeps "1, 2"
-  // from becoming "1, 3" when a student has no cashback to spend.
-  const offersCashback = quote !== null && Number(quote.redeemable) > 0;
-  const payStep = offersCashback ? 3 : 2;
+  // from becoming "1, 3" when there is no cashback to show.
+  const offersCashback = redeemable > 0;
+  const showsCashback = redeemable > 0 || earning > 0;
+  const payStep = showsCashback ? 3 : 2;
+
+  /**
+   * The choice, as the two things a student can actually do with cashback here.
+   *
+   * Built as a list rather than branched over in the markup, because there are
+   * three real shapes - both, save only, earn only - and each wants the same
+   * card. Either side can be worth nothing: an empty wallet has nothing to
+   * save, and a cash delivery or an applied code earns nothing.
+   *
+   * **The blurbs carry the whole decision.** Below the cap the two figures are
+   * the same number - a ₹200 cart at an ordinary stall both saves ₹40 now and
+   * earns ₹40 back - so two bare amounts side by side would read as a wash. The
+   * difference is what each one *is*: money off this bill, against credit that
+   * expires and can only be spent at one kind of kitchen.
+   */
+  const spendableAt =
+    quote?.kind === 'gourmet'
+      ? config?.gourmet_stall_name
+        ? `Spendable at ${config.gourmet_stall_name}`
+        : 'Spendable at the same kitchen'
+      : 'Spendable at any ordinary stall';
+
+  const choices = [
+    redeemable > 0 &&
+      ({
+        spend: true,
+        label: `Save ${rupees(quote!.redeemable)} now`,
+        blurb: 'Comes straight off this order.',
+        icon: 'savings',
+      } as const),
+    earning > 0 &&
+      ({
+        spend: false,
+        label: `Earn ${rupees(quote!.earning)} back`,
+        blurb: config?.expiry_days
+          ? `${spendableAt}, for ${config.expiry_days} days.`
+          : `${spendableAt}, after this order is done.`,
+        icon: 'redeem',
+      } as const),
+  ].filter((c): c is Exclude<typeof c, false> => c !== false);
+
+  // Why the earning half is not on offer. Worth saying: a student who saw it a
+  // moment ago and has since chosen to pay at the door should find out it was
+  // the paying at the door that took it away, not a glitch.
+  //
+  // The coupon case carries both halves in one line rather than two notes about
+  // the same code sitting under each other.
+  const earnsNothingBecause =
+    earning > 0
+      ? null
+      : coupon
+        ? `${coupon.code} is applied, so this order won't earn cashback.${
+            offersCashback ? ' Saving instead would drop the code.' : ''
+          }`
+        : cashAtTheDoor
+          ? "Orders paid at the door don't earn cashback."
+          : null;
 
   // Reached directly - a refresh, or a pasted link. The cart survives in
   // localStorage but none of the answers do, so there is nothing to pay for
@@ -129,50 +198,82 @@ export default function Payment() {
           )}
         </Step>
 
-        {/* Only when there is something to spend. A control offering nothing is
-            a worse answer than no control: it reads as a feature that is broken
-            rather than a balance that is empty, and the offers page is where an
+        {/* Only when one side of it is worth something. A step offering neither
+            is a worse answer than no step: it reads as a feature that is broken
+            rather than a wallet that is empty, and the offers page is where an
             empty wallet gets explained. */}
-        {offersCashback && quote && (
+        {showsCashback && quote && (
           <Step index={2} title="Cashback">
-            <button
-              type="button"
-              aria-pressed={redeem}
-              onClick={() => setRedeem(!redeem)}
-              className={`flex w-full items-start gap-space-sm rounded-lg border-[1.5px] p-space-md text-left transition-colors ${
-                redeem
-                  ? 'border-primary bg-primary-tint/40'
-                  : 'border-outline-variant bg-surface-container hover:bg-surface-container-high'
-              }`}
-            >
-              <Icon
-                name={redeem ? 'check_circle' : 'redeem'}
-                className={`text-[22px] ${redeem ? 'text-primary' : 'text-on-surface-variant'}`}
-              />
-              <span className="min-w-0">
-                <span className="block text-label-lg text-on-surface">
-                  Use {rupees(quote.redeemable)}
-                  {quote.kind === 'gourmet' ? ' Gourmet' : ''} cashback
+            {/* Nothing to choose between when the wallet is empty - this is the
+                first time most students will meet the scheme, and a statement is
+                the honest shape for it. A button that only confirmed what was
+                already happening would be a decision nobody is making. */}
+            {choices.length === 1 && !choices[0].spend ? (
+              <p className="flex items-start gap-space-sm text-body-sm text-on-surface-variant">
+                <Icon name="redeem" className="mt-0.5 text-[18px] text-primary" />
+                <span>
+                  <span className="text-label-lg text-on-surface">
+                    This order earns {rupees(quote.earning)} back.
+                  </span>{' '}
+                  {choices[0].blurb} You can put it towards a later order.
                 </span>
-                <span className="block text-body-sm text-on-surface-variant">
-                  {Number(quote.redeemable) < Number(quote.balance)
-                    ? `You have ${rupees(quote.balance)} — up to ${quote.percent}% of a cart can be used.`
-                    : `Your whole ${rupees(quote.balance)} balance.`}
-                </span>
-              </span>
-            </button>
-            {/* The rule worth saying before they commit, not after. */}
-            {redeem && (
+              </p>
+            ) : (
+              <div
+                className={`grid gap-space-sm ${
+                  choices.length > 1 ? 'sm:grid-cols-2' : ''
+                }`}
+              >
+                {choices.map((choice) => {
+                  const selected = redeem === choice.spend;
+                  return (
+                    <button
+                      key={choice.label}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setRedeem(choice.spend)}
+                      className={`flex items-start gap-space-sm rounded-lg border-[1.5px] p-space-md text-left transition-colors ${
+                        selected
+                          ? 'border-primary bg-primary-tint/40'
+                          : 'border-outline-variant bg-surface-container hover:bg-surface-container-high'
+                      }`}
+                    >
+                      <Icon
+                        name={selected ? 'check_circle' : choice.icon}
+                        className={`text-[22px] ${
+                          selected ? 'text-primary' : 'text-on-surface-variant'
+                        }`}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-label-lg text-on-surface">
+                          {choice.label}
+                        </span>
+                        <span className="block text-body-sm text-on-surface-variant">
+                          {choice.blurb}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* What is in the wallet, where the figure on offer is only part of
+                it - "up to 20% of a cart" explains a ₹40 offer on a ₹300
+                balance, which otherwise looks like the app losing money. */}
+            {offersCashback && Number(quote.redeemable) < Number(quote.balance) && (
               <p className="mt-space-sm text-label-md text-on-surface-variant">
-                This order won&apos;t earn cashback, since it&apos;s using some.
+                You have {rupees(quote.balance)} — up to {quote.percent}% of a cart
+                can go towards it.
               </p>
             )}
-            {coupon && (
+
+            {earnsNothingBecause && (
               <p className="mt-space-sm text-label-md text-on-surface-variant">
-                Using <span className="font-mono">{coupon.code}</span> instead.
-                Ticking this drops the code.
+                {earnsNothingBecause}
               </p>
             )}
+
             <p className="mt-space-sm text-label-md text-on-surface-variant">
               <Link to="/offers" className="text-primary hover:underline">
                 See all your cashback
@@ -274,6 +375,9 @@ export default function Payment() {
           ) : !ready ? (
             'Something is missing'
           ) : cashAtTheDoor ? (
+            /* No saving on this one, deliberately. It already carries two
+               clauses and a third does not fit a phone; the "You save" line in
+               the totals an inch above is doing that job here. */
             <>
               Place order &middot; pay {rupees(payable)} on delivery
               <Icon name="arrow_forward" className="text-[18px]" />
@@ -281,6 +385,7 @@ export default function Payment() {
           ) : (
             <>
               Pay {rupees(payable)}
+              {applied > 0 && ` · save ${rupees(applied)}`}
               <Icon name="arrow_forward" className="text-[18px]" />
             </>
           )}

@@ -25,12 +25,16 @@ from app.db.models.cashback import (  # noqa: E402
     CashbackKind,
     CashbackReason,
 )
+from app.db.models.order import FulfilmentType, Order  # noqa: E402
 from app.modules.cashback.service import (  # noqa: E402
     Rate,
     earned_on,
     live_balances,
     next_expiry,
+    redeem_onto,
+    saved_so_far,
     spendable_on,
+    would_earn,
 )
 
 NOW = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
@@ -331,6 +335,115 @@ async def _balance(client, headers, kind="normal"):
     assert r.status_code == 200, r.text
     wallet = next(w for w in r.json()["wallets"] if w["kind"] == kind)
     return Decimal(str(wallet["balance"]))
+
+
+class TestTheEarningRule:
+    """`would_earn`, as a predicate over three facts.
+
+    Pure on purpose, and that is the whole point of it existing separately from
+    `earns_cashback`: the checkout has to ask this question before an order
+    exists, and the figure it shows a student has to come from the same rule that
+    decides what they actually get. A checkout working it out for itself is how
+    one comes to promise cashback on a cash delivery - a promise of money that
+    never arrives, with nothing on screen to say it was never coming.
+    """
+
+    def test_a_cash_delivery_earns_nothing(self):
+        assert not would_earn(
+            fulfilment_type=FulfilmentType.DELIVERY,
+            payment_method="cod",
+            discounted=False,
+        )
+
+    def test_a_prepaid_delivery_does(self):
+        assert would_earn(
+            fulfilment_type=FulfilmentType.DELIVERY,
+            payment_method="online",
+            discounted=False,
+        )
+
+    def test_cash_is_only_disqualifying_on_a_delivery(self):
+        """A dine-in cannot be cash today - the schema refuses it - but the rule
+        is about the exposure a cash *delivery* carries, so it should not be
+        quietly relying on that being impossible."""
+        assert would_earn(
+            fulfilment_type=FulfilmentType.DINE_IN,
+            payment_method="cod",
+            discounted=False,
+        )
+
+    def test_a_discount_of_either_kind_disqualifies(self):
+        assert not would_earn(
+            fulfilment_type=FulfilmentType.DINE_IN,
+            payment_method="online",
+            discounted=True,
+        )
+
+
+class TestWhatHasBeenSaved:
+    """`saved_so_far`: redemptions, less what came back."""
+
+    def test_it_counts_what_was_spent(self):
+        assert saved_so_far(
+            [
+                entry(40),
+                entry(-40, reason=CashbackReason.REDEEMED),
+            ]
+        ) == Decimal("40")
+
+    def test_earning_alone_has_saved_nothing(self):
+        """A balance is not a saving until it is spent on something."""
+        assert saved_so_far([entry(40), entry(90, kind=CashbackKind.GOURMET)]) == Decimal(
+            "0"
+        )
+
+    def test_a_returned_redemption_is_not_a_saving(self):
+        """The stall refused the order. The food never arrived and the money went
+        back, so counting it would make this figure grow every time something
+        went wrong."""
+        assert saved_so_far(
+            [
+                entry(40),
+                entry(-40, reason=CashbackReason.REDEEMED),
+                entry(40, reason=CashbackReason.RETURNED),
+            ]
+        ) == Decimal("0")
+
+    def test_it_adds_across_both_wallets(self):
+        assert saved_so_far(
+            [
+                entry(-40, reason=CashbackReason.REDEEMED),
+                entry(-90, kind=CashbackKind.GOURMET, reason=CashbackReason.REDEEMED),
+            ]
+        ) == Decimal("130")
+
+    def test_it_never_reads_negative(self):
+        """A return with no redemption behind it is impossible, and "you have
+        saved minus forty rupees" is not a thing to put on a screen over it."""
+        assert saved_so_far([entry(40, reason=CashbackReason.RETURNED)]) == Decimal("0")
+
+
+class TestOnePromotionPerOrder:
+    """The rule below the schema.
+
+    `OrderCreate.one_promotion_at_a_time` refuses the pair with a 422, and that
+    is where a person's version of this mistake is caught. These guard the case
+    where some future caller skips the schema - and they fire before anything
+    else happens, which is why `None` is a usable stand-in for every other
+    argument here.
+    """
+
+    async def test_cashback_refuses_an_order_that_has_a_coupon(self):
+        order = Order(cashback_applied=Decimal("0"), coupon_discount=Decimal("10"))
+        with pytest.raises(ValueError, match="coupon discount"):
+            await redeem_onto(order, None, Decimal("200"), None, None)
+
+    async def test_a_coupon_refuses_an_order_that_has_cashback(self):
+        from app.modules.coupons.service import hold_onto
+
+        order = Order(cashback_applied=Decimal("10"), coupon_discount=Decimal("0"))
+        with pytest.raises(ValueError, match="cashback applied"):
+            await hold_onto(order, None, "ANYTHING", Decimal("200"), None)
 
 
 class TestEarning:
@@ -820,6 +933,140 @@ class TestTheQuote:
         assert r.status_code == 404
 
 
+class TestTheOtherHalfOfTheChoice:
+    """The earning figure the quote carries.
+
+    A student weighing "spend ₹40 now" against nothing cannot weigh anything.
+    This is the second number, and the tests that matter are the ones where it
+    has to be zero - because a figure that is wrong in that direction is a
+    promise of money that never arrives.
+    """
+
+    async def test_it_says_what_the_cart_would_earn(
+        self, client, customer, db, cashback_on
+    ):
+        _, headers = customer
+        stall, _, _ = await _stall(db)
+
+        quoted = (
+            await client.get(
+                "/cashback/quote",
+                headers=headers,
+                params={"vendor_id": str(stall.id), "subtotal": "200.00"},
+            )
+        ).json()
+
+        assert Decimal(str(quoted["earning"])) == Decimal("40")
+
+    async def test_a_cash_delivery_is_quoted_nothing(
+        self, client, customer, db, cashback_on
+    ):
+        """The regression this field exists to avoid. The same cart earns ₹40
+        prepaid and nothing at all paid at the door, so a checkout that did not
+        ask would offer "earn ₹40 back" on an order that earns zero."""
+        _, headers = customer
+        stall, _, _ = await _stall(db)
+        params = {"vendor_id": str(stall.id), "subtotal": "200.00"}
+
+        prepaid = (
+            await client.get("/cashback/quote", headers=headers, params=params)
+        ).json()
+        at_the_door = (
+            await client.get(
+                "/cashback/quote",
+                headers=headers,
+                params={
+                    **params,
+                    "fulfilment_type": "delivery",
+                    "payment_method": "cod",
+                },
+            )
+        ).json()
+
+        assert Decimal(str(prepaid["earning"])) == Decimal("40")
+        assert Decimal(str(at_the_door["earning"])) == Decimal("0")
+
+    async def test_a_cart_with_a_code_on_it_is_quoted_nothing(
+        self, client, customer, db, cashback_on
+    ):
+        _, headers = customer
+        stall, _, _ = await _stall(db)
+
+        quoted = (
+            await client.get(
+                "/cashback/quote",
+                headers=headers,
+                params={
+                    "vendor_id": str(stall.id),
+                    "subtotal": "200.00",
+                    "with_coupon": "true",
+                },
+            )
+        ).json()
+
+        assert Decimal(str(quoted["earning"])) == Decimal("0")
+
+    async def test_the_figures_default_to_the_case_that_earns(
+        self, client, customer, db, cashback_on
+    ):
+        """An older client sends none of the three, and must still be told the
+        truth about the order it is actually about to place - which is prepaid,
+        because that is what a client with no pay-later control sends."""
+        _, headers = customer
+        stall, _, _ = await _stall(db)
+
+        quoted = (
+            await client.get(
+                "/cashback/quote",
+                headers=headers,
+                params={"vendor_id": str(stall.id), "subtotal": "200.00"},
+            )
+        ).json()
+
+        assert Decimal(str(quoted["earning"])) > 0
+
+    async def test_it_matches_what_the_order_actually_credits(
+        self, client, customer, db, pay, cashback_on
+    ):
+        """The same property the redeemable figure is held to, on the other side:
+        what the quote promises and what completion pays are one function."""
+        _, headers = customer
+        stall, item, vendor_headers = await _stall(db)
+
+        quoted = (
+            await client.get(
+                "/cashback/quote",
+                headers=headers,
+                params={"vendor_id": str(stall.id), "subtotal": "200.00"},
+            )
+        ).json()
+
+        order = (await _place(client, headers, stall, item)).json()
+        await pay(order["id"])
+        await _finish(client, vendor_headers, order["id"])
+
+        assert await _balance(client, headers) == Decimal(str(quoted["earning"]))
+
+    async def test_a_nonsense_payment_method_is_refused(
+        self, client, customer, db, cashback_on
+    ):
+        """Spelled with the same enum OrderCreate uses, so a wrong value is a 422
+        rather than a silently-zero earning figure."""
+        _, headers = customer
+        stall, _, _ = await _stall(db)
+
+        r = await client.get(
+            "/cashback/quote",
+            headers=headers,
+            params={
+                "vendor_id": str(stall.id),
+                "subtotal": "200.00",
+                "payment_method": "cheque",
+            },
+        )
+        assert r.status_code == 422
+
+
 class TestWhatTheStudentIsShown:
     async def test_both_wallets_are_returned_even_when_empty(
         self, client, customer, cashback_on
@@ -851,6 +1098,50 @@ class TestWhatTheStudentIsShown:
         assert earned[0]["stall_name"] == "Ordinary Stall"
         assert earned[0]["order_number"] == order["order_number"]
         assert earned[0]["expires_at"] is not None
+
+    async def test_nothing_has_been_saved_to_begin_with(
+        self, client, customer, cashback_on
+    ):
+        _, headers = customer
+        body = (await client.get("/cashback", headers=headers)).json()
+        assert Decimal(str(body["saved_so_far"])) == Decimal("0")
+
+    async def test_a_redemption_is_reported_as_saved(
+        self, client, customer, db, pay, cashback_on
+    ):
+        _, headers = customer
+        stall, item, vendor_headers = await _stall(db)
+        earner = (await _place(client, headers, stall, item)).json()
+        await pay(earner["id"])
+        await _finish(client, vendor_headers, earner["id"])
+
+        spender = (await _place(client, headers, stall, item, redeem=True)).json()
+        await pay(spender["id"])
+
+        body = (await client.get("/cashback", headers=headers)).json()
+        assert Decimal(str(body["saved_so_far"])) == Decimal("40")
+
+    async def test_a_refused_order_does_not_count_as_saved(
+        self, client, customer, db, pay, cashback_on
+    ):
+        """The money came back, so it bought nothing. Over the whole feature this
+        is the only way the figure could quietly grow on bad news."""
+        _, headers = customer
+        stall, item, vendor_headers = await _stall(db)
+        earner = (await _place(client, headers, stall, item)).json()
+        await pay(earner["id"])
+        await _finish(client, vendor_headers, earner["id"])
+
+        spender = (await _place(client, headers, stall, item, redeem=True)).json()
+        await pay(spender["id"])
+        await client.patch(
+            f"/vendors/me/orders/{spender['id']}/status",
+            headers=vendor_headers,
+            json={"status": "rejected"},
+        )
+
+        body = (await client.get("/cashback", headers=headers)).json()
+        assert Decimal(str(body["saved_so_far"])) == Decimal("0")
 
     async def test_a_wallet_carries_its_rate_and_cap(self, client, customer, cashback_on):
         _, headers = customer

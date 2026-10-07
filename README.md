@@ -1299,9 +1299,16 @@ an order the stall may still reject. Both routes that reach `COMPLETED` (the
 stall's and the rider's) call the same idempotent function, guarded by a read and
 a partial unique index on `(order_id, reason)`.
 
-Nothing is earned when the order was **pay-on-delivery and a delivery**, when
-cashback was **redeemed** on it, or when a **coupon** was applied (that check is
-written already, so coupons have nothing to remember).
+Nothing is earned when the order was **pay-on-delivery and a delivery**, or when
+a promotion was already applied to it - cashback redeemed, or a coupon.
+
+That rule is **`would_earn`, a predicate over those three facts rather than over
+an `Order`**, and `earns_cashback(order)` is a one-line call to it. The split
+matters because the checkout has to ask the same question before an order exists,
+to tell a student what the cart would earn. A page working it out for itself would
+eventually offer "earn ₹40 back" on a cash delivery, which earns nothing - a
+promise of money that never arrives, with nothing on screen to say it was never
+coming.
 
 **A refused order returns the redemption.** Without it a stall rejecting an order
 keeps the student's cashback - it paid for food they never got, and no refund path
@@ -1320,12 +1327,43 @@ in the same instant both read the same balance and both spend it.
 same rule the file already states about the gateway amount. The server reads the
 balance and applies the most its own rules allow.
 
-`GET /cashback` returns both balances with their next expiry and the movements
-behind them. `GET /cashback/quote?vendor_id=&subtotal=` says exactly what would
-come off a cart, **through the same function the order path calls** - which is the
+`GET /cashback` returns both balances with their next expiry, the movements behind
+them, and **`saved_so_far`** - redemptions less returns, across both wallets. A
+return is subtracted because the stall refused that order and the money went back,
+so it bought nothing; counting it would make the figure grow every time something
+went wrong. Cashback only: coupon savings are in another table, which is why the
+offers page labels it "saved with cashback".
+
+`GET /cashback/quote?vendor_id=&subtotal=` answers **both halves of the choice**,
+and does it **through the same functions the order path calls** - which is the
 whole reason it exists rather than the browser doing the percentage. A student
 shown one number and charged against another stops trusting the app and never
 reports it as a bug.
+
+- `redeemable` / `payable` - what spending now takes off, from `spendable_on`.
+- `earning` - what the cart earns **if nothing is applied**, from `would_earn`
+  and `earned_on`. Optional `fulfilment_type`, `payment_method` and `with_coupon`
+  say what kind of order it would be; all three default to the combination that
+  *does* earn, so a client that has never heard of them still gets a true answer
+  to the question it is asking.
+
+### Showing it
+
+Below the cap the two figures are **the same number** - a ₹200 cart at an ordinary
+stall both saves ₹40 now and earns ₹40 back - so two bare amounts side by side
+read as a wash. The difference is what each one *is*, and the checkout's blurbs
+carry it: money off this bill, against credit that expires in
+`CASHBACK_EXPIRY_DAYS` and is spendable only at one kind of kitchen.
+
+`/checkout/payment` offers the two as a pair, with *earn* selected by default
+because not redeeming is what earns. Either side can be worth nothing, and each
+reads differently: an empty wallet gets a **statement** rather than a button
+offering nothing, and a cash delivery or an applied code **drops the earn option
+entirely** rather than showing ₹0, saying which it was. The saving is then stated
+as a saving - "You save ₹40" under Total due on both pages, and on the Pay button
+(not the pay-on-delivery one, which already carries two clauses and will not take
+a third on a phone). Page one names what is coming without offering the choice
+twice.
 
 ### Settings
 
@@ -1422,6 +1460,14 @@ A coupon and cashback never apply together. Refused by a validator on
 `OrderCreate` rather than by a check in a handler, so the rule holds for any
 future caller. Checkout makes the two mutually exclusive on screen for the same
 reason - a 422 landing on the Pay button is the worst place to discover it.
+
+Underneath, `redeem_onto` and `hold_onto` each **raise** on an order that already
+carries the other discount. Nothing reaches them that way today, since the
+validator sits in front of the only caller - but the model comment on
+`coupon_discount` asserts the two are never both non-zero, and this is what makes
+that true in the code that writes them. Raised rather than returning zero: an
+empty balance is a student's situation, this is a caller breaking a rule, and the
+two should not fail the same quiet way.
 
 `Order.amount_due` is `total_amount − cashback_applied − coupon_discount`. Every
 money path already reads it, so the gateway amount, the webhook's amount check,
