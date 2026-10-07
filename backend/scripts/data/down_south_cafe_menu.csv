@@ -1,0 +1,170 @@
+dish_name,category,price
+Coffee,Beverages,25
+Tea,Beverages,20
+Chicken Butter Masala with 3 Roti,Combo Meals,180
+Chicken Butter Masala with 2 Lachha Paratha,Combo Meals,210
+Chicken Curry with 3 Roti,Combo Meals,180
+Chicken Curry with 2 Butter Naan,Combo Meals,200
+Chicken Curry with Rice,Combo Meals,180
+Chicken Seekh Kebab Masala with 3 Roti,Combo Meals,185
+Chicken Seekh Kebab Masala with 2 Butter Naan,Combo Meals,215
+Paneer Butter Masala with 3 Roti,Combo Meals,155
+Paneer Butter Masala with 2 Butter Naan,Combo Meals,190
+Kadhai Paneer with 3 Roti,Combo Meals,165
+Kadhai Paneer with 2 Butter Naan,Combo Meals,205
+Malai Kofta with 3 Roti,Combo Meals,175
+Malai Kofta with 2 Butter Naan,Combo Meals,205
+Mushroom Do Pyaza with 3 Roti,Combo Meals,170
+Mushroom Do Pyaza with 2 Butter Naan,Combo Meals,205
+Paneer Curry with 3 Roti,Combo Meals,135
+Paneer Curry with 2 Butter Naan,Combo Meals,175
+Mushroom Curry with 3 Roti,Combo Meals,155
+Mushroom Curry with 2 Butter Naan,Combo Meals,185
+Omelette Curry with 3 Roti,Combo Meals,125
+Omelette Curry with 2 Butter Naan,Combo Meals,155
+Aloo Tikki Burger,Burger,50
+Veg Burger,Burger,80
+Paneer Burger,Burger,115
+Veg Cheese Burger,Burger,100
+Jumbo Veggie Burger,Burger,110
+Veg Dogla Burger,Burger,145
+Jumbo Aloo Tikki Burger,Burger,80
+Chicken KFC Burger,Burger,120
+Grilled Chicken Burger,Burger,120
+Chicken Dogla Burger,Burger,160
+Butter Chicken Burger,Burger,130
+Add Cheese Spread (Burger),Burger,10
+Add Cheese Slice (Burger),Burger,15
+French Fries (Salted),Snacks,95
+French Fries (Peri-Peri),Snacks,100
+Loaded Fries (Veg),Snacks,120
+Loaded Fries (Chicken),Snacks,155
+Loaded Fries (Cheese),Snacks,155
+Red Sauce Pasta (Veg),Pasta,135
+Red Sauce Pasta (Chicken),Pasta,165
+White Sauce Pasta (Veg),Pasta,145
+White Sauce Pasta (Chicken),Pasta,175
+Mix Sauce Pasta (Veg),Pasta,165
+Mix Sauce Pasta (Chicken),Pasta,185
+Cheese Sauce Pasta (Veg),Pasta,165
+Cheese Sauce Pasta (Chicken),Pasta,185
+Cheesy Baked Pasta (Veg),Pasta,175
+Cheesy Baked Pasta (Chicken),Pasta,195
+Butter Chicken Pasta,Pasta,195
+Butter Paneer Pasta,Pasta,175
+Paneer Butter Masala,Indian,225
+Kadhai Paneer,Indian,245
+Paneer Do Pyaza,Indian,235
+Paneer Keema,Indian,255
+Spl. Malai Kofta,Indian,285
+Matar Paneer,Indian,255
+Paneer Mushroom Taj,Indian,285
+Matar Mushroom,Indian,270
+Mushroom Do Pyaza,Indian,265
+Babycorn Masala,Indian,275
+Chicken Butter Masala,Indian,290
+Chicken Seekh Kebab Masala,Indian,325
+Chicken Curry,Indian,275
+Chicken Handi,Indian,305
+Chicken Do Pyaza,Indian,305
+Chana Dal Tadka,Indian,185
+Spl. Mixed Dal Tadka,Indian,210
+Dal Makhani,Indian,230
+Soya Chap Rogan Josh,Indian,250
+Soya Tikka Masala,Indian,290
+Veg Roll,Rolls,65
+Spl Mix Veg Roll,Rolls,110
+Paneer Roll,Rolls,105
+Paneer Peri Peri Roll,Rolls,105
+Cheesy Italian Paneer Roll,Rolls,120
+Paneer Chilly Roll,Rolls,120
+Paneer Butter Masala Roll,Rolls,120
+Mushroom Roll,Rolls,110
+Mushroom Peri Peri Roll,Rolls,115
+Veg Manchurian Roll,Rolls,90
+Veggie Burger Roll,Rolls,105
+Egg Roll,Rolls,70
+Double Egg Masala Roll,Rolls,105
+Double Egg Roll,Rolls,80
+Chicken Roll,Rolls,105
+Chicken Egg Roll,Rolls,120
+Spl Chicken Seekh Kebab Roll,Rolls,120
+Cheesy Italian Chicken Roll,Rolls,125
+Crispy KFC Chicken Roll,Rolls,130
+Chicken Butter Masala Roll,Rolls,130
+Chilly Chicken Roll,Rolls,120
+Add Cheese Spread (Roll),Rolls,20
+Veg Manchurian (Dry),Chinese - Starters,135
+Veg Manchurian (Gravy),Chinese - Starters,150
+Paneer Chilly Dry (Half),Chinese - Starters,115
+Paneer Chilly Dry (Full),Chinese - Starters,205
+Paneer Chilly Gravy (Half),Chinese - Starters,125
+Paneer Chilly Gravy (Full),Chinese - Starters,215
+Baby Corn Chilly,Chinese - Starters,175
+Mushroom Chilly (Dry),Chinese - Starters,195
+Mushroom Chilly (Gravy),Chinese - Starters,205
+Honey Chilly Potato,Chinese - Starters,185
+Chicken Salt & Pepper (with Spl Dip),Chinese - Starters,215
+Mushroom Salt & Pepper (with Spl Dip),Chinese - Starters,195
+Paneer Salt & Pepper (with Spl Dip),Chinese - Starters,205
+Corn Salt & Pepper (with Spl Dip),Chinese - Starters,185
+Hot & Sour Soup Veg (300ml),Chinese - Starters,90
+Hot & Sour Soup Chicken (300ml),Chinese - Starters,100
+Honey Chilly Chicken,Chinese - Starters,245
+Chicken Chilly (Dry),Chinese - Starters,235
+Chicken Chilly (Gravy),Chinese - Starters,245
+Chicken BBQ Wings,Chinese - Starters,180
+Butter Chicken Wings,Chinese - Starters,200
+Chicken Sweet Spicy Wings,Chinese - Starters,180
+Chicken Lollypop (4 pc),Chinese - Starters,170
+Chicken Lollypop (8 pc),Chinese - Starters,315
+Chow Mein (Veg),Chinese - Rice/Noodles,110
+Chow Mein (Veg-Mix),Chinese - Rice/Noodles,160
+Chow Mein (Egg),Chinese - Rice/Noodles,120
+Chow Mein (Chicken),Chinese - Rice/Noodles,160
+Chow Mein (Non-Veg Mix),Chinese - Rice/Noodles,175
+Fried Rice (Veg),Chinese - Rice/Noodles,120
+Fried Rice (Mix-Veg),Chinese - Rice/Noodles,155
+Fried Rice (Egg),Chinese - Rice/Noodles,125
+Fried Rice (Chicken),Chinese - Rice/Noodles,175
+Fried Rice (Non-Veg Mix),Chinese - Rice/Noodles,190
+Shanghai (Veg),Chinese - Rice/Noodles,125
+Shanghai (Mix-Veg),Chinese - Rice/Noodles,150
+Shanghai (Egg),Chinese - Rice/Noodles,150
+Shanghai (Chicken),Chinese - Rice/Noodles,175
+Shanghai (Non-Veg Mix),Chinese - Rice/Noodles,190
+Burnt Garlic Noodles (Veg),Chinese - Rice/Noodles,140
+Burnt Garlic Noodles (Egg),Chinese - Rice/Noodles,165
+Burnt Garlic Noodles (Chicken),Chinese - Rice/Noodles,185
+Burnt Garlic Rice (Veg),Chinese - Rice/Noodles,145
+Burnt Garlic Rice (Egg),Chinese - Rice/Noodles,165
+Burnt Garlic Rice (Chicken),Chinese - Rice/Noodles,190
+Schezwan Rice (Veg),Chinese - Rice/Noodles,130
+Schezwan Rice (Egg),Chinese - Rice/Noodles,145
+Schezwan Rice (Chicken),Chinese - Rice/Noodles,190
+Schezwan Noodles (Veg),Chinese - Rice/Noodles,130
+Schezwan Noodles (Egg),Chinese - Rice/Noodles,140
+Schezwan Noodles (Chicken),Chinese - Rice/Noodles,175
+Paneer Chilly with Veg Fried Rice/Chow Mein,Chinese - Combo Meals,155
+Veg Manchurian with Veg Fried Rice/Chow Mein,Chinese - Combo Meals,140
+Chicken Chilly with Veg Fried Rice/Chow Mein,Chinese - Combo Meals,180
+Tandoor Roti,Breads,20
+Amul Butter Tandoori Roti,Breads,30
+Masala Kulcha,Breads,85
+Plain Kulcha,Breads,65
+Naan,Breads,50
+Amul Butter Naan,Breads,65
+Spl. Tawa Lacchha Paratha,Breads,50
+Spl Paneer Tikka,Tandoor (Pre-Order),280
+Afghani Malai Tikka,Tandoor (Pre-Order),300
+Tandoori Soya Chap Tikka (Half),Tandoor (Pre-Order),135
+Tandoori Soya Chap Tikka (Full),Tandoor (Pre-Order),250
+Tandoori Chicken Tikka,Tandoor (Pre-Order),280
+Afghani Malai Chicken Tikka,Tandoor (Pre-Order),300
+Tandoori Chicken (Half),Tandoor (Pre-Order),175
+Tandoori Chicken (Full),Tandoor (Pre-Order),320
+Afghani Malai Chicken (Half),Tandoor (Pre-Order),195
+Afghani Malai Chicken (Full),Tandoor (Pre-Order),390
+Plain Rice,Rice,120
+Jeera Rice,Rice,145
+Hot Brownie with Vanilla Ice-Cream,Dessert,120

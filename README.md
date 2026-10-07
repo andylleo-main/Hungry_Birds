@@ -537,6 +537,43 @@ name can be edited from the merchant app and an address cannot.
 > demo stall, and its payment rows, go too. On a stall that has only served test
 > orders that is the point — but read the dry run first.
 
+### Loading a stall's menu from a CSV
+
+Typing a hundred and sixty dishes into a phone is not a thing to ask of anybody.
+`scripts/seed_menu.py` takes `dish_name,category,price` with a header row and
+loads it onto one stall:
+
+```bash
+cd backend
+DATABASE_URL=<the deployment's> PYTHONPATH=. python scripts/seed_menu.py \
+    --email varunmalhotra94@gmail.com \
+    --stall "Down South Cafe" \
+    --csv scripts/data/down_south_cafe_menu.csv
+# prints what it would do, and writes nothing
+
+... --yes          # does it
+```
+
+`--stall` is used only when there is no stall for that address yet; an existing
+one is found by the owner's email and left named as it is. A stall it creates is
+**not approved**, so nobody can see it until an admin says so - loading a menu is
+not the same decision as opening a stall.
+
+**Re-running is safe.** Dishes are matched on the stall's own menu by name,
+case-insensitively, and an existing one is left exactly as it is - so a corrected
+CSV can be run again and only adds what is new. That matching is the script's
+job rather than the database's, because there is deliberately no unique index on
+item names: a stall may want two dishes called the same thing.
+
+The same rule means prices of existing dishes are **not** rewritten by default.
+`--update-prices` does that, and writes `price` directly - which is the merchant
+app's pending-price approval flow bypassed, so it is an explicit flag rather than
+the default.
+
+The whole file is parsed before anything is written, and a bad row is an error
+naming its line number. A menu that stopped loading halfway leaves somebody
+guessing which half is live.
+
 ### Pointing the apps at it
 
 ```bash
