@@ -27,6 +27,7 @@ from app.modules.orders.schemas import (
 from app.modules.auth.service import assert_allowed_domain
 from app.core.tasks import fire_and_log
 from app.modules.cashback import service as cashback
+from app.modules.coupons import service as coupons
 from app.modules.fulfilment.service import assert_meets_minimum, assert_order_fulfilment
 from app.modules.notifications.service import notify_new_order, notify_rider_assigned
 from app.modules.payments import service as payments
@@ -274,6 +275,23 @@ async def place_order(
 
     db.add(order)
 
+    if payload.coupon_code:
+        # Same moment as a cashback redemption, and for the same reason: a
+        # discount is a share of a cart, and there is no cart to take a share of
+        # until the basket has been priced from the stall's own rows.
+        #
+        # After assert_meets_minimum deliberately. A stall's minimum is about the
+        # food it has to cook and carry, which a code does not change.
+        #
+        # A bad code fails the whole order rather than placing it at full price:
+        # somebody who typed a code expects it to count, and an order that
+        # quietly ignored it is a refund conversation.
+        await db.flush()
+        try:
+            await coupons.hold_onto(order, user, payload.coupon_code, total, db)
+        except coupons.CouponError as exc:
+            raise exc.as_http()
+
     if payload.redeem_cashback:
         # After the minimum, and after the total is final, because redemption is
         # a share of the cart and there is no cart to take a share of until now.
@@ -460,6 +478,9 @@ async def update_order_status(
         #
         # Idempotent, and it has to be: the rider's route reaches COMPLETED too.
         await cashback.credit_for_completed_order(order, db, settings)
+        # The coupon use sticks now that the order is finished. Idempotent, like
+        # the credit above, because the rider's route reaches COMPLETED too.
+        await coupons.consume_for_completed_order(order, db)
 
     await db.commit()
 
@@ -485,7 +506,12 @@ async def update_order_status(
         # OUT_FOR_DELIVERY or COMPLETED and nothing else - so there is no second
         # site to keep in step.
         returned = await cashback.return_redemption(order, db, settings)
-        if returned > 0:
+        # And the coupon use, for exactly the same reason: a refused order must
+        # not burn a one-use code on food nobody got. This is the same function
+        # the admin's HAND BACK button calls, so the automatic path and the
+        # manual one cannot disagree about what handing back means.
+        handed_back = await coupons.hand_back(order.id, db)
+        if returned > 0 or handed_back > 0:
             await db.commit()
 
         if order.payment_status is PaymentStatus.DUE:

@@ -266,34 +266,6 @@ class TestNextExpiry:
 # commits in, and what a refusal undoes.
 
 
-@pytest.fixture
-def cashback_on(client):
-    """Flat 20/60 with a named Gourmet stall, for one test.
-
-    The suite's default settings leave GOURMET_KITCHEN_NAME empty - the safe
-    production default, where the expensive tier simply does not exist - so a
-    test that wants the 60% tier has to name it.
-    """
-    from app.core.config import get_settings
-    from app.main import app
-
-    from tests.conftest import _test_settings
-
-    configured = _test_settings().model_copy(
-        update={
-            "gourmet_kitchen_name": "Gourmet Kitchen",
-            "cashback_normal_percent": 20,
-            "cashback_normal_cap": Decimal("40"),
-            "cashback_gourmet_percent": 60,
-            "cashback_gourmet_cap": Decimal("90"),
-            "cashback_expiry_days": 30,
-        }
-    )
-    app.dependency_overrides[get_settings] = lambda: configured
-    yield configured
-    app.dependency_overrides[get_settings] = lambda: _test_settings()
-
-
 async def _stall(db, name="Ordinary Stall", price="200.00"):
     from app.core.security import TokenAudience
     from app.db.models.menu import MenuItem

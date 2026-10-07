@@ -70,6 +70,28 @@ class OrderCreate(BaseModel):
     # by accident.
     redeem_cashback: bool = False
 
+    # A discount code to apply. Upper-cased server-side, so what the customer
+    # typed does not have to match what the admin typed.
+    coupon_code: str | None = Field(default=None, max_length=32)
+
+    @model_validator(mode="after")
+    def one_promotion_at_a_time(self) -> "OrderCreate":
+        """A coupon and cashback never apply to the same order.
+
+        Refused here rather than silently dropping one, because either choice
+        would be wrong for somebody: ignoring the coupon charges them more than
+        the screen said, and ignoring the cashback spends a balance they did not
+        mean to spend on an order that was already discounted.
+
+        Structural rather than a check in the handler, so the rule holds for any
+        future caller rather than for the one that remembered it.
+        """
+        if self.coupon_code and self.redeem_cashback:
+            raise ValueError(
+                "Use a coupon or your cashback on this order, not both"
+            )
+        return self
+
     @model_validator(mode="after")
     def cash_is_for_deliveries(self) -> "OrderCreate":
         """Pay on delivery means a rider collecting at a door.
@@ -193,6 +215,9 @@ class OrderOut(BaseModel):
     # what the customer hands over, and is the only figure any client should put
     # next to the word "pay" or "collect".
     cashback_applied: Decimal
+    # What a discount code took off. Never non-zero at the same time as
+    # cashback_applied.
+    coupon_discount: Decimal
     amount_due: Decimal
     note: str | None
     created_at: datetime

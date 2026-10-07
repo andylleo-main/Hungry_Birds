@@ -27,6 +27,7 @@ from app.modules.notifications.schemas import DeviceOut, DeviceRegister
 from app.modules.notifications.service import register_rider_device
 from app.modules.orders.schemas import OrderOut, RiderStatusUpdate
 from app.modules.cashback.service import credit_for_completed_order
+from app.modules.coupons.service import consume_for_completed_order
 from app.modules.payments.collection import (
     CollectCash,
     UpiQrOut,
@@ -502,6 +503,9 @@ async def rider_update_status(
         # Note what this does *not* credit: a pay-on-delivery delivery, which is
         # most of what a rider carries. earns_cashback says why.
         await credit_for_completed_order(order, db, settings)
+        # The other half of finishing an order: a held coupon use becomes a
+        # consumed one. Idempotent, because the stall's route does this too.
+        await consume_for_completed_order(order, db)
 
     await db.commit()
 

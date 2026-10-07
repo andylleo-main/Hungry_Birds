@@ -1,4 +1,13 @@
 from app.db.models.cashback import CashbackEntry, CashbackKind, CashbackReason
+from app.db.models.coupon import (
+    Coupon,
+    CouponAudience,
+    CouponAudienceMember,
+    CouponRedemption,
+    DiscountType,
+    ExpiryType,
+    RedemptionState,
+)
 from app.db.models.device import RiderDevice, VendorDevice
 from app.db.models.menu import MenuCategory, MenuItem
 from app.db.models.merchant_credential import MerchantCredential
@@ -28,6 +37,13 @@ __all__ = [
     "CashbackEntry",
     "CashbackKind",
     "CashbackReason",
+    "Coupon",
+    "CouponAudience",
+    "CouponAudienceMember",
+    "CouponRedemption",
+    "DiscountType",
+    "ExpiryType",
+    "RedemptionState",
     "Payment",
     "PaymentEvent",
     "PaymentStatus",

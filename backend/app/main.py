@@ -22,6 +22,8 @@ from app.modules.admin.router import analytics_router
 from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import router as auth_router
 from app.modules.cashback.router import router as cashback_router
+from app.modules.coupons.admin_router import router as admin_coupons_router
+from app.modules.coupons.router import router as coupons_router
 from app.modules.media.router import router as media_router
 from app.modules.fulfilment.router import router as fulfilment_router
 from app.modules.menu.router import router as menu_router
@@ -216,6 +218,8 @@ app.include_router(order_payments_router, prefix=API_PREFIX)
 app.include_router(payments_router, prefix=API_PREFIX)
 app.include_router(vendor_orders_router, prefix=API_PREFIX)
 app.include_router(cashback_router, prefix=API_PREFIX)
+app.include_router(coupons_router, prefix=API_PREFIX)
+app.include_router(admin_coupons_router, prefix=API_PREFIX)
 app.include_router(realtime_router, prefix=API_PREFIX)
 
 

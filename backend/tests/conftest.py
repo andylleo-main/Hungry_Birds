@@ -268,6 +268,38 @@ def payments_on(client):
 
 
 @pytest.fixture
+def cashback_on(client):
+    """Flat 20/60 with a named Gourmet stall, for one test.
+
+    The suite's default settings leave GOURMET_KITCHEN_NAME empty - the safe
+    production default, where the expensive tier simply does not exist - so a
+    test that wants the 60% tier has to name it.
+
+    Here rather than in test_cashback.py because the coupon tests need it too:
+    "an order with a coupon earns no cashback" is a fact about both features,
+    and a second copy of these numbers would be a second thing to keep in step.
+    """
+    from decimal import Decimal
+
+    from app.core.config import get_settings
+    from app.main import app
+
+    configured = _test_settings().model_copy(
+        update={
+            "gourmet_kitchen_name": "Gourmet Kitchen",
+            "cashback_normal_percent": 20,
+            "cashback_normal_cap": Decimal("40"),
+            "cashback_gourmet_percent": 60,
+            "cashback_gourmet_cap": Decimal("90"),
+            "cashback_expiry_days": 30,
+        }
+    )
+    app.dependency_overrides[get_settings] = lambda: configured
+    yield configured
+    app.dependency_overrides[get_settings] = lambda: _test_settings()
+
+
+@pytest.fixture
 def payments_off(client):
     """Put the deployment back into its unconfigured state for one test."""
     from app.core.config import get_settings

@@ -175,6 +175,16 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Numeric(10, 2), default=Decimal("0.00"), nullable=False
     )
 
+    # A discount code applied to this order. Zero on almost every order, and
+    # never non-zero at the same time as cashback_applied - the two promotions do
+    # not stack, which OrderCreate refuses structurally.
+    #
+    # Same treatment as cashback: total_amount is not reduced by it, because
+    # Hungry Birds funds the discount rather than the stall.
+    coupon_discount: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), default=Decimal("0.00"), nullable=False
+    )
+
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     fulfilment_type: Mapped[FulfilmentType] = mapped_column(
@@ -290,10 +300,15 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Not what the stall earned - that is `total_amount`, which this never
         reduces. The difference is what Hungry Birds is funding.
 
-        Cannot reach zero: redemption is capped at 60% of the cart, so there is
-        never a zero-rupee gateway order to special-case.
+        Cannot reach zero. Cashback is capped at 60% of the cart, and a coupon is
+        capped on its way in so that at least one rupee is left payable - so
+        there is never a zero-rupee gateway order to special-case.
         """
-        return Decimal(self.total_amount) - Decimal(self.cashback_applied)
+        return (
+            Decimal(self.total_amount)
+            - Decimal(self.cashback_applied)
+            - Decimal(self.coupon_discount)
+        )
 
     @property
     def delivery_location_label(self) -> str | None:

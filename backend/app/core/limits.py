@@ -75,6 +75,15 @@ ORDER_READ = (Limit(120, MINUTE),)
 # redemption happens inside PLACE_ORDER and is capped by that.
 CASHBACK_READ = (Limit(120, MINUTE),)
 
+# --- Coupons -----------------------------------------------------------------
+# Checking a code is the one endpoint here that can be *guessed at*: a loop over
+# plausible words finds which codes exist, and a code is worth money. Tighter
+# than the cashback reads beside it for that reason, and per user rather than per
+# IP so one account cannot spread the grinding across a campus network.
+#
+# Loose enough that a person mistyping a code three times notices nothing.
+COUPON_CHECK = (Limit(20, MINUTE), Limit(120, HOUR))
+
 # A vendor tapping through a lunch rush is fast, but not this fast.
 ORDER_STATUS_UPDATE = (Limit(60, MINUTE),)
 
