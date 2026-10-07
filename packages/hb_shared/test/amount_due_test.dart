@@ -9,7 +9,8 @@ import 'package:hb_shared/hb_shared.dart';
 /// the food while the customer pays less - and a rider, a QR and a printed
 /// ticket all have to show the smaller one.
 void main() {
-  Order order({Object? cashback = 0, double total = 200}) => Order.fromJson({
+  Order order({Object? cashback = 0, Object? coupon = 0, double total = 200}) =>
+      Order.fromJson({
         'id': 'o1',
         'order_number': '000001-4821',
         'token_number': 7,
@@ -20,6 +21,7 @@ void main() {
         'payment_status': 'due',
         'total_amount': total.toString(),
         if (cashback != null) 'cashback_applied': cashback,
+        if (coupon != null) 'coupon_discount': coupon,
         'note': null,
         'created_at': '2026-10-07T09:00:00',
         'updated_at': '2026-10-07T09:00:00',
@@ -71,5 +73,39 @@ void main() {
     // there is always something to collect on a cash delivery.
     final o = order(cashback: '120.00');
     expect(o.amountDue, greaterThan(0));
+  });
+
+  group('a discount code', () {
+    test('comes off what is owed, like cashback does', () {
+      final o = order(coupon: '50.00');
+      expect(o.totalAmount, 200, reason: 'the stall is still owed the full value');
+      expect(o.couponDiscount, 50);
+      expect(o.amountDue, 150);
+      expect(o.hasDiscount, isTrue);
+    });
+
+    test('is named on a receipt so the line is not simply wrong', () {
+      // The two never apply together, so the slip names one rather than
+      // breaking a single figure into two lines on 58mm paper.
+      expect(order(coupon: '50.00').discountLabel, 'Coupon');
+      expect(order(cashback: '40.00').discountLabel, 'Cashback');
+    });
+
+    test('an older server that sends no field still parses', () {
+      final o = order(coupon: null);
+      expect(o.couponDiscount, 0);
+      expect(o.amountDue, 200);
+    });
+
+    test('a decimal string is read, like every other money field', () {
+      expect(order(coupon: '12.50').couponDiscount, 12.5);
+    });
+
+    test('discountApplied is whatever actually came off', () {
+      expect(order(coupon: '50.00').discountApplied, 50);
+      expect(order(cashback: '40.00').discountApplied, 40);
+      expect(order().discountApplied, 0);
+      expect(order().hasDiscount, isFalse);
+    });
   });
 }

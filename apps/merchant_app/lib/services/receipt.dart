@@ -148,17 +148,26 @@ class Receipt {
 
     bytes.addAll(_line(_rule()));
 
-    // Three lines rather than one when cashback was spent, because the COLLECT
+    // Three lines rather than one when something came off, because the COLLECT
     // figure below is then smaller than the food and the stall has to be able to
     // see why from the slip alone. Printed as a subtraction - order value, the
     // discount, then what is owed - so it reads the way a bill reads.
+    //
+    // The middle line is named by whichever promotion applied. They never apply
+    // together, so one line is the whole story, and "Cashback" on an order
+    // discounted by a code would simply be wrong.
     //
     // TOTAL stays the value of the food, because that is what the stall is owed
     // and what it reconciles against. Hungry Birds funds the discount.
     if (order.hasDiscount) {
       bytes.addAll(_line(_spread('Order', 'Rs.${order.totalAmount.toStringAsFixed(0)}')));
       bytes.addAll(
-        _line(_spread('Cashback', '-Rs.${order.cashbackApplied.toStringAsFixed(0)}')),
+        _line(
+          _spread(
+            order.discountLabel,
+            '-Rs.${order.discountApplied.toStringAsFixed(0)}',
+          ),
+        ),
       );
       bytes.addAll(_bold(true));
       bytes.addAll(_line(_spread('TO PAY', 'Rs.${order.amountDue.toStringAsFixed(0)}')));

@@ -17,6 +17,7 @@ import { keyOf, lineKey, useCart } from './CartContext';
 import type { CartLine, LineKey } from './CartContext';
 import type {
   CashbackQuote,
+  Coupon,
   DeliveryLocation,
   FulfilmentType,
   MenuItem,
@@ -72,8 +73,16 @@ interface CheckoutState {
   cashAtTheDoor: boolean;
   mockPayments: boolean;
   redeem: boolean;
+  /** Ticking this drops any applied coupon: the server allows only one. */
   setRedeem: (next: boolean) => void;
   quote: CashbackQuote | null;
+  /** The code applied to this order, as the server priced it. */
+  coupon: Coupon | null;
+  couponError: string | null;
+  checkingCoupon: boolean;
+  /** Returns whether it stuck, so the field can clear itself on success. */
+  applyCoupon: (code: string) => Promise<boolean>;
+  clearCoupon: () => void;
   applied: number;
   payable: number;
 
@@ -158,6 +167,24 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
    */
   const [redeem, setRedeem] = useState(false);
   const [quote, setQuote] = useState<CashbackQuote | null>(null);
+
+  /**
+   * The discount code applied to this order, and why one was refused.
+   *
+   * Mutually exclusive with `redeem` above: the server refuses the pair with a
+   * 422, so the page must not let somebody build a basket it will bounce.
+   * Applying one clears the other, each saying so, rather than the button
+   * failing at the end.
+   *
+   * `coupon` is what the server said the code is worth - never a figure worked
+   * out here - so what is shown and what is charged come from one place.
+   */
+  const [coupon, setCoupon] = useState<Coupon | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [checkingCoupon, setCheckingCoupon] = useState(false);
+  // An automatic coupon is offered already applied, and dropping one has to
+  // stick - otherwise the effect that found it would put it straight back.
+  const [autoDropped, setAutoDropped] = useState(false);
 
   // Whether this deployment is charging anybody. Read from the server rather
   // than the bundle: a hardcoded answer would go stale the moment PAYMENTS_MODE
@@ -290,9 +317,96 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
    */
   const liveQuote = subtotal > 0 ? quote : null;
 
-  // What will actually come off, which is nothing unless the student asked.
-  const applied = redeem && liveQuote ? Number(liveQuote.redeemable) : 0;
+  // What will actually come off. One of the two at most, which the setters
+  // below enforce - but written as a sum anyway, so a future third promotion
+  // does not silently drop one of the first two.
+  const cashbackApplied = redeem && liveQuote ? Number(liveQuote.redeemable) : 0;
+  const couponApplied = coupon ? Number(coupon.discount) : 0;
+  const applied = cashbackApplied + couponApplied;
   const payable = subtotal - applied;
+
+  /**
+   * Apply a typed code, or report why it does not work.
+   *
+   * The refusal comes from the server in words written for the person who typed
+   * it - "that code is for a first order" rather than an error name - so it is
+   * shown as it arrived rather than being translated here into something vaguer.
+   *
+   * Applying one turns cashback off. The server refuses the pair with a 422, so
+   * letting somebody tick both and discover it at the end would be the worst
+   * version of this: the failure would land on the Pay button.
+   */
+  const applyCoupon = useCallback(
+    async (code: string): Promise<boolean> => {
+      if (!vendorId || !code.trim()) return false;
+      setCheckingCoupon(true);
+      setCouponError(null);
+      try {
+        const found = await api.checkCoupon(code, vendorId, subtotal.toFixed(2));
+        setCoupon(found);
+        setRedeem(false);
+        return true;
+      } catch (e) {
+        setCoupon(null);
+        setCouponError(
+          e instanceof ApiError
+            ? e.message
+            : "Couldn't check that code. Try again in a moment.",
+        );
+        return false;
+      } finally {
+        setCheckingCoupon(false);
+      }
+    },
+    [vendorId, subtotal],
+  );
+
+  const clearCoupon = useCallback(() => {
+    setCoupon(null);
+    setCouponError(null);
+    // An automatic code would otherwise be re-applied by the effect that found
+    // it, so dropping one has to be remembered for as long as this checkout.
+    setAutoDropped(true);
+  }, []);
+
+  /**
+   * Ticking cashback drops any applied code, for the same reason as above.
+   *
+   * Wrapped rather than exposing the raw setter, so the exclusivity cannot be
+   * bypassed by a caller that does not know about it.
+   */
+  const chooseCashback = useCallback((on: boolean) => {
+    setRedeem(on);
+    if (on) {
+      setCoupon(null);
+      setCouponError(null);
+    }
+  }, []);
+
+  /**
+   * An automatic coupon applies itself, since it has no code to type.
+   *
+   * Only when nothing else is in play: a student who typed their own code, or
+   * chose cashback, or dropped this one already, has made a choice that an
+   * automatic discount must not quietly overwrite.
+   */
+  useEffect(() => {
+    if (!vendorId || subtotal <= 0) return;
+    if (coupon || redeem || autoDropped) return;
+    let cancelled = false;
+    api
+      .availableCoupons(vendorId, subtotal.toFixed(2))
+      .then((found) => {
+        const auto = found.find((c) => c.automatic);
+        if (!cancelled && auto) setCoupon(auto);
+      })
+      // Silent: a discount nobody asked for failing to appear should not cost
+      // anybody the chance to order.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorId, subtotal, coupon, redeem, autoDropped]);
 
   const modes = useMemo(
     () =>
@@ -374,6 +488,9 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
         // applies the most its own rules allow, so a page that is out of date
         // about the figure cannot be out of date about the decision.
         redeem_cashback: redeem,
+        // One or the other, never both - the server refuses the pair, and the
+        // setters above are what stop the page ever building such an order.
+        coupon_code: coupon?.code,
       });
 
       if (cashAtTheDoor) {
@@ -460,6 +577,7 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
     location,
     cashAtTheDoor,
     redeem,
+    coupon,
     lines,
     user,
     updateProfile,
@@ -492,8 +610,13 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
     cashAtTheDoor,
     mockPayments,
     redeem,
-    setRedeem,
+    setRedeem: chooseCashback,
     quote: liveQuote,
+    coupon,
+    couponError,
+    checkingCoupon,
+    applyCoupon,
+    clearCoupon,
     applied,
     payable,
     soldOut,

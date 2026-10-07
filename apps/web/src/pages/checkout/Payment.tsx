@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { rupees } from '../../lib/format';
 import { Icon, Spinner } from '../../components/ui';
@@ -30,7 +31,25 @@ export default function Payment() {
     ready,
     blockedBecause,
     placeOrder,
+    coupon,
+    couponError,
+    checkingCoupon,
+    applyCoupon,
+    clearCoupon,
   } = useCheckout();
+
+  const [typed, setTyped] = useState('');
+
+  async function submitCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (await applyCoupon(typed)) setTyped('');
+  }
+
+  // Both promotions are offered, but only one can apply - the server refuses
+  // the pair. Numbering the steps from what is actually on screen keeps "1, 2"
+  // from becoming "1, 3" when a student has no cashback to spend.
+  const offersCashback = quote !== null && Number(quote.redeemable) > 0;
+  const payStep = offersCashback ? 3 : 2;
 
   // Reached directly - a refresh, or a pasted link. The cart survives in
   // localStorage but none of the answers do, so there is nothing to pay for
@@ -55,12 +74,67 @@ export default function Payment() {
           <OrderLines editable={false} />
         </section>
 
+        <Step index={1} title="Have a code?">
+          {coupon ? (
+            <div className="flex flex-wrap items-center gap-space-md rounded-lg border-[1.5px] border-primary bg-primary-tint/40 p-space-md">
+              <Icon name="sell" className="text-[22px] text-primary" />
+              <div className="min-w-0 flex-1">
+                <p className="text-label-lg text-on-surface">
+                  <span className="font-mono">{coupon.code}</span> &middot;{' '}
+                  {rupees(coupon.discount)} off
+                </p>
+                <p className="text-body-sm text-on-surface-variant">
+                  {coupon.description ??
+                    (coupon.automatic
+                      ? 'Applied automatically.'
+                      : 'Applied to this order.')}
+                </p>
+              </div>
+              <button type="button" onClick={clearCoupon} className="btn-ghost text-primary">
+                Remove
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={submitCode} className="flex flex-wrap gap-space-sm">
+              <input
+                className="field min-w-0 flex-1 font-mono uppercase"
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                placeholder="Enter a code"
+                maxLength={32}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="submit"
+                className="btn-secondary"
+                disabled={checkingCoupon || !typed.trim()}
+              >
+                {checkingCoupon ? <Spinner /> : 'Apply'}
+              </button>
+            </form>
+          )}
+
+          {couponError && (
+            <p className="mt-space-sm rounded bg-warning-tint px-space-sm py-space-sm text-body-sm text-on-surface">
+              {couponError}
+            </p>
+          )}
+
+          {/* Said before they try both, not after the server refuses it. */}
+          {offersCashback && (
+            <p className="mt-space-sm text-label-md text-on-surface-variant">
+              A code or your cashback — one per order, whichever is worth more.
+            </p>
+          )}
+        </Step>
+
         {/* Only when there is something to spend. A control offering nothing is
             a worse answer than no control: it reads as a feature that is broken
             rather than a balance that is empty, and the offers page is where an
             empty wallet gets explained. */}
-        {quote && Number(quote.redeemable) > 0 && (
-          <Step index={1} title="Cashback">
+        {offersCashback && quote && (
+          <Step index={2} title="Cashback">
             <button
               type="button"
               aria-pressed={redeem}
@@ -93,6 +167,12 @@ export default function Payment() {
                 This order won&apos;t earn cashback, since it&apos;s using some.
               </p>
             )}
+            {coupon && (
+              <p className="mt-space-sm text-label-md text-on-surface-variant">
+                Using <span className="font-mono">{coupon.code}</span> instead.
+                Ticking this drops the code.
+              </p>
+            )}
             <p className="mt-space-sm text-label-md text-on-surface-variant">
               <Link to="/offers" className="text-primary hover:underline">
                 See all your cashback
@@ -102,7 +182,7 @@ export default function Payment() {
         )}
 
         <Step
-          index={quote && Number(quote.redeemable) > 0 ? 2 : 1}
+          index={payStep}
           title="How you'll pay"
           aside={
             <span className="badge">

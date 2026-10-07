@@ -3,7 +3,12 @@ import { Link } from 'react-router-dom';
 import { ApiError, api } from '../lib/api';
 import { rupees } from '../lib/format';
 import { EmptyState, ErrorRetry, Icon, PageLoader } from '../components/ui';
-import type { CashbackEntry, CashbackSummary, CashbackWallet } from '../lib/types';
+import type {
+  CashbackEntry,
+  CashbackSummary,
+  CashbackWallet,
+  Coupon,
+} from '../lib/types';
 
 /** A date a student can act on, rather than a timestamp. */
 function on(iso: string) {
@@ -75,6 +80,50 @@ function Wallet({ wallet }: { wallet: CashbackWallet }) {
   );
 }
 
+function CouponCard({ coupon }: { coupon: Coupon }) {
+  const off =
+    coupon.discount_type === 'percent'
+      ? `${Number(coupon.discount_value)}% off` +
+        (coupon.max_discount ? ` up to ${rupees(coupon.max_discount)}` : '')
+      : `${rupees(coupon.discount_value)} off`;
+
+  return (
+    <div className="card flex flex-col gap-space-sm p-space-md">
+      <div className="flex items-center gap-space-sm">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-tint">
+          <Icon name="sell" className="text-[20px] text-primary" />
+        </span>
+        <div className="min-w-0">
+          {/* An automatic code has nothing to type, so showing one would be
+              telling somebody to do something that is already done. */}
+          <p className="truncate text-label-lg text-on-surface">
+            {coupon.automatic ? (
+              'Applied automatically'
+            ) : (
+              <span className="font-mono">{coupon.code}</span>
+            )}
+          </p>
+          <p className="text-body-sm text-on-surface-variant">{off}</p>
+        </div>
+      </div>
+
+      <p className="text-body-sm text-on-surface-variant">
+        {coupon.description ??
+          (coupon.automatic
+            ? 'Comes off your order without being typed.'
+            : 'Type it at checkout to use it.')}
+      </p>
+
+      <p className="text-label-md text-on-surface-variant">
+        {coupon.stall_name ? `At ${coupon.stall_name}` : 'At any stall'}
+        {Number(coupon.min_order_value) > 0
+          ? ` · orders over ${rupees(coupon.min_order_value)}`
+          : ''}
+      </p>
+    </div>
+  );
+}
+
 function Movement({ entry }: { entry: CashbackEntry }) {
   const credit = Number(entry.amount) > 0;
   const label =
@@ -120,12 +169,22 @@ function Movement({ entry }: { entry: CashbackEntry }) {
  */
 export default function Offers() {
   const [summary, setSummary] = useState<CashbackSummary | null>(null);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setError(null);
     try {
-      setSummary(await api.cashback());
+      const [balances, codes] = await Promise.all([
+        api.cashback(),
+        // Without a stall, so only the site-wide ones: a code pinned to one
+        // stall cannot be judged without knowing the cart it would apply to.
+        // Subtotal 0 for the same reason - this is a list of what exists, not a
+        // quote against a basket that has not been built yet.
+        api.availableCoupons(null, '0').catch(() => []),
+      ]);
+      setSummary(balances);
+      setCoupons(codes);
     } catch (e) {
       setSummary(null);
       setError(
@@ -171,6 +230,17 @@ export default function Offers() {
             Find something to eat
           </Link>
         </div>
+      )}
+
+      {coupons.length > 0 && (
+        <>
+          <h2 className="mb-space-sm text-headline-sm text-on-surface">Coupons</h2>
+          <div className="mb-space-lg grid gap-space-md md:grid-cols-2">
+            {coupons.map((c) => (
+              <CouponCard key={c.code} coupon={c} />
+            ))}
+          </div>
+        </>
       )}
 
       <h2 className="mb-space-sm text-headline-sm text-on-surface">History</h2>

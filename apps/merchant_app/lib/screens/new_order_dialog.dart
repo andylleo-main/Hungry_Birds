@@ -169,7 +169,8 @@ class NewOrderDialog extends StatelessWidget {
                       if (order.hasDiscount)
                         Text(
                           '₹${order.amountDue.toStringAsFixed(0)} to pay '
-                          '(₹${order.cashbackApplied.toStringAsFixed(0)} cashback)',
+                          '(₹${order.discountApplied.toStringAsFixed(0)} '
+                          '${order.discountLabel.toLowerCase()})',
                           style: const TextStyle(
                             fontSize: 13,
                             color: AppTheme.textSecondary,

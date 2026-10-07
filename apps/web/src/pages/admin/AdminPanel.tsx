@@ -4,8 +4,9 @@ import type { Vendor } from '../../lib/types';
 import { EmptyState, ErrorRetry, Icon, PageLoader, Spinner } from '../../components/ui';
 import Analytics from './Analytics';
 import PriceChanges from './PriceChanges';
+import Coupons from './Coupons';
 
-type Tab = 'overview' | 'pending' | 'approved' | 'prices';
+type Tab = 'overview' | 'pending' | 'approved' | 'prices' | 'coupons';
 
 function VendorRow({
   vendor,
@@ -76,6 +77,9 @@ export default function AdminPanel() {
   // Reported up by the price-changes tab so its pill can carry a count, the
   // same way the stall tabs do. Null until that tab has loaded once.
   const [priceCount, setPriceCount] = useState<number | null>(null);
+  // Reported up the same way, and it is the *active* count: a tab badge saying
+  // 12 when eleven of them are switched off would be noise.
+  const [couponCount, setCouponCount] = useState<number | null>(null);
 
   async function load() {
     setError(null);
@@ -194,6 +198,13 @@ export default function AdminPanel() {
             >
               Price changes{priceCount ? ` (${priceCount})` : ''}
             </button>
+            <button
+              type="button"
+              onClick={() => setTab('coupons')}
+              className={`pill ${tab === 'coupons' ? 'pill-active' : ''}`}
+            >
+              Coupons{couponCount ? ` (${couponCount})` : ''}
+            </button>
           </div>
 
           {actionError && (
@@ -206,6 +217,8 @@ export default function AdminPanel() {
             <Analytics />
           ) : tab === 'prices' ? (
             <PriceChanges onCount={setPriceCount} />
+          ) : tab === 'coupons' ? (
+            <Coupons onCount={setCouponCount} />
           ) : shown.length === 0 ? (
             <EmptyState
               icon={tab === 'pending' ? 'task_alt' : 'storefront'}

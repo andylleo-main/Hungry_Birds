@@ -907,7 +907,8 @@ class _PaymentLine extends StatelessWidget {
                   if (order.hasDiscount)
                     Text(
                       '₹${order.totalAmount.toStringAsFixed(0)} order, '
-                      '₹${order.cashbackApplied.toStringAsFixed(0)} paid by cashback',
+                      '₹${order.discountApplied.toStringAsFixed(0)} '
+                      'paid by ${order.discountLabel.toLowerCase()}',
                       style: const TextStyle(
                         fontSize: 12,
                         color: AppTheme.textSecondary,

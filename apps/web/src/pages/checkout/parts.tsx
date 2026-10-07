@@ -93,7 +93,8 @@ export function OrderLines({ editable }: { editable: boolean }) {
 
 /** Subtotal, the free-delivery line, any discount, and what is due. */
 export function Totals() {
-  const { subtotal, fulfilment, applied, payable, cashAtTheDoor } = useCheckout();
+  const { subtotal, fulfilment, applied, payable, cashAtTheDoor, coupon } =
+    useCheckout();
 
   return (
     <>
@@ -114,7 +115,9 @@ export function Totals() {
         </div>
         {applied > 0 && (
           <div className="flex justify-between text-on-surface-variant">
-            <span>Cashback</span>
+            {/* Named, because the two are mutually exclusive and a line reading
+                "Cashback" on an order discounted by a code is simply wrong. */}
+            <span>{coupon ? coupon.code : 'Cashback'}</span>
             <span className="text-success">−{rupees(applied)}</span>
           </div>
         )}

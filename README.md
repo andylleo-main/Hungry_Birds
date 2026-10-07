@@ -1372,6 +1372,81 @@ A stall handed a slip saying `COLLECT Rs.160` on a ₹200 order has to see why f
 the slip alone - otherwise the safe thing for whoever packs the bag to do is ask
 for the bigger number, which is the wrong thing.
 
+## Coupons
+
+Discount codes an admin makes. Percent or flat, count-based or dated, site-wide
+or pinned to one stall, with a minimum order value and - on a percentage - a
+cap. Four audiences: anyone with the code, a first order only, a named list of
+addresses, and one that applies itself with no code to type.
+
+Built from a description of the coupon admin in another project of the user's,
+not from its code. `CLAUDE.md` forbids moving code between the two, and a
+screenshot of a form is a description of behaviour.
+
+### A use is a thing that can be given back
+
+The part worth understanding. A use is not a counter going up:
+
+| State | What it means |
+| --- | --- |
+| `held` | Reserved by an order being placed. Counts against the limit immediately. |
+| `consumed` | The order completed. The use stuck. |
+| `returned` | The stall refused the order, or an admin handed it back. |
+
+Without the third state a refused order burns a one-use code on food nobody
+received. It is deliberately the same shape cashback has - held at placement,
+credited on completion, returned on a refusal - so there is one story about what
+a refusal undoes rather than two, hooked in at the same three call sites.
+
+The admin's **Hand back** button calls the same function the refusal path calls,
+so the manual route and the automatic one cannot drift apart. It is idempotent:
+pressing it twice returns one use.
+
+### Two deliberate departures from the original
+
+**No "Recount Uses" button.** There, `uses` is a stored counter and the button
+repairs it when it drifts from the rows behind it. Here the count is **derived** -
+`count(state <> 'returned')` - so it cannot drift and there is nothing to
+recount. *Clean up expired* stays: it deletes rather than repairs, and only
+touches dated coupons. A count-based code that has been fully claimed is not
+expired in the same sense; it may be worth raising the limit on.
+
+**A coupon cannot take an order to zero.** An admin can write 100% off, or a flat
+₹500 on a ₹200 cart, and ₹0 due would mean a ₹0 Razorpay order the gateway will
+not open. The discount is trimmed to leave **₹1 payable**. A real free-order path
+is a separate money path, and not one to open in launch week.
+
+### One promotion per order
+
+A coupon and cashback never apply together. Refused by a validator on
+`OrderCreate` rather than by a check in a handler, so the rule holds for any
+future caller. Checkout makes the two mutually exclusive on screen for the same
+reason - a 422 landing on the Pay button is the worst place to discover it.
+
+`Order.amount_due` is `total_amount − cashback_applied − coupon_discount`. Every
+money path already reads it, so the gateway amount, the webhook's amount check,
+the QR, the `Collect ₹X` guard and the printed `COLLECT` line all followed with
+no further change. `total_amount` stays the gross the stall is owed; Hungry Birds
+funds the discount, as it does for cashback.
+
+The printed ticket names whichever applied - `Coupon` or `Cashback` - because a
+slip reading "Cashback −Rs.60" on an order discounted by a code is simply wrong,
+and that line is what a stall reconciles against.
+
+### Two things worth keeping in mind
+
+**There is no unique index on `(coupon_id, user_id)`.** It is the obvious one to
+want, and it would be wrong: a partial unique index cannot read the coupon's own
+`one_per_customer` flag, so a coupon that deliberately allows repeat use would
+have its second use rejected by the database with nothing able to explain why.
+The enforcement is the row lock in `hold_onto` instead, which serialises every
+use of one code - something the count limit needs anyway.
+
+**A race test through `ASGITransport` proves nothing.** The first one passed with
+the lock removed, because those requests do not reliably overlap. The real test
+drives two separate database sessions contending on the same code; it fails with
+`assert 2 == 1` when the lock goes, which is both of them winning.
+
 ## Stall owners sign in with a password
 
 A merchant's first sign-in is an email code, same as before. They then pick a

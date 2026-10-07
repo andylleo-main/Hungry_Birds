@@ -26,6 +26,7 @@ void main() {
     String? location,
     double total = 150,
     double cashback = 0,
+    double coupon = 0,
   }) =>
       Order(
         id: 'o1',
@@ -39,6 +40,7 @@ void main() {
         readyBy: readyBy,
         totalAmount: total,
         cashbackApplied: cashback,
+        couponDiscount: coupon,
         note: note,
         createdAt: DateTime(2026, 1, 1, 13, 42),
         updatedAt: DateTime(2026, 1, 1, 13, 42),
@@ -376,6 +378,32 @@ void main() {
       expect(lines.any((l) => l.startsWith('TOTAL') && l.contains('Rs.150')), isTrue);
       expect(lines.any((l) => l.contains('Cashback')), isFalse);
       expect(lines.any((l) => l.contains('TO PAY')), isFalse);
+    });
+  });
+
+  group('an order discounted by a code', () {
+    test('COLLECT is the reduced figure, as it is for cashback', () {
+      final lines = printed(
+        order(paymentStatus: PaymentStatus.due, total: 200, coupon: 60),
+      );
+      expect(lines, contains('COLLECT Rs.140'));
+    });
+
+    test('the middle line names the coupon rather than saying Cashback', () {
+      // A slip reading "Cashback -Rs.60" on an order discounted by a code is
+      // simply wrong, and the stall reconciles against this line.
+      final lines = printed(
+        order(paymentStatus: PaymentStatus.due, total: 200, coupon: 60),
+      );
+      expect(lines.any((l) => l.contains('Coupon') && l.contains('-Rs.60')), isTrue);
+      expect(lines.any((l) => l.contains('Cashback')), isFalse);
+      expect(lines.any((l) => l.startsWith('TO PAY') && l.contains('Rs.140')), isTrue);
+    });
+
+    test('a cashback order still says Cashback', () {
+      final lines = printed(order(total: 200, cashback: 40));
+      expect(lines.any((l) => l.contains('Cashback') && l.contains('-Rs.40')), isTrue);
+      expect(lines.any((l) => l.contains('Coupon')), isFalse);
     });
   });
 }

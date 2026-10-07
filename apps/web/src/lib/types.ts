@@ -225,6 +225,8 @@ export interface Order {
   total_amount: string;
   /** Promotional credit put towards this order. "0.00" on almost all of them. */
   cashback_applied?: string;
+  /** What a discount code took off. Never non-zero alongside cashback. */
+  coupon_discount?: string;
   /** What the customer actually hands over. */
   amount_due?: string;
   note: string | null;
@@ -355,4 +357,87 @@ export interface CashbackConfig {
   /** Empty when no stall is on the better rate. */
   gourmet_stall_name: string;
   expiry_days: number;
+}
+
+export type DiscountType = 'percent' | 'flat';
+export type ExpiryType = 'count' | 'date';
+export type CouponAudience = 'anyone' | 'first_order' | 'named' | 'automatic';
+export type RedemptionState = 'held' | 'consumed' | 'returned';
+
+/**
+ * A coupon as a customer sees it.
+ *
+ * Deliberately carries no usage figures: how many are left is the admin's
+ * business, and showing "2 of 100 claimed" would turn a quiet promotion into a
+ * race.
+ */
+export interface Coupon {
+  code: string;
+  description: string | null;
+  discount_type: DiscountType;
+  discount_value: string;
+  max_discount: string | null;
+  min_order_value: string;
+  /** Null when it works at every stall. */
+  vendor_id: string | null;
+  stall_name: string | null;
+  /** True when it applies itself with no code to type. */
+  automatic: boolean;
+  /** What it takes off the cart that was asked about. */
+  discount: string;
+}
+
+/** A coupon as the admin screen shows it, with its uses counted from its rows. */
+export interface AdminCoupon {
+  id: string;
+  code: string;
+  vendor_id: string | null;
+  stall_name: string | null;
+  discount_type: DiscountType;
+  discount_value: string;
+  max_discount: string | null;
+  expiry_type: ExpiryType;
+  max_uses: number | null;
+  expires_at: string | null;
+  min_order_value: string;
+  audience: CouponAudience;
+  audience_emails: string[];
+  description: string | null;
+  is_active: boolean;
+  one_per_customer: boolean;
+  show_in_offers: boolean;
+  created_at: string;
+  uses: number;
+}
+
+/** What the admin's form sends. Mirrors AdminCouponIn on the server. */
+export interface AdminCouponInput {
+  code: string;
+  vendor_id: string | null;
+  discount_type: DiscountType;
+  discount_value: string;
+  max_discount: string | null;
+  expiry_type: ExpiryType;
+  max_uses: number | null;
+  expires_at: string | null;
+  min_order_value: string;
+  audience: CouponAudience;
+  audience_emails: string[];
+  description: string | null;
+  is_active: boolean;
+  one_per_customer: boolean;
+  show_in_offers: boolean;
+}
+
+/** One use, for the admin's log. */
+export interface CouponRedemption {
+  id: string;
+  code: string;
+  customer_email: string;
+  order_id: string | null;
+  order_number: string | null;
+  discount: string;
+  state: RedemptionState;
+  created_at: string;
+  settled_at: string | null;
 }

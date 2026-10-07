@@ -205,6 +205,11 @@ class Order {
   /// of them.
   final double cashbackApplied;
 
+  /// What a discount code took off. Zero on almost all of them, and never
+  /// non-zero at the same time as [cashbackApplied] - the server refuses an
+  /// order carrying both.
+  final double couponDiscount;
+
   final String? note;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -256,6 +261,7 @@ class Order {
     this.readyBy,
     required this.totalAmount,
     this.cashbackApplied = 0,
+    this.couponDiscount = 0,
     required this.note,
     required this.createdAt,
     required this.updatedAt,
@@ -284,11 +290,20 @@ class Order {
   /// takes at the door, the amount on a UPI QR, and the COLLECT line on a
   /// printed ticket. Equal to [totalAmount] on every order where no cashback was
   /// spent, which is most of them.
-  double get amountDue => totalAmount - cashbackApplied;
+  double get amountDue => totalAmount - cashbackApplied - couponDiscount;
 
-  /// Whether promotional credit came off this order, so a screen knows whether
-  /// the discount line is worth drawing at all.
-  bool get hasDiscount => cashbackApplied > 0;
+  /// Everything taken off, whichever promotion produced it.
+  double get discountApplied => cashbackApplied + couponDiscount;
+
+  /// Whether anything came off this order, so a screen knows whether the
+  /// discount line is worth drawing at all.
+  bool get hasDiscount => discountApplied > 0;
+
+  /// What to call the discount on a receipt or a card.
+  ///
+  /// The two never apply together, so this is a name rather than a breakdown.
+  /// Printed on a 58mm slip, where a second line costs more than it says.
+  String get discountLabel => couponDiscount > 0 ? 'Coupon' : 'Cashback';
 
   /// Money the rider still has to collect before this can be marked delivered.
   bool get isAwaitingCollection => paymentStatus == PaymentStatus.due;
@@ -322,6 +337,11 @@ class Order {
         // is exactly how every order behaved before this existed.
         cashbackApplied:
             double.tryParse(json['cashback_applied']?.toString() ?? '') ?? 0,
+        // Absent on a server that predates coupons, for the same reason and with
+        // the same answer as the field above: zero, which leaves amountDue equal
+        // to what it was.
+        couponDiscount:
+            double.tryParse(json['coupon_discount']?.toString() ?? '') ?? 0,
         note: json['note'] as String?,
         createdAt: DateTime.parse(json['created_at'] as String),
         updatedAt: DateTime.parse(json['updated_at'] as String),

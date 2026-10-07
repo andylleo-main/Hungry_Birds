@@ -1,9 +1,13 @@
 import type { RazorpayHandback } from './razorpay';
 import type {
+  AdminCoupon,
+  AdminCouponInput,
   AppUser,
   CashbackConfig,
   CashbackQuote,
   CashbackSummary,
+  Coupon,
+  CouponRedemption,
   FulfilmentType,
   Order,
   OrderStatus,
@@ -335,6 +339,12 @@ export const api = {
      * deciding what it owes.
      */
     redeem_cashback?: boolean;
+    /**
+     * A discount code. Refused by the server alongside `redeem_cashback`: one
+     * promotion per order, and silently dropping either would be wrong for
+     * somebody.
+     */
+    coupon_code?: string;
   }) => request<Order>('POST', '/orders', { body: payload }),
 
   /**
@@ -379,6 +389,44 @@ export const api = {
    * is priced from the stall's own rows - so a wrong figure here only misleads
    * the page that sent it.
    */
+  // --- Coupons ---
+  /**
+   * What a code is worth on this cart, or a 400 carrying the reason in words.
+   *
+   * POST rather than GET because the code goes in the body: a code in a query
+   * string lands in server logs, proxy logs and browser history, and codes are
+   * worth money to whoever reads them there.
+   */
+  checkCoupon: (code: string, vendorId: string, subtotal: string) =>
+    request<Coupon>('POST', '/coupons/check', {
+      body: { code, vendor_id: vendorId, subtotal },
+    }),
+
+  /** Codes this student can use, best first. Omit the stall for the offers page. */
+  availableCoupons: (vendorId: string | null, subtotal: string) =>
+    request<Coupon[]>(
+      'GET',
+      `/coupons/available?subtotal=${encodeURIComponent(subtotal)}` +
+        (vendorId ? `&vendor_id=${vendorId}` : ''),
+    ),
+
+  // --- Coupons, admin ---
+  adminCoupons: () => request<AdminCoupon[]>('GET', '/admin/coupons'),
+  createCoupon: (body: AdminCouponInput) =>
+    request<AdminCoupon>('POST', '/admin/coupons', { body }),
+  updateCoupon: (id: string, body: AdminCouponInput) =>
+    request<AdminCoupon>('PUT', `/admin/coupons/${id}`, { body }),
+  deleteCoupon: (id: string) => request<void>('DELETE', `/admin/coupons/${id}`),
+  couponRedemptions: () =>
+    request<CouponRedemption[]>('GET', '/admin/coupons/redemptions'),
+  handBackRedemption: (id: string) =>
+    request<CouponRedemption>(
+      'POST',
+      `/admin/coupons/redemptions/${id}/hand-back`,
+    ),
+  cleanUpExpiredCoupons: () =>
+    request<{ deleted: number }>('POST', '/admin/coupons/cleanup-expired'),
+
   cashbackQuote: (vendorId: string, subtotal: string) =>
     request<CashbackQuote>(
       'GET',

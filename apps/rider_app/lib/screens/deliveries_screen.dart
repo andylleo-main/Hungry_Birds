@@ -304,7 +304,8 @@ class _DeliveryCardState extends State<_DeliveryCard> {
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 'Order is \u20b9${order.totalAmount.toStringAsFixed(0)}; '
-                '\u20b9${order.cashbackApplied.toStringAsFixed(0)} paid by cashback',
+                '\u20b9${order.discountApplied.toStringAsFixed(0)} '
+                'paid by ${order.discountLabel.toLowerCase()}',
                 style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
               ),
             ),
