@@ -26,8 +26,25 @@ unique index on item names - a stall may legitimately want two dishes with the
 same name - so that matching is this script's job rather than the database's,
 and getting it wrong would mean a second copy of all 169 dishes.
 
-That also means this will not change a price by default. Use --update-prices
-when you mean to, and read what it says about the approval flow first.
+That also means nothing already on the menu is changed by default. Two flags
+change that, and both write `price` directly - which is the merchant app's
+pending-price approval flow bypassed, so neither is the default:
+
+    --update-prices   the price of an existing dish, and nothing else
+    --replace         the price **and** the section: bring the menu in line
+                      with the file
+
+**--replace updates rows in place; it does not delete and recreate them.** That
+is deliberate. `menu_item_variants.item_id` is ON DELETE CASCADE, so deleting a
+dish takes its half/full variants with it - and this file carries one price per
+dish and no variant information, so there would be nothing to rebuild them from.
+Updating in place also keeps the dish's photograph, its prep time, any price
+change waiting on an admin, and its id, which is what a customer's saved cart
+points at.
+
+Neither flag removes anything. A dish on the menu that the file does not mention
+is reported and left alone: a CSV is one person's list, not a claim about the
+whole menu.
 """
 
 import argparse
@@ -110,6 +127,11 @@ async def main() -> int:
         "--update-prices",
         action="store_true",
         help="also rewrite the price of dishes that already exist",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="bring existing dishes fully in line with the file: price and section",
     )
     args = parser.parse_args()
 
@@ -211,12 +233,14 @@ async def main() -> int:
             await db.flush()
 
         added = 0
+        matched = 0
         skipped: list[str] = []
         repriced: list[str] = []
         # Where the file and the live menu already disagree. Never acted on
         # silently - a stall that is open has prices somebody set on purpose.
         disagree: list[str] = []
         misplaced: list[str] = []
+        moved: list[str] = []
         # Names queued for insert in this run. Kept apart from `existing_items`
         # rather than written into it, because a dict cannot say "I am about to
         # add this" with a value of None - `.get` would read that back as absent
@@ -229,6 +253,7 @@ async def main() -> int:
 
             item = existing_items.get(key)
             if item is not None:
+                matched += 1
                 was = Decimal(item.price)
                 # Reported whether or not anything is done about it. A stall that
                 # is already live has a menu somebody has been editing, and a
@@ -242,10 +267,16 @@ async def main() -> int:
                         f"{name}: in {here or 'no section'}, file says {category_name}"
                     )
 
-                if args.update_prices and was != price:
+                touched = False
+                if (args.update_prices or args.replace) and was != price:
                     item.price = price
                     repriced.append(f"{name}: {was} -> {price}")
-                else:
+                    touched = True
+                if args.replace and item.category_id != category.id:
+                    item.category_id = category.id
+                    moved.append(f"{name}: {here or 'no section'} -> {category_name}")
+                    touched = True
+                if not touched:
                     skipped.append(name)
                 continue
 
@@ -268,7 +299,7 @@ async def main() -> int:
 
         print(
             f"\n{new_categories} new categories, {added} new dishes, "
-            f"{len(skipped)} already on the menu"
+            f"{matched} already on the menu"
         )
         def _listing(title: str, lines: list[str]) -> None:
             if not lines:
@@ -279,25 +310,42 @@ async def main() -> int:
             if len(lines) > 30:
                 print(f"  ... and {len(lines) - 30} more")
 
-        _listing("Priced differently on the live menu", disagree)
-        _listing("In a different section from the file", misplaced)
+        if args.replace:
+            _listing("Prices being brought in line with the file", repriced)
+            _listing("Dishes being moved to the file's section", moved)
+            if not repriced and not moved:
+                print("\nEvery dish already on the menu matches the file.")
+        else:
+            _listing("Priced differently on the live menu", disagree)
+            _listing("In a different section from the file", misplaced)
 
-        if repriced:
-            _listing("Prices being rewritten", repriced)
-        elif disagree and not args.update_prices:
-            print(
-                "\nThose prices are being left as they are. --update-prices "
-                "rewrites them, and writes `price` directly - which is the "
-                "merchant app's approval flow bypassed."
-            )
-        elif skipped and not args.update_prices:
-            print("\nExisting dishes were left alone, and all of them match the file.")
+            if repriced:
+                _listing("Prices being rewritten", repriced)
+            elif disagree:
+                print(
+                    "\nThose prices are being left as they are. --replace brings "
+                    "them in line with the file, price and section both; "
+                    "--update-prices does the price only. Either writes `price` "
+                    "directly, which is the merchant app's approval flow bypassed."
+                )
+            elif skipped:
+                print("\nExisting dishes were left alone, and all of them match the file.")
 
-        if misplaced:
-            print(
-                "Sections of existing dishes are never changed by this script. "
-                "Move them from the merchant app if they are wrong."
-            )
+            if misplaced:
+                print(
+                    "Sections are only changed by --replace. Otherwise move them "
+                    "from the merchant app."
+                )
+
+        # Dishes the stall sells that the file says nothing about. Reported and
+        # never removed: a CSV is one person's list, not a claim about the whole
+        # menu, and deleting on that assumption is not a thing to do quietly.
+        in_file = {name.strip().lower() for name, _c, _p in rows}
+        extra = sorted(
+            item.name for key, item in existing_items.items() if key not in in_file
+        )
+        if extra:
+            _listing("On the menu but not in the file - left alone", extra)
 
         if not args.yes:
             await db.rollback()
