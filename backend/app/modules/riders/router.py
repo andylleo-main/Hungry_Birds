@@ -26,6 +26,7 @@ from app.modules.auth.service import normalize_phone
 from app.modules.notifications.schemas import DeviceOut, DeviceRegister
 from app.modules.notifications.service import register_rider_device
 from app.modules.orders.schemas import OrderOut, RiderStatusUpdate
+from app.modules.cashback.service import credit_for_completed_order
 from app.modules.payments.collection import (
     CollectCash,
     UpiQrOut,
@@ -458,6 +459,7 @@ async def rider_update_status(
     rider: Rider = Depends(get_current_rider),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> OrderOut:
     """A rider marks an order picked up, or delivered.
 
@@ -490,6 +492,17 @@ async def rider_update_status(
             await _check_delivery_code(order, payload.delivery_code, redis)
 
     order.status = payload.status
+
+    if payload.status is OrderStatus.COMPLETED:
+        # The second of the two routes that can reach COMPLETED - the stall's is
+        # the other - and the reason credit_for_completed_order is idempotent
+        # rather than merely careful. A delivery closed by a rider earns exactly
+        # what the same order would have earned closed by the stall.
+        #
+        # Note what this does *not* credit: a pay-on-delivery delivery, which is
+        # most of what a rider carries. earns_cashback says why.
+        await credit_for_completed_order(order, db, settings)
+
     await db.commit()
 
     order = await load_order(order.id, db)

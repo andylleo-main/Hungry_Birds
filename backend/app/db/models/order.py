@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
 
 from sqlalchemy import (
@@ -158,6 +159,22 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         PaymentStatusType, default=PaymentStatus.PENDING, nullable=False
     )
     total_amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+
+    # Promotional credit taken off this order. Never negative, and never more
+    # than 60% of the total, because that is the redemption cap.
+    #
+    # **total_amount is not reduced by this**, and that is deliberate. It is
+    # documented above as the order's value, it is snapshotted at placement, nine
+    # analytics queries sum it, and the Razorpay webhook compares against it.
+    # Redefining it as "what the customer pays" would change what every one of
+    # those figures means without a single call site changing - and would
+    # under-report what the stall is owed, since Hungry Birds funds the discount
+    # rather than the stall. So the gross stays here and `amount_due` below is
+    # the single name for what anybody is actually charged or collects.
+    cashback_applied: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), default=Decimal("0.00"), nullable=False
+    )
+
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     fulfilment_type: Mapped[FulfilmentType] = mapped_column(
@@ -260,6 +277,23 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         once the merchant has assigned this order to this rider.
         """
         return self.rider.phone if self.rider else None
+
+    @property
+    def amount_due(self) -> Decimal:
+        """What the customer actually has to hand over.
+
+        The only figure any money path should read: the gateway amount, the
+        webhook's amount check, a rider's collection QR, the "Collect Rs.X"
+        guard, and the COLLECT line on a printed ticket. `grep amount_due` is
+        meant to find all of them.
+
+        Not what the stall earned - that is `total_amount`, which this never
+        reduces. The difference is what Hungry Birds is funding.
+
+        Cannot reach zero: redemption is capped at 60% of the cart, so there is
+        never a zero-rupee gateway order to special-case.
+        """
+        return Decimal(self.total_amount) - Decimal(self.cashback_applied)
 
     @property
     def delivery_location_label(self) -> str | None:

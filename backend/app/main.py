@@ -21,6 +21,7 @@ from app.modules.admin.menu_router import router as admin_menu_router
 from app.modules.admin.router import analytics_router
 from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import router as auth_router
+from app.modules.cashback.router import router as cashback_router
 from app.modules.media.router import router as media_router
 from app.modules.fulfilment.router import router as fulfilment_router
 from app.modules.menu.router import router as menu_router
@@ -214,11 +215,12 @@ app.include_router(orders_router, prefix=API_PREFIX)
 app.include_router(order_payments_router, prefix=API_PREFIX)
 app.include_router(payments_router, prefix=API_PREFIX)
 app.include_router(vendor_orders_router, prefix=API_PREFIX)
+app.include_router(cashback_router, prefix=API_PREFIX)
 app.include_router(realtime_router, prefix=API_PREFIX)
 
 
 @app.get(API_PREFIX + "/config")
-async def public_config(config: Settings = Depends(get_settings)) -> dict[str, str]:
+async def public_config(config: Settings = Depends(get_settings)) -> dict:
     """The handful of server facts the web app cannot hardcode without drifting.
 
     Public and unauthenticated, which is fine: the payment mode is already
@@ -227,8 +229,28 @@ async def public_config(config: Settings = Depends(get_settings)) -> dict[str, s
     app reads it to warn, on the checkout page, that nothing is really being
     charged - a banner nobody can miss being the difference between a test
     deployment and a misunderstanding.
+
+    The cashback rates are here for the same reason: a storefront advertising
+    "20% back" from a number baked into the bundle would keep advertising it
+    after somebody changed the Railway variable, and a promotion that promises
+    more than it pays is worse than no promotion.
+
+    The Gourmet stall's *name* is included so the web app can badge it, and the
+    only thing that leaks is which stall is on the better rate - which every
+    student can see from its badge anyway. The caps and percentages are likewise
+    advertised to students by design.
     """
-    return {"payments_mode": config.payments_mode}
+    return {
+        "payments_mode": config.payments_mode,
+        "cashback": {
+            "normal_percent": config.cashback_normal_percent,
+            "normal_cap": str(config.cashback_normal_cap),
+            "gourmet_percent": config.cashback_gourmet_percent,
+            "gourmet_cap": str(config.cashback_gourmet_cap),
+            "gourmet_stall_name": config.gourmet_kitchen_name,
+            "expiry_days": config.cashback_expiry_days,
+        },
+    }
 
 
 @app.get("/health")

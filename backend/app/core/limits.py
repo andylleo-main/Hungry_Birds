@@ -67,6 +67,14 @@ PLACE_ORDER = (Limit(10, MINUTE), Limit(40, HOUR))
 # Tracking screens poll as well as holding a socket, so this stays roomy.
 ORDER_READ = (Limit(120, MINUTE),)
 
+# --- Cashback ----------------------------------------------------------------
+# Reading a balance, and quoting what would come off a cart. Both replay one
+# student's own ledger, which is tens of rows, so the cost is small - but the
+# quote is called as the checkout page updates, so it needs headroom that an
+# ordinary write limit would not give. Nothing here mints or spends anything;
+# redemption happens inside PLACE_ORDER and is capped by that.
+CASHBACK_READ = (Limit(120, MINUTE),)
+
 # A vendor tapping through a lunch rush is fast, but not this fast.
 ORDER_STATUS_UPDATE = (Limit(60, MINUTE),)
 

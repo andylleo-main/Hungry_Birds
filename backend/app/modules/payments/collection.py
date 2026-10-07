@@ -101,7 +101,7 @@ def assert_nothing_left_to_collect(order: Order) -> None:
     if order.payment_status is PaymentStatus.DUE:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"Collect ₹{order.total_amount:.0f} before marking this delivered.",
+            f"Collect ₹{order.amount_due:.0f} before marking this delivered.",
         )
 
 
@@ -144,7 +144,11 @@ async def mint_upi_qr(order: Order, db: AsyncSession, settings: Settings) -> Upi
     """
     try:
         qr = await razorpay.create_upi_qr(
-            amount=order.total_amount,
+            # What is owed, not what the food was worth. A QR minted for the
+            # gross would take more than the customer agreed to, and
+            # apply_cod_upi_collected - which checks against amount_due - would
+            # then refuse the payment it had just taken.
+            amount=order.amount_due,
             description=f"Hungry Birds order {order.order_number}",
             notes={"order_id": str(order.id), "order_number": order.order_number},
             settings=settings,
@@ -185,7 +189,7 @@ async def mint_upi_qr(order: Order, db: AsyncSession, settings: Settings) -> Upi
     return UpiQrOut(
         image_url=image_url,
         image_png=base64.b64encode(png).decode() if png else None,
-        amount=order.total_amount,
+        amount=order.amount_due,
         expires_at=datetime.fromtimestamp(int(qr["close_by"]), tz=timezone.utc)
         if qr.get("close_by")
         else datetime.now(timezone.utc) + timedelta(minutes=razorpay.QR_WINDOW_MINUTES),

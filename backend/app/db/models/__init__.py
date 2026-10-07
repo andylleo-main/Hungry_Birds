@@ -1,3 +1,4 @@
+from app.db.models.cashback import CashbackEntry, CashbackKind, CashbackReason
 from app.db.models.device import RiderDevice, VendorDevice
 from app.db.models.menu import MenuCategory, MenuItem
 from app.db.models.merchant_credential import MerchantCredential
@@ -24,6 +25,9 @@ __all__ = [
     "OrderItem",
     "OrderStatus",
     "FulfilmentType",
+    "CashbackEntry",
+    "CashbackKind",
+    "CashbackReason",
     "Payment",
     "PaymentEvent",
     "PaymentStatus",

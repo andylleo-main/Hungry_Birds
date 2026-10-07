@@ -99,8 +99,11 @@ async def ensure_payment(order: Order, db: AsyncSession, settings: Settings) -> 
             # receipt field makes a support call answerable from either side.
             receipt=order.order_number,
             # The authoritative figure, priced server-side when the order was
-            # placed. OrderCreate has no amount field and must never gain one.
-            amount=order.total_amount,
+            # placed, less any promotional credit the student put towards it.
+            # OrderCreate has no amount field and must never gain one - and the
+            # flag that asks for a redemption is not one, because the server
+            # works out how much from a balance it reads itself.
+            amount=order.amount_due,
             notes={"order_id": str(order.id), "order_number": order.order_number},
             settings=settings,
         )
@@ -112,7 +115,11 @@ async def ensure_payment(order: Order, db: AsyncSession, settings: Settings) -> 
         payment = Payment(
             order_id=order.id,
             gateway_order_id=gateway_order_id,
-            amount=order.total_amount,
+            # What is being charged, which is what the webhook's amount check
+            # compares against a few lines down. The stall's own figure is
+            # orders.total_amount and is deliberately larger when cashback was
+            # spent.
+            amount=order.amount_due,
         )
         db.add(payment)
     else:
@@ -199,20 +206,26 @@ async def apply_cod_upi_collected(order: Order, entity: dict, db: AsyncSession) 
     rider never has to be believed about whether it arrived, because Razorpay
     says so directly.
 
-    Checked against `orders.total_amount` rather than a payments row, because a
+    Checked against the order rather than a payments row, because a
     pay-on-delivery order has no payments row - nothing was ever opened at the
     gateway for it. The fixed-amount QR means a short payment cannot be made in
     the first place, so this check is about a forged or misrouted webhook rather
     than about underpayment.
+
+    Against `amount_due`, not `total_amount`. The QR is minted for what the
+    customer owes, so comparing against the stall's gross would reject the
+    customer's own correct payment on any order that spent cashback - the
+    failure mode here is not "a mismatch slips through" but "a student pays and
+    is told they did not".
     """
     from app.modules.orders.service import can_transition_payment
 
-    if not _paise_match(entity.get("amount"), order.total_amount):
+    if not _paise_match(entity.get("amount"), order.amount_due):
         logger.error(
-            "qr credit of %s paise for order %s, which totals %s - not marking paid",
+            "qr credit of %s paise for order %s, which owes %s - not marking paid",
             entity.get("amount"),
             order.id,
-            order.total_amount,
+            order.amount_due,
         )
         return "amount_mismatch"
 

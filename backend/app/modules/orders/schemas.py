@@ -54,6 +54,22 @@ class OrderCreate(BaseModel):
     # default is the conservative one - money up front.
     payment_method: PaymentMethod = PaymentMethod.ONLINE
 
+    # Put this student's matching cashback towards the order.
+    #
+    # A flag, not an amount, and that is the same rule the gateway amount follows
+    # a few lines up: the server decides how much, from the balance it reads and
+    # the cart it priced itself. A client-supplied discount would be a client
+    # deciding what it owes.
+    #
+    # The server applies the most the rules allow. An explicit partial amount
+    # would be easy to add on top of this later; nobody has asked for one, and
+    # every extra number a checkout page can send is another number to validate.
+    #
+    # Defaults to false, like the two fields above default conservatively: an
+    # older client that has never heard of this keeps working and spends nothing
+    # by accident.
+    redeem_cashback: bool = False
+
     @model_validator(mode="after")
     def cash_is_for_deliveries(self) -> "OrderCreate":
         """Pay on delivery means a rider collecting at a door.
@@ -170,6 +186,14 @@ class OrderOut(BaseModel):
     # counting its till at close wants exactly this.
     collected_via: str | None = None
     total_amount: Decimal
+    # Promotional credit taken off. Zero on almost every order.
+    #
+    # `total_amount` is deliberately *not* reduced by it - it is what the stall
+    # is owed for the food, and Hungry Birds funds the discount. `amount_due` is
+    # what the customer hands over, and is the only figure any client should put
+    # next to the word "pay" or "collect".
+    cashback_applied: Decimal
+    amount_due: Decimal
     note: str | None
     created_at: datetime
     updated_at: datetime

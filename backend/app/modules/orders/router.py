@@ -26,6 +26,7 @@ from app.modules.orders.schemas import (
 )
 from app.modules.auth.service import assert_allowed_domain
 from app.core.tasks import fire_and_log
+from app.modules.cashback import service as cashback
 from app.modules.fulfilment.service import assert_meets_minimum, assert_order_fulfilment
 from app.modules.notifications.service import notify_new_order, notify_rider_assigned
 from app.modules.payments import service as payments
@@ -273,6 +274,21 @@ async def place_order(
 
     db.add(order)
 
+    if payload.redeem_cashback:
+        # After the minimum, and after the total is final, because redemption is
+        # a share of the cart and there is no cart to take a share of until now.
+        #
+        # Deliberately *after* assert_meets_minimum: a stall's minimum is about
+        # the food it has to cook and carry, which a discount does not change. A
+        # Rs.120 basket with Rs.24 of cashback on it is still a Rs.120 basket to
+        # the kitchen.
+        #
+        # Flushed first so the order has an id for the ledger entry to point at,
+        # and both are committed together below - an order can never exist
+        # carrying a discount that no debit paid for.
+        await db.flush()
+        await cashback.redeem_onto(order, vendor, total, db, settings)
+
     if not paying_now:
         # The equivalent of what apply_payment_success does for an online order,
         # at the equivalent moment: this is when the stall first sees it, so this
@@ -435,6 +451,16 @@ async def update_order_status(
         # countdown that has already run out.
         order.ready_by = ready_by_from(order.prep_minutes, order.fulfilment_type)
 
+    if payload.status is OrderStatus.COMPLETED:
+        # Earned here rather than at placement, because a credit minted at
+        # placement belongs to an order the stall may still reject - and taking
+        # it back would be a second reversal path nobody would remember to
+        # write. In the same transaction as the status, so there is no window
+        # where an order is complete and its cashback is not, or the reverse.
+        #
+        # Idempotent, and it has to be: the rider's route reaches COMPLETED too.
+        await cashback.credit_for_completed_order(order, db, settings)
+
     await db.commit()
 
     # A stall ending an order without the customer getting their food is the
@@ -449,6 +475,19 @@ async def update_order_status(
     # and with nothing in any log to say so. Asking REFUNDABLE_ENDINGS instead of
     # naming statuses is what stops the next terminal status repeating it.
     if payload.status in REFUNDABLE_ENDINGS:
+        # Cashback first, and for every refundable ending rather than only the
+        # paid ones. Without this a stall refusing an order keeps the student's
+        # cashback: it paid for food they never got, and no refund path touches
+        # it because the gateway never saw it. It is their own money, not a new
+        # credit, which is why the ledger records it as a return.
+        #
+        # This is the only place an order can be cancelled - a rider can reach
+        # OUT_FOR_DELIVERY or COMPLETED and nothing else - so there is no second
+        # site to keep in step.
+        returned = await cashback.return_redemption(order, db, settings)
+        if returned > 0:
+            await db.commit()
+
         if order.payment_status is PaymentStatus.DUE:
             # A pay-on-delivery order that ended before anybody collected.
             # Nothing was taken, so nothing is owed in either direction - which

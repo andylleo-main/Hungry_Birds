@@ -1,3 +1,4 @@
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -131,6 +132,38 @@ class Settings(BaseSettings):
     # Delivery orders only. Dine-in is paid up front, because the student is
     # standing at the counter and there is no rider to collect from them.
     cod_enabled: bool = True
+
+    # --- Cashback ------------------------------------------------------------
+    # A launch promotion, and the first thing in this project that *creates*
+    # money rather than moving money a customer already owes. Every number is a
+    # setting so a rate change is a Railway variable rather than a deploy.
+    #
+    # Earned on completion, spendable only at the kind of kitchen it came from.
+    # See the Cashback section of README.md for the whole scheme.
+    cashback_normal_percent: int = 20
+    cashback_normal_cap: Decimal = Decimal("40")
+    cashback_gourmet_percent: int = 60
+    cashback_gourmet_cap: Decimal = Decimal("90")
+
+    # Which stall is the special one, matched on its name because that is how
+    # the user identifies it. Empty - the default - means no stall is Gourmet, so
+    # the 60% tier is off until somebody names it. That is the safe direction:
+    # the expensive rate cannot be handed out by accident.
+    gourmet_kitchen_name: str = ""
+
+    # How long a credit lasts. Read at the moment of earning and frozen onto the
+    # row, never consulted again - so changing this cannot retroactively kill or
+    # revive a balance a student was already promised a date for.
+    cashback_expiry_days: int = 30
+
+    # When the flat rate is meant to become a probability distribution.
+    #
+    # **Currently inert, deliberately.** The distribution has not been specified
+    # yet and the user asked to keep flat 20/60 until it is, so this is read and
+    # threaded through rate_for() without changing what it returns. The risk is
+    # worth stating: a date that passes unnoticed means full promotional rates
+    # keep being paid. Empty means no end date is set at all.
+    cashback_end_date: str = ""
 
     # Where Razorpay posts webhooks, and the base for any link we send out.
     # Must be the public URL of this deployment.
