@@ -119,7 +119,12 @@ async def list_all_orders(
     orders = (
         await db.execute(order_query(*where).order_by(Order.created_at.desc()).limit(limit))
     ).scalars().all()
-    names = dict((await db.execute(select(Vendor.id, Vendor.stall_name))).tuples().all())
+    ids = {o.vendor_id for o in orders}
+    names = dict(
+        (await db.execute(select(Vendor.id, Vendor.stall_name).where(Vendor.id.in_(ids))))
+        .tuples()
+        .all()
+    ) if ids else {}
     out = []
     for o in orders:
         row = AdminOrderOut.model_validate(o)
