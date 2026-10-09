@@ -197,8 +197,8 @@ class TestApplyingACode:
     async def test_it_comes_off_what_is_owed_not_off_the_stall(
         self, client, customer, db
     ):
-        """The same decision cashback made: Hungry Birds funds the discount, so
-        total_amount keeps saying what the stall is owed for the food."""
+        """A coupon no longer lowers the price: the student pays in full and the
+        coupon's value is credited as cashback when the order completes."""
         _, headers = customer
         stall, item, _ = await _stall(db)
         code = (await _coupon(db)).code
@@ -208,8 +208,8 @@ class TestApplyingACode:
         assert placed.status_code == 201, placed.text
         body = placed.json()
         assert Decimal(body["total_amount"]) == Decimal("200.00")
-        assert Decimal(body["coupon_discount"]) == Decimal("50.00")
-        assert Decimal(body["amount_due"]) == Decimal("150.00")
+        assert Decimal(body["coupon_discount"]) == Decimal("0.00")
+        assert Decimal(body["amount_due"]) == Decimal("200.00")
 
     async def test_the_code_is_matched_however_it_is_typed(self, client, customer, db):
         _, headers = customer
@@ -223,7 +223,7 @@ class TestApplyingACode:
         placed = await _place(client, headers, stall, item, code=f"  {code.lower()} ")
 
         assert placed.status_code == 201, placed.text
-        assert Decimal(placed.json()["coupon_discount"]) == Decimal("50.00")
+        assert Decimal(placed.json()["amount_due"]) == Decimal("200.00")
         assert await _states(db, c.id) == ["held"]
 
     async def test_an_unknown_code_fails_the_order(self, client, customer, db):
@@ -598,11 +598,8 @@ class TestOnePromotionAtATime:
     async def test_an_order_with_a_coupon_earns_no_cashback(
         self, client, customer, db, pay, cashback_on
     ):
-        """The rule Phase 2 wrote and left waiting for this column.
-
-        It was `getattr(order, "coupon_discount", 0)` specifically so that adding
-        the column would be the whole change. This is the test that it was.
-        """
+        """No percentage cashback on a coupon order: only the coupon's own value
+        is credited, once, on completion."""
         _, headers = customer
         stall, item, vendor_headers = await _stall(db)
         c = await _coupon(db)
@@ -610,8 +607,11 @@ class TestOnePromotionAtATime:
         await pay(order["id"])
         await _finish(client, vendor_headers, order["id"])
 
-        wallets = (await client.get("/cashback", headers=headers)).json()["wallets"]
-        assert all(Decimal(str(w["balance"])) == 0 for w in wallets)
+        summary = (await client.get("/cashback", headers=headers)).json()
+        assert sum(Decimal(str(w["balance"])) for w in summary["wallets"]) == Decimal("50")
+        reasons = [e["reason"] for e in summary["entries"]]
+        assert reasons == ["coupon"]
+        assert summary["entries"][0]["coupon_code"] == c.code
 
     async def test_an_order_without_one_still_earns(
         self, client, customer, db, pay, cashback_on
@@ -799,9 +799,16 @@ class TestCheckingACodeBeforeOrdering:
         )
         placed = await _place(client, headers, stall, item, code=c.code)
 
-        assert Decimal(str(quoted.json()["discount"])) == Decimal(
-            placed.json()["coupon_discount"]
-        )
+        from sqlalchemy import select
+
+        rows = (
+            await db.execute(
+                select(CouponRedemption.discount).where(
+                    CouponRedemption.order_id == uuid.UUID(placed.json()["id"])
+                )
+            )
+        ).scalars().all()
+        assert [Decimal(str(quoted.json()["discount"]))] == [Decimal(r) for r in rows]
 
     async def test_a_refusal_comes_back_in_words(self, client, customer, db):
         _, headers = customer

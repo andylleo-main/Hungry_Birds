@@ -334,7 +334,9 @@ async def hold_onto(
     coupon = await find(code, db, lock=True)
     applied = await assert_usable(coupon, user, order.vendor_id, subtotal, db)
 
-    order.coupon_discount = applied.discount
+    # The coupon no longer comes off the price: its value is credited as
+    # cashback when the order completes (cashback.credit_for_completed_order),
+    # so order.coupon_discount stays zero and the student pays in full.
     db.add(
         CouponRedemption(
             coupon_id=coupon.id,

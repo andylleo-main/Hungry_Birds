@@ -85,6 +85,12 @@ interface CheckoutState {
   clearCoupon: () => void;
   applied: number;
   payable: number;
+  /** The order's one promotion. */
+  promo: Promo;
+  /** What the applied coupon credits as cashback on completion. */
+  couponCredit: number;
+  /** True when switching to pay on delivery removed a chosen promotion. */
+  promoDropped: boolean;
 
   // --- what is in the way ---
   soldOut: CartLine[];
@@ -103,6 +109,8 @@ interface CheckoutState {
 
   placeOrder: () => Promise<void>;
 }
+
+export type Promo = 'earn' | 'cashback' | 'coupon';
 
 const CheckoutCtx = createContext<CheckoutState | null>(null);
 
@@ -182,9 +190,6 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
   const [coupon, setCoupon] = useState<Coupon | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [checkingCoupon, setCheckingCoupon] = useState(false);
-  // An automatic coupon is offered already applied, and dropping one has to
-  // stick - otherwise the effect that found it would put it straight back.
-  const [autoDropped, setAutoDropped] = useState(false);
 
   // Whether this deployment is charging anybody. Read from the server rather
   // than the bundle: a hardcoded answer would go stale the moment PAYMENTS_MODE
@@ -347,9 +352,12 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
   // below enforce - but written as a sum anyway, so a future third promotion
   // does not silently drop one of the first two.
   const cashbackApplied = redeem && liveQuote ? Number(liveQuote.redeemable) : 0;
-  const couponApplied = coupon ? Number(coupon.discount) : 0;
-  const applied = cashbackApplied + couponApplied;
+  // A coupon no longer comes off the price: its value is credited as cashback
+  // once the order is completed.
+  const couponCredit = coupon ? Number(coupon.discount) : 0;
+  const applied = cashbackApplied;
   const payable = subtotal - applied;
+  const promo: Promo = redeem ? 'cashback' : coupon ? 'coupon' : 'earn';
 
   /**
    * Apply a typed code, or report why it does not work.
@@ -390,10 +398,22 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
   const clearCoupon = useCallback(() => {
     setCoupon(null);
     setCouponError(null);
-    // An automatic code would otherwise be re-applied by the effect that found
-    // it, so dropping one has to be remembered for as long as this checkout.
-    setAutoDropped(true);
   }, []);
+
+  // Pay on delivery carries no promotions, so switching to it drops any chosen.
+  const [promoDropped, setPromoDropped] = useState(false);
+  useEffect(() => {
+    if (!cashAtTheDoor) return;
+    if (redeem || coupon) {
+      setRedeem(false);
+      setCoupon(null);
+      setCouponError(null);
+      setPromoDropped(true);
+    }
+  }, [cashAtTheDoor, redeem, coupon]);
+  useEffect(() => {
+    if (!cashAtTheDoor) setPromoDropped(false);
+  }, [cashAtTheDoor]);
 
   /**
    * Ticking cashback drops any applied code, for the same reason as above.
@@ -408,31 +428,6 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
       setCouponError(null);
     }
   }, []);
-
-  /**
-   * An automatic coupon applies itself, since it has no code to type.
-   *
-   * Only when nothing else is in play: a student who typed their own code, or
-   * chose cashback, or dropped this one already, has made a choice that an
-   * automatic discount must not quietly overwrite.
-   */
-  useEffect(() => {
-    if (!vendorId || subtotal <= 0) return;
-    if (coupon || redeem || autoDropped) return;
-    let cancelled = false;
-    api
-      .availableCoupons(vendorId, subtotal.toFixed(2))
-      .then((found) => {
-        const auto = found.find((c) => c.automatic);
-        if (!cancelled && auto) setCoupon(auto);
-      })
-      // Silent: a discount nobody asked for failing to appear should not cost
-      // anybody the chance to order.
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [vendorId, subtotal, coupon, redeem, autoDropped]);
 
   const modes = useMemo(
     () =>
@@ -471,7 +466,7 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
     if (fulfilment === 'delivery' && !location)
       return 'Choose where you want your order delivered.';
     if (shortOfMinimum > 0) return 'This order is below the stall’s delivery minimum.';
-    if (!name.trim()) return 'Enter your name so the stall knows who to call for.';
+    if (!name.trim()) return 'Add your name so the stall knows who to call.';
     const phoneError = validateIndianMobile(phone);
     if (phoneError) return phoneError;
     return null;
@@ -645,6 +640,9 @@ export function CheckoutProvider({ children }: { children: ReactNode }) {
     clearCoupon,
     applied,
     payable,
+    promo,
+    couponCredit,
+    promoDropped,
     soldOut,
     soldOutKeys,
     dropSoldOut,

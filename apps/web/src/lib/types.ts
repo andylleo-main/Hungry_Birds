@@ -318,7 +318,9 @@ export interface CashbackEntry {
   kind: CashbackKind;
   /** Signed: a credit is positive, a redemption negative. */
   amount: string;
-  reason: 'earned' | 'redeemed' | 'returned';
+  reason: 'earned' | 'redeemed' | 'returned' | 'coupon';
+  /** The code a 'coupon' credit came from. */
+  coupon_code?: string | null;
   order_id: string | null;
   /** Null where the order has since been deleted; the money is still owed. */
   stall_name: string | null;

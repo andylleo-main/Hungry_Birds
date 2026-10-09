@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { rupees } from '../../lib/format';
+import { rupees, validateIndianMobile } from '../../lib/format';
 import { Icon, Spinner } from '../../components/ui';
 import { useCheckout } from '../../state/CheckoutContext';
 import { Obstacles, OrderLines, StallLine, Step, Totals } from './parts';
@@ -72,6 +72,8 @@ export default function Review() {
    * hostel and *then* told the order is too small to deliver has been led on,
    * so the minimum is asked about before the location.
    */
+  const needName = !name.trim();
+  const needPhone = validateIndianMobile(phone) !== null;
   const todo =
     soldOut.length > 0
       ? 'Remove the sold-out items'
@@ -81,7 +83,15 @@ export default function Review() {
           ? `Add ${rupees(shortOfMinimum)} to have this delivered`
           : fulfilment === 'delivery' && !location
             ? 'Choose where to deliver it'
-            : null;
+            : needName && needPhone
+              ? 'Add your name and phone number'
+              : needName
+                ? 'Add your name'
+                : needPhone
+                  ? phone.trim()
+                    ? 'Enter a valid 10-digit phone number'
+                    : 'Add your phone number'
+                  : null;
 
   const cannotContinue = todo !== null;
 
@@ -181,7 +191,8 @@ export default function Review() {
                 className="field"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="So the stall knows who to call"
+                placeholder="ADD YOUR NAME"
+                data-testid="checkout-name-input"
                 autoComplete="name"
               />
             </label>
@@ -191,7 +202,9 @@ export default function Review() {
                 className="field"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="98765 43210"
+                placeholder="**********"
+                maxLength={14}
+                data-testid="checkout-phone-input"
                 inputMode="tel"
                 autoComplete="tel"
               />
@@ -244,6 +257,7 @@ export default function Review() {
           className="btn-primary w-full"
           disabled={cannotContinue}
           onClick={onwards}
+          data-testid="checkout-continue-button"
         >
           {todo ?? (
             <>

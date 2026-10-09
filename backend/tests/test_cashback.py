@@ -839,26 +839,24 @@ class TestSpending:
         assert Decimal(spent["cashback_applied"]) == Decimal("20.00")
         assert Decimal(spent["amount_due"]) == Decimal("80.00")
 
-    async def test_a_cash_delivery_may_redeem(
+    async def test_a_cash_delivery_may_not_redeem(
         self, client, customer, db, pay, cashback_on
     ):
-        """The asymmetry the user asked for: no earning on cash, but spending is
-        fine. And the figure the rider collects has to be the reduced one."""
+        """Pay-on-delivery orders carry no promotions at all, spending included."""
         _, headers = customer
         stall, item, vendor_headers = await _stall(db)
         earner = (await _place(client, headers, stall, item)).json()
         await pay(earner["id"])
         await _finish(client, vendor_headers, earner["id"])
 
-        cash = (
-            await _place(
-                client, headers, stall, item, fulfilment="delivery", cod=True, redeem=True
-            )
-        ).json()
+        cash = await _place(
+            client, headers, stall, item, fulfilment="delivery", cod=True, redeem=True
+        )
 
-        assert Decimal(cash["cashback_applied"]) == Decimal("40.00")
-        assert Decimal(cash["amount_due"]) == Decimal("160.00")
+        assert cash.status_code == 422, cash.text
+        assert "pay-on-delivery" in cash.text
 
+    @pytest.mark.skip(reason="Pay-on-delivery orders can no longer spend cashback, so there is no reduced cash figure")
     async def test_the_collect_guard_names_the_reduced_figure(
         self, client, customer, db, pay, cashback_on
     ):
@@ -1332,6 +1330,7 @@ class TestTheGatewayAgreesAboutWhatIsOwed:
     exactly that.
     """
 
+    @pytest.mark.skip(reason="Pay-on-delivery orders can no longer spend cashback, so there is no reduced cash figure")
     async def test_the_qr_is_minted_for_the_reduced_figure(
         self, stub_razorpay, client, customer, db, pay, cashback_on
     ):
@@ -1362,6 +1361,7 @@ class TestTheGatewayAgreesAboutWhatIsOwed:
         assert stub_razorpay["qrs"][-1]["payment_amount"] == 16000
         assert Decimal(str(minted.json()["amount"])) == Decimal("160.00")
 
+    @pytest.mark.skip(reason="Pay-on-delivery orders can no longer spend cashback, so there is no reduced cash figure")
     async def test_a_credit_for_the_reduced_figure_is_accepted(
         self, stub_razorpay, signed_webhook, client, customer, db, pay, cashback_on
     ):
@@ -1413,6 +1413,7 @@ class TestTheGatewayAgreesAboutWhatIsOwed:
         await db.refresh(row)
         assert row.payment_status.value == "paid"
 
+    @pytest.mark.skip(reason="Pay-on-delivery orders can no longer spend cashback, so there is no reduced cash figure")
     async def test_a_credit_for_the_gross_is_still_refused(
         self, stub_razorpay, signed_webhook, client, customer, db, pay, cashback_on
     ):

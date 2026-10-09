@@ -39,6 +39,8 @@ class EntryOut(BaseModel):
     # order. Null where the order has since been deleted.
     stall_name: str | None
     order_number: str | None
+    # Set on a COUPON credit: the code whose value it is.
+    coupon_code: str | None = None
     expires_at: datetime | None
     created_at: datetime
 
@@ -83,3 +85,11 @@ class QuoteOut(BaseModel):
     # code on it. Decided by `would_earn`, the same predicate the completion path
     # uses, so this cannot promise money that never arrives.
     earning: Decimal
+
+
+class OrderCashbackOut(BaseModel):
+    """What one order credits, or will credit once it is completed."""
+
+    amount: Decimal
+    credited: bool
+    source: CashbackReason | None

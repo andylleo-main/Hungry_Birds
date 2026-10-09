@@ -109,6 +109,13 @@ class OrderCreate(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def no_promotions_on_cash(self) -> "OrderCreate":
+        """Pay-on-delivery orders carry no coupon and spend no cashback."""
+        if self.payment_method is PaymentMethod.COD and (self.coupon_code or self.redeem_cashback):
+            raise ValueError("No offers or cashback on pay-on-delivery orders")
+        return self
+
+    @model_validator(mode="after")
     def location_must_match_fulfilment(self) -> "OrderCreate":
         """A delivery needs somewhere to go; a dine-in must not name one.
 

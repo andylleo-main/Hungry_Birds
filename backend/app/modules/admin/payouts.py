@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.cashback import CashbackEntry, CashbackReason
 from app.db.models.order import Order
 from app.db.models.payment import PaymentStatus
 from app.db.models.vendor import Vendor
@@ -130,3 +131,92 @@ async def build_payouts(weeks: int, vendor_id: uuid.UUID | None, db: AsyncSessio
         )
         out.append(PayoutWeek(week_start=start, week_end=start + timedelta(days=6), stalls=stalls, totals=totals))
     return PayoutsOut(generated_at=now, weeks=out)
+
+
+class StallCashback(BaseModel):
+    vendor_id: uuid.UUID
+    stall_name: str
+    orders: int
+    earned: float
+    from_coupons: float
+    total: float
+
+
+class CashbackWeek(BaseModel):
+    week_start: date
+    week_end: date
+    stalls: list[StallCashback]
+    totals: StallCashback | None
+
+
+class CashbackReportOut(BaseModel):
+    generated_at: datetime
+    weeks: list[CashbackWeek]
+
+
+async def build_cashback_report(weeks: int, db: AsyncSession) -> CashbackReportOut:
+    """Cashback credited per stall per IST week, split earned vs from coupons.
+
+    A credit belongs to the week it landed in the wallet (order completion).
+    """
+    now = datetime.now(timezone.utc)
+    today = (now + IST_OFFSET).date()
+    this_monday = today - timedelta(days=today.weekday())
+    first_monday = this_monday - timedelta(weeks=weeks - 1)
+    since = datetime.combine(first_monday, datetime.min.time(), tzinfo=timezone.utc) - IST_OFFSET
+
+    week_col = func.date_trunc("week", func.timezone("Asia/Kolkata", CashbackEntry.created_at))
+    is_earned = CashbackEntry.reason == CashbackReason.EARNED
+    is_coupon = CashbackEntry.reason == CashbackReason.COUPON
+    rows = (
+        await db.execute(
+            select(
+                week_col.label("week"),
+                Vendor.id,
+                Vendor.stall_name,
+                func.count(func.distinct(CashbackEntry.order_id)).label("orders"),
+                func.coalesce(func.sum(CashbackEntry.amount).filter(is_earned), 0).label("earned"),
+                func.coalesce(func.sum(CashbackEntry.amount).filter(is_coupon), 0).label("coupons"),
+            )
+            .join(Order, Order.id == CashbackEntry.order_id)
+            .join(Vendor, Vendor.id == Order.vendor_id)
+            .where(
+                CashbackEntry.created_at >= since,
+                CashbackEntry.reason.in_([CashbackReason.EARNED, CashbackReason.COUPON]),
+            )
+            .group_by(week_col, Vendor.id, Vendor.stall_name)
+        )
+    ).all()
+
+    by_week: dict[date, list[StallCashback]] = {}
+    for r in rows:
+        earned, coupons = float(r.earned), float(r.coupons)
+        by_week.setdefault(r.week.date(), []).append(
+            StallCashback(
+                vendor_id=r.id,
+                stall_name=r.stall_name,
+                orders=r.orders,
+                earned=earned,
+                from_coupons=coupons,
+                total=round(earned + coupons, 2),
+            )
+        )
+
+    out = []
+    for offset in range(weeks):
+        start = this_monday - timedelta(weeks=offset)
+        stalls = sorted(by_week.get(start, []), key=lambda s: -s.total)
+        totals = (
+            StallCashback(
+                vendor_id=uuid.UUID(int=0),
+                stall_name="All stalls",
+                orders=sum(s.orders for s in stalls),
+                earned=round(sum(s.earned for s in stalls), 2),
+                from_coupons=round(sum(s.from_coupons for s in stalls), 2),
+                total=round(sum(s.total for s in stalls), 2),
+            )
+            if stalls
+            else None
+        )
+        out.append(CashbackWeek(week_start=start, week_end=start + timedelta(days=6), stalls=stalls, totals=totals))
+    return CashbackReportOut(generated_at=now, weeks=out)

@@ -92,15 +92,40 @@ export function OrderLines({ editable }: { editable: boolean }) {
 }
 
 /** Subtotal, the free-delivery line, any discount, and what is due. */
+/** The one line about money coming back, under the total. */
+export function PromoLine() {
+  const { cashAtTheDoor, promo, applied, coupon, couponCredit, quote } = useCheckout();
+  if (cashAtTheDoor) {
+    return (
+      <p className="flex items-center gap-space-xs rounded-md bg-surface-container px-space-sm py-space-xs text-label-md text-on-surface-variant" data-testid="promo-line-cod">
+        <Icon name="info" className="text-[16px]" /> No offers or cashback on pay-on-delivery orders
+      </p>
+    );
+  }
+  const text =
+    promo === 'cashback' && applied > 0
+      ? `You're saving ${rupees(applied)} with your cashback`
+      : promo === 'coupon' && coupon
+        ? `You'll get ${rupees(couponCredit)} cashback from coupon ${coupon.code} once this order is completed`
+        : promo === 'earn' && quote && Number(quote.earning) > 0
+          ? `You'll earn ${rupees(quote.earning)} cashback on this order`
+          : null;
+  if (!text) return null;
+  return (
+    <p className="flex items-start gap-space-xs rounded-md bg-success/10 px-space-sm py-space-xs text-label-md text-success" data-testid="promo-line">
+      <Icon name="redeem" className="mt-[1px] text-[16px]" /> {text}
+    </p>
+  );
+}
+
 export function Totals() {
-  const { subtotal, fulfilment, applied, payable, cashAtTheDoor, coupon } =
-    useCheckout();
+  const { subtotal, fulfilment, applied, payable, cashAtTheDoor } = useCheckout();
 
   return (
     <>
       <div className="flex flex-col gap-space-xs border-t border-outline-variant pt-space-sm text-body-sm">
         <div className="flex justify-between text-on-surface-variant">
-          <span>Item subtotal</span>
+          <span>Items</span>
           <span className="text-on-surface">{rupees(subtotal)}</span>
         </div>
         <div className="flex justify-between text-on-surface-variant">
@@ -115,9 +140,7 @@ export function Totals() {
         </div>
         {applied > 0 && (
           <div className="flex justify-between text-on-surface-variant">
-            {/* Named, because the two are mutually exclusive and a line reading
-                "Cashback" on an order discounted by a code is simply wrong. */}
-            <span>{coupon ? coupon.code : 'Cashback'}</span>
+            <span>Cashback used</span>
             <span className="text-success">−{rupees(applied)}</span>
           </div>
         )}
@@ -130,18 +153,9 @@ export function Totals() {
             {cashAtTheDoor ? 'Paid when it arrives' : 'Paid now, online'}
           </p>
         </div>
-        <div className="text-right">
-          <span className="block text-headline-lg text-primary">{rupees(payable)}</span>
-          {/* The discount said as a saving rather than only as a line item above.
-              The subtraction tells somebody reading carefully what came off;
-              this tells everybody else. */}
-          {applied > 0 && (
-            <span className="block text-label-md text-success">
-              You save {rupees(applied)}
-            </span>
-          )}
-        </div>
+        <span className="block text-headline-lg text-primary" data-testid="checkout-total-due">{rupees(payable)}</span>
       </div>
+      <PromoLine />
     </>
   );
 }

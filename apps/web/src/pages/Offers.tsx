@@ -104,7 +104,7 @@ function CouponTicket({ coupon }: { coupon: Coupon }) {
     <div className="flex animate-rise overflow-hidden rounded-lg border border-outline bg-white transition-shadow hover:shadow-card-hover" data-testid={`coupon-${coupon.code}`}>
       <div className="flex w-32 shrink-0 flex-col items-center justify-center gap-[2px] bg-primary px-space-sm py-space-md text-center text-white">
         <span className="font-display text-[26px] font-extrabold leading-none">{headline.split(' ')[0]}</span>
-        <span className="text-label-sm uppercase tracking-[0.14em]">off</span>
+        <span className="text-label-sm uppercase tracking-[0.14em]">back</span>
         {coupon.max_discount && coupon.discount_type === 'percent' && (
           <span className="mt-space-xs text-[11px] text-white/80">up to {rupees(coupon.max_discount)}</span>
         )}
@@ -116,7 +116,8 @@ function CouponTicket({ coupon }: { coupon: Coupon }) {
       <div className="flex min-w-0 flex-1 flex-col gap-space-sm p-space-md">
         <p className="text-body-sm text-on-surface-medium">
           {coupon.description ??
-            (coupon.automatic ? 'Comes off your order on its own at checkout.' : 'Enter this code at checkout.')}
+            (coupon.automatic ? 'Pick it at checkout under "Apply a coupon".' : 'Enter this code at checkout.')}{' '}
+          Its value comes back to you as cashback once the order is completed.
         </p>
         <p className="text-label-md text-on-surface-variant">
           {coupon.all_stalls ? 'Works at every stall' : `Only at ${listed(coupon.stall_names)}`}
@@ -125,7 +126,7 @@ function CouponTicket({ coupon }: { coupon: Coupon }) {
         <div className="mt-auto">
           {coupon.automatic ? (
             <span className="badge bg-success/10 text-success">
-              <Icon name="auto_awesome" className="text-[12px]" /> Applied for you
+              <Icon name="auto_awesome" className="text-[12px]" /> No code needed
             </span>
           ) : (
             <button
@@ -145,14 +146,16 @@ function CouponTicket({ coupon }: { coupon: Coupon }) {
   );
 }
 
-type HistoryFilter = 'all' | 'earned' | 'redeemed' | 'returned';
+type HistoryFilter = 'all' | 'earned' | 'coupon' | 'redeemed' | 'returned';
 
 function Movement({ entry }: { entry: CashbackEntry }) {
   const credit = Number(entry.amount) > 0;
   const label =
     entry.reason === 'earned'
       ? `Earned at ${entry.stall_name ?? 'a stall'}`
-      : entry.reason === 'returned'
+      : entry.reason === 'coupon'
+        ? `From coupon ${entry.coupon_code ?? ''} at ${entry.stall_name ?? 'a stall'}`
+        : entry.reason === 'returned'
         ? `Given back: ${entry.stall_name ?? 'the stall'} couldn't make your order`
         : `Spent at ${entry.stall_name ?? 'a stall'}`;
 
@@ -163,7 +166,7 @@ function Movement({ entry }: { entry: CashbackEntry }) {
           credit ? 'bg-success/10 text-success' : 'bg-surface-container text-on-surface-variant'
         }`}
       >
-        <Icon name={entry.reason === 'earned' ? 'south_west' : entry.reason === 'returned' ? 'undo' : 'north_east'} className="text-[20px]" />
+        <Icon name={entry.reason === 'earned' ? 'south_west' : entry.reason === 'coupon' ? 'sell' : entry.reason === 'returned' ? 'undo' : 'north_east'} className="text-[20px]" />
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-label-lg text-on-surface">{label}</p>
@@ -171,7 +174,7 @@ function Movement({ entry }: { entry: CashbackEntry }) {
           {on(entry.created_at)}
           {entry.order_number ? ` · #${entry.order_number}` : ''}
           {entry.kind === 'gourmet' ? ' · Gourmet wallet' : ' · Campus wallet'}
-          {entry.reason === 'earned' && entry.expires_at ? ` · expires ${on(entry.expires_at)}` : ''}
+          {(entry.reason === 'earned' || entry.reason === 'coupon') && entry.expires_at ? ` · expires ${on(entry.expires_at)}` : ''}
         </p>
       </div>
       <span className={`shrink-0 font-display text-headline-sm ${credit ? 'text-success' : 'text-on-surface'}`}>
@@ -184,7 +187,7 @@ function Movement({ entry }: { entry: CashbackEntry }) {
 
 function HowItWorks({ normal, gourmet, gourmetName, expiry }: { normal: number; gourmet: number; gourmetName: string; expiry: number }) {
   const steps = [
-    ['shopping_bag', 'Order and pay online', "Orders paid on delivery, or with a coupon code, don't earn cashback."],
+    ['shopping_bag', 'Order and pay online', 'No offers or cashback on pay-on-delivery orders.'],
     ['task_alt', 'Get your food', `Once the order is completed, ${normal}% comes back to you${gourmetName ? `, or ${gourmet}% at ${gourmetName}` : ''}.`],
     ['redeem', 'Spend it next time', `Use it on your next order before it expires in ${expiry} days.`],
   ];
@@ -285,7 +288,7 @@ export default function Offers() {
         <div className="mb-space-md flex items-end justify-between">
           <div>
             <h2 className="text-headline-md text-on-surface">Coupons</h2>
-            <p className="text-body-sm text-on-surface-variant">Tap a code to copy it, then paste it at checkout. You can use one coupon or your cashback per order, not both.</p>
+            <p className="text-body-sm text-on-surface-variant" data-testid="coupon-rule">Coupons come back to you as cashback. Pay full price, and once the order is completed the coupon's value lands in your wallet. One offer per order, and none on pay-on-delivery orders.</p>
           </div>
         </div>
         {coupons.length === 0 ? (
@@ -303,7 +306,7 @@ export default function Offers() {
         <div className="mb-space-md flex flex-wrap items-end justify-between gap-space-sm">
           <h2 className="text-headline-md text-on-surface">Cashback history</h2>
           <div className="flex flex-wrap gap-space-xs" role="group" aria-label="Filter history">
-            {(['all', 'earned', 'redeemed', 'returned'] as HistoryFilter[]).map((f) => (
+            {(['all', 'earned', 'coupon', 'redeemed', 'returned'] as HistoryFilter[]).map((f) => (
               <button
                 key={f}
                 type="button"
@@ -311,7 +314,7 @@ export default function Offers() {
                 onClick={() => setFilter(f)}
                 className={`pill ${filter === f ? 'pill-active' : ''}`}
               >
-                {{ all: 'All', earned: 'Earned', redeemed: 'Spent', returned: 'Given back' }[f]}
+                {{ all: 'All', earned: 'Earned', coupon: 'From coupons', redeemed: 'Spent', returned: 'Given back' }[f]}
               </button>
             ))}
           </div>

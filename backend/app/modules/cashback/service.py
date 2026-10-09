@@ -22,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.db.models.cashback import CashbackEntry, CashbackKind, CashbackReason
-from app.db.models.order import FulfilmentType, Order
+from app.db.models.coupon import CouponRedemption, RedemptionState
+from app.db.models.order import FulfilmentType, Order, OrderStatus
 from app.db.models.user import User
 from app.db.models.vendor import Vendor
 
@@ -511,7 +512,21 @@ async def credit_for_completed_order(
     """
     if not earns_cashback(order):
         return Decimal("0")
-    if await _already(order.id, CashbackReason.EARNED, db):
+
+    # A coupon on the order is its one promotion: its value lands here instead
+    # of the usual percentage. Returned uses (an admin handed it back) earn
+    # neither.
+    coupon_row = (
+        await db.execute(
+            select(CouponRedemption.discount, CouponRedemption.state).where(
+                CouponRedemption.order_id == order.id
+            )
+        )
+    ).first()
+    if coupon_row is not None and coupon_row.state is RedemptionState.RETURNED:
+        return Decimal("0")
+    reason = CashbackReason.COUPON if coupon_row is not None else CashbackReason.EARNED
+    if await _already(order.id, reason, db):
         return Decimal("0")
 
     vendor = await db.get(Vendor, order.vendor_id)
@@ -520,7 +535,11 @@ async def credit_for_completed_order(
 
     now = datetime.now(timezone.utc)
     kind = kind_for(vendor, settings)
-    amount = earned_on(Decimal(order.total_amount), rate_for(kind, settings, on=now))
+    amount = (
+        Decimal(coupon_row.discount)
+        if coupon_row is not None
+        else earned_on(Decimal(order.total_amount), rate_for(kind, settings, on=now))
+    )
     if amount <= 0:
         return Decimal("0")
 
@@ -531,7 +550,7 @@ async def credit_for_completed_order(
                     user_id=order.customer_id,
                     kind=kind,
                     amount=amount,
-                    reason=CashbackReason.EARNED,
+                    reason=reason,
                     order_id=order.id,
                     expires_at=_expiry_from(now, settings),
                     created_at=now,
@@ -602,3 +621,42 @@ async def return_redemption(order: Order, db: AsyncSession, settings: Settings) 
         return Decimal("0")
 
     return applied
+
+
+async def expected_for(
+    order: Order, db: AsyncSession, settings: Settings
+) -> tuple[Decimal, bool, CashbackReason | None]:
+    """(amount, already credited, source) for one order - the tracking page's promise."""
+    row = (
+        await db.execute(
+            select(CashbackEntry.amount, CashbackEntry.reason).where(
+                CashbackEntry.order_id == order.id,
+                CashbackEntry.reason.in_([CashbackReason.EARNED, CashbackReason.COUPON]),
+            )
+        )
+    ).first()
+    if row is not None:
+        return Decimal(row.amount), True, row.reason
+    if order.status in (OrderStatus.COMPLETED, OrderStatus.REJECTED, OrderStatus.CANCELLED):
+        return Decimal("0"), False, None
+    if not earns_cashback(order):
+        return Decimal("0"), False, None
+
+    coupon_row = (
+        await db.execute(
+            select(CouponRedemption.discount, CouponRedemption.state).where(
+                CouponRedemption.order_id == order.id
+            )
+        )
+    ).first()
+    if coupon_row is not None:
+        if coupon_row.state is RedemptionState.RETURNED:
+            return Decimal("0"), False, None
+        return Decimal(coupon_row.discount), False, CashbackReason.COUPON
+
+    vendor = await db.get(Vendor, order.vendor_id)
+    if vendor is None:
+        return Decimal("0"), False, None
+    rate = rate_for(kind_for(vendor, settings), settings)
+    amount = earned_on(Decimal(order.total_amount), rate)
+    return amount, False, CashbackReason.EARNED if amount > 0 else None

@@ -66,6 +66,8 @@ class CashbackReason(StrEnum):
     EARNED = "earned"
     REDEEMED = "redeemed"
     RETURNED = "returned"
+    # A coupon's value, credited on completion instead of taken off the price.
+    COUPON = "coupon"
 
 
 CashbackReasonType = Enum(
@@ -136,7 +138,9 @@ class CashbackEntry(UUIDPrimaryKeyMixin, Base):
             "order_id",
             "reason",
             unique=True,
-            postgresql_where=text("order_id IS NOT NULL AND reason IN ('earned', 'returned')"),
+            postgresql_where=text(
+                "order_id IS NOT NULL AND reason IN ('earned', 'returned', 'coupon')"
+            ),
         ),
         # The balance walk always asks for one user's rows in order. Without
         # this it is a sequential scan of everybody's ledger on every checkout.

@@ -13,7 +13,12 @@ from app.db.models.user import UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
 from app.modules.admin.analytics import AnalyticsOut, build_analytics
-from app.modules.admin.payouts import PayoutsOut, build_payouts
+from app.modules.admin.payouts import (
+    CashbackReportOut,
+    PayoutsOut,
+    build_cashback_report,
+    build_payouts,
+)
 from app.modules.orders.schemas import OrderOut
 from app.modules.orders.service import order_query
 from app.modules.vendors.analytics import VendorAnalyticsOut, build_vendor_analytics
@@ -161,3 +166,16 @@ async def weekly_payouts(
 ) -> PayoutsOut:
     """Weekly settlement per stall: prepaid via Razorpay next to cash in hand."""
     return await build_payouts(weeks, vendor_id, db)
+
+
+@analytics_router.get(
+    "/cashback-report",
+    response_model=CashbackReportOut,
+    dependencies=[Depends(limit_by_user("admin_read", *limits.ADMIN_READ))],
+)
+async def cashback_report(
+    weeks: int = Query(8, ge=1, le=26),
+    db: AsyncSession = Depends(get_db),
+) -> CashbackReportOut:
+    """Cashback given out per stall per week: earned vs from coupons."""
+    return await build_cashback_report(weeks, db)

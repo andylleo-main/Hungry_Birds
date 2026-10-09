@@ -19,14 +19,21 @@ from app.core import limits
 from app.core.config import Settings, get_settings
 from app.core.deps import ORDERING_ROLES, require_role
 from app.core.ratelimit import limit_by_user
-from app.db.models.cashback import CashbackKind
+from app.db.models.cashback import CashbackKind, CashbackReason
+from app.db.models.coupon import Coupon, CouponRedemption
 from app.db.models.order import FulfilmentType, Order
 from app.db.models.user import User
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
 from app.modules.cashback import service
 from app.modules.orders.schemas import PaymentMethod
-from app.modules.cashback.schemas import CashbackOut, EntryOut, QuoteOut, WalletOut
+from app.modules.cashback.schemas import (
+    CashbackOut,
+    EntryOut,
+    OrderCashbackOut,
+    QuoteOut,
+    WalletOut,
+)
 
 # How many movements the offers page gets. Enough to account for a balance
 # several times over, bounded so the response stops growing with the account.
@@ -80,6 +87,16 @@ async def my_cashback(
         )
         named = {row.id: (row.order_number, row.stall_name) for row in rows}
 
+    coupon_orders = {e.order_id for e in shown if e.reason is CashbackReason.COUPON and e.order_id}
+    codes: dict[uuid.UUID, str] = {}
+    if coupon_orders:
+        code_rows = await db.execute(
+            select(CouponRedemption.order_id, Coupon.code)
+            .join(Coupon, Coupon.id == CouponRedemption.coupon_id)
+            .where(CouponRedemption.order_id.in_(coupon_orders))
+        )
+        codes = {r.order_id: r.code for r in code_rows}
+
     wallets = [
         WalletOut(
             kind=kind,
@@ -102,6 +119,7 @@ async def my_cashback(
                 order_id=e.order_id,
                 stall_name=named[e.order_id][1] if e.order_id in named else None,
                 order_number=named[e.order_id][0] if e.order_id in named else None,
+                coupon_code=codes.get(e.order_id) if e.order_id else None,
                 expires_at=e.expires_at,
                 created_at=e.created_at,
             )
@@ -181,3 +199,22 @@ async def quote(
         percent=rate.percent,
         earning=earning,
     )
+
+
+@router.get(
+    "/orders/{order_id}",
+    response_model=OrderCashbackOut,
+    dependencies=[Depends(limit_by_user("cashback_read", *limits.CASHBACK_READ))],
+)
+async def order_cashback(
+    order_id: uuid.UUID,
+    user: User = Depends(require_role(*ORDERING_ROLES)),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> OrderCashbackOut:
+    """What this order credits once completed, or has already credited."""
+    order = await db.get(Order, order_id)
+    if order is None or order.customer_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    amount, credited, source = await service.expected_for(order, db, settings)
+    return OrderCashbackOut(amount=amount, credited=credited, source=source)

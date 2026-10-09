@@ -221,7 +221,7 @@ export default function Login() {
                   autoFocus
                   autoComplete="email"
                   data-testid="login-email-input"
-                  placeholder={`yourname@${ALLOWED_DOMAIN}`}
+                  placeholder={`yourrollnumber@${ALLOWED_DOMAIN}`}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                 />
