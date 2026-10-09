@@ -117,7 +117,7 @@ export default function Payment() {
             offersCashback ? ' Saving instead would drop the code.' : ''
           }`
         : cashAtTheDoor
-          ? "Orders paid at the door don't earn cashback."
+          ? "Orders paid on delivery don't earn cashback."
           : null;
 
   // Reached directly - a refresh, or a pasted link. The cart survives in
@@ -143,7 +143,7 @@ export default function Payment() {
           <OrderLines editable={false} />
         </section>
 
-        <Step index={1} title="Have a code?">
+        <Step index={1} title="Got a coupon?">
           {coupon ? (
             <div className="flex flex-wrap items-center gap-space-md rounded-lg border-[1.5px] border-primary bg-primary-tint/40 p-space-md">
               <Icon name="sell" className="text-[22px] text-primary" />
@@ -193,7 +193,7 @@ export default function Payment() {
           {/* Said before they try both, not after the server refuses it. */}
           {offersCashback && (
             <p className="mt-space-sm text-label-md text-on-surface-variant">
-              A code or your cashback — one per order, whichever is worth more.
+              You can use a coupon or your cashback on an order, not both. Pick whichever saves you more.
             </p>
           )}
         </Step>
@@ -298,13 +298,13 @@ export default function Payment() {
                 {
                   later: false,
                   label: 'Pay now',
-                  blurb: 'Card, UPI or netbanking',
+                  blurb: 'UPI, card or net banking',
                   icon: 'credit_card',
                 },
                 {
                   later: true,
                   label: 'Pay on delivery',
-                  blurb: 'Cash or UPI when it arrives',
+                  blurb: 'Pay cash or UPI when it reaches you',
                   icon: 'payments',
                 },
               ] as const).map((option) => {

@@ -103,11 +103,11 @@ export default function Review() {
           </div>
           <OrderLines editable />
           <p className="mt-space-sm text-label-md text-on-surface-variant">
-            Change a quantity to nothing to drop a dish.
+            Set a quantity to zero to remove a dish.
           </p>
         </Step>
 
-        <Step index={2} title="How you'll get it">
+        <Step index={2} title="Dine in or delivery?">
           {modes.length === 0 ? (
             <p className="rounded bg-primary-tint px-space-sm py-space-sm text-body-sm text-primary">
               This stall isn&apos;t taking orders right now.
@@ -173,7 +173,7 @@ export default function Review() {
           )}
         </Step>
 
-        <Step index={3} title="How the stall reaches you">
+        <Step index={3} title="Your contact details">
           <div className="grid gap-space-md sm:grid-cols-2">
             <label className="flex flex-col gap-space-xs">
               <span className="text-label-md text-on-surface-medium">Your name</span>
@@ -181,7 +181,7 @@ export default function Review() {
                 className="field"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="So they know who to call for"
+                placeholder="So the stall knows who to call"
                 autoComplete="name"
               />
             </label>
@@ -200,14 +200,14 @@ export default function Review() {
           <p className="mt-space-sm flex items-center gap-space-xs text-body-sm text-on-surface-variant">
             <Icon name="call" className="text-[16px] text-primary" />
             {fulfilment === null
-              ? 'The stall uses this to reach you about your order.'
+              ? 'The stall calls this number if there is a problem with your order.'
               : fulfilment === 'delivery'
                 ? 'Shared with whoever brings your order, so they can reach you.'
-                : 'The stall calls this number when your order is ready.'}
+                : 'The stall calls this number when your food is ready.'}
           </p>
         </Step>
 
-        <Step index={4} title="Anything to tell the stall?">
+        <Step index={4} title="A note for the kitchen">
           <textarea
             className="min-h-[88px] w-full rounded bg-surface-container px-space-md py-space-sm text-body-md text-on-surface placeholder:text-on-surface-variant focus:bg-surface-container-lowest focus:outline-none focus:ring-[1.5px] focus:ring-primary"
             placeholder="Less spicy, no onion, extra chutney..."
@@ -247,14 +247,14 @@ export default function Review() {
         >
           {todo ?? (
             <>
-              Continue to payment
+              Continue to pay
               <Icon name="arrow_forward" className="text-[18px]" />
             </>
           )}
         </button>
 
         <p className="text-center text-label-md text-on-surface-variant">
-          Nothing is charged until the next step.
+          You won't be charged until the next step.
         </p>
       </aside>
     </div>

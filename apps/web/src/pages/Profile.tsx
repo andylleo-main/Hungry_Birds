@@ -47,7 +47,7 @@ function SignedInDevices() {
     try {
       setSessions(await api.listSessions());
     } catch {
-      setError("Couldn't load your devices.");
+      setError("We couldn't load your devices.");
     }
   }
 
@@ -61,7 +61,7 @@ function SignedInDevices() {
       await api.endSession(id);
       setSessions((current) => (current ?? []).filter((s) => s.id !== id));
     } catch {
-      setError("Couldn't sign that device out.");
+      setError("We couldn't sign that device out.");
     } finally {
       setBusyId(null);
     }
@@ -140,7 +140,7 @@ export default function Profile() {
       await updateProfile({ full_name: name.trim(), phone: phone.trim() });
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save. Try again.');
+      setError(err instanceof ApiError ? err.message : "We couldn't save that. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -168,8 +168,8 @@ export default function Profile() {
       <form onSubmit={save} className="card flex flex-col gap-space-md p-space-md md:p-space-lg">
         <h2 className="text-headline-sm text-on-surface">Contact details</h2>
         <p className="-mt-space-sm text-body-sm text-on-surface-variant">
-          Stalls use these to reach you about a ready order. A phone number is required before you
-          can place one.
+          Stalls use these to reach you about your order. You'll need a phone number before you
+          can order.
         </p>
 
         <label className="flex flex-col gap-space-xs">
@@ -178,7 +178,7 @@ export default function Profile() {
             className="field"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="So they know who to call for"
+            placeholder="So the stall knows who to call"
             autoComplete="name"
           />
         </label>
@@ -204,11 +204,11 @@ export default function Profile() {
         {saved && !error && (
           <p className="flex items-center gap-space-xs text-body-sm text-success">
             <Icon name="check_circle" className="text-[18px]" />
-            Saved.
+            All saved.
           </p>
         )}
 
-        <button type="submit" className="btn-primary w-full sm:w-fit" disabled={busy}>
+        <button type="submit" className="btn-primary w-full sm:w-fit" disabled={busy} data-testid="profile-save-button">
           {busy ? <Spinner /> : 'Save changes'}
         </button>
       </form>
@@ -216,8 +216,8 @@ export default function Profile() {
       <div className="card mt-space-md flex items-center gap-space-md p-space-md">
         <Icon name="lock" className="text-[24px] text-primary" />
         <p className="text-body-sm text-on-surface-variant">
-          Orders are paid online through Razorpay. We never see or store your card
-          details, and a stall that declines your order refunds it automatically.
+          Online payments go through Razorpay, so we never see or store your card details. If a
+          stall can't take your order, you get your money back automatically.
         </p>
       </div>
 
@@ -225,16 +225,15 @@ export default function Profile() {
         <div className="flex flex-col gap-1">
           <h2 className="text-title-md text-on-surface">Where you're signed in</h2>
           <p className="text-body-sm text-on-surface-variant">
-            Signing a device out here ends its session immediately, even if someone
-            else has it.
+            Signing a device out here logs it out straight away, even if it's not yours anymore.
           </p>
         </div>
         <SignedInDevices />
       </section>
 
-      <button type="button" onClick={() => void signOut()} className="btn-secondary mt-space-lg w-full sm:w-fit">
+      <button type="button" onClick={() => void signOut()} className="btn-secondary mt-space-lg w-full sm:w-fit" data-testid="profile-signout-button">
         <Icon name="logout" className="text-[18px]" />
-        Log out
+        Sign out
       </button>
     </div>
   );

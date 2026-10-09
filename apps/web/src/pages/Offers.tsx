@@ -1,137 +1,151 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError, api } from '../lib/api';
 import { rupees } from '../lib/format';
+import { useCashbackConfig } from '../lib/cashback';
 import { EmptyState, ErrorRetry, Icon, PageLoader } from '../components/ui';
-import type {
-  CashbackEntry,
-  CashbackSummary,
-  CashbackWallet,
-  Coupon,
-} from '../lib/types';
+import type { CashbackEntry, CashbackSummary, CashbackWallet, Coupon } from '../lib/types';
 
-/** A date a student can act on, rather than a timestamp. */
 function on(iso: string) {
-  return new Date(iso).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-  });
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 }
 
 function daysUntil(iso: string) {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
 }
 
-/** "A", "A and B", "A, B and C" — a list a person would read aloud. */
+/** "A", "A and B", "A, B and C". */
 function listed(names: string[]): string {
   if (names.length <= 1) return names[0] ?? 'no stalls';
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
-function Wallet({ wallet }: { wallet: CashbackWallet }) {
+function Wallet({ wallet, gourmetName }: { wallet: CashbackWallet; gourmetName: string }) {
   const gourmet = wallet.kind === 'gourmet';
   const balance = Number(wallet.balance);
   const soon = wallet.expires_next ? daysUntil(wallet.expires_next) : null;
+  const where = gourmet ? gourmetName || 'the Gourmet stall' : 'any other campus stall';
 
   return (
-    <div className="card flex flex-col gap-space-sm p-space-md md:p-space-lg">
-      <div className="flex items-center gap-space-sm">
-        <span
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
-            gourmet ? 'bg-warning/15' : 'bg-primary-tint'
-          }`}
-        >
-          <Icon
-            name={gourmet ? 'restaurant' : 'storefront'}
-            className={`text-[20px] ${gourmet ? 'text-warning' : 'text-primary'}`}
-          />
+    <div
+      data-testid={`wallet-${wallet.kind}`}
+      className={`relative flex animate-rise flex-col gap-space-md overflow-hidden rounded-xl p-space-lg text-white ${
+        gourmet ? 'bg-on-surface' : 'bg-primary'
+      }`}
+    >
+      <div aria-hidden className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full border-[18px] border-white/10" />
+      <div className="relative flex items-center justify-between gap-space-sm">
+        <span className="text-label-sm uppercase tracking-[0.14em] text-white/75">
+          {gourmet ? 'Gourmet wallet' : 'Campus wallet'}
         </span>
-        <div className="min-w-0">
-          <p className="text-label-lg text-on-surface">
-            {gourmet ? 'Gourmet Kitchen cashback' : 'Campus stalls cashback'}
-          </p>
-          <p className="text-body-sm text-on-surface-variant">
-            {wallet.percent}% back, up to {rupees(wallet.cap)} an order
-          </p>
-        </div>
+        <span className="rounded-full bg-white/15 px-space-sm py-[3px] text-label-sm">
+          {wallet.percent}% back · up to {rupees(wallet.cap)}
+        </span>
       </div>
 
-      <p className="text-headline-lg text-on-surface">{rupees(wallet.balance)}</p>
-
-      {/* The rule that catches people out, said on the card rather than in a
-          footnote: the two balances are not interchangeable. */}
-      <p className="text-body-sm text-on-surface-variant">
-        {balance > 0
-          ? gourmet
-            ? 'Spend it at Gourmet Kitchen — up to 60% of your cart there.'
-            : 'Spend it at any other stall — up to 20% of your cart.'
-          : gourmet
-            ? 'Order from Gourmet Kitchen to start earning here.'
-            : 'Order from any campus stall to start earning here.'}
-      </p>
-
-      {balance > 0 && wallet.expires_next && (
-        <p
-          className={`flex items-center gap-space-xs text-label-md ${
-            soon !== null && soon <= 7 ? 'text-warning' : 'text-on-surface-variant'
-          }`}
-        >
-          <Icon name="schedule" className="text-[16px]" />
-          {soon !== null && soon <= 0
-            ? 'Expiring today'
-            : `Expires from ${on(wallet.expires_next)}`}
+      <div className="relative">
+        <p className="font-display text-[52px] font-extrabold leading-none tracking-tight" data-testid={`wallet-${wallet.kind}-balance`}>
+          {rupees(wallet.balance)}
         </p>
-      )}
-    </div>
-  );
-}
-
-function CouponCard({ coupon }: { coupon: Coupon }) {
-  const off =
-    coupon.discount_type === 'percent'
-      ? `${Number(coupon.discount_value)}% off` +
-        (coupon.max_discount ? ` up to ${rupees(coupon.max_discount)}` : '')
-      : `${rupees(coupon.discount_value)} off`;
-
-  return (
-    <div className="card flex flex-col gap-space-sm p-space-md">
-      <div className="flex items-center gap-space-sm">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-tint">
-          <Icon name="sell" className="text-[20px] text-primary" />
-        </span>
-        <div className="min-w-0">
-          {/* An automatic code has nothing to type, so showing one would be
-              telling somebody to do something that is already done. */}
-          <p className="truncate text-label-lg text-on-surface">
-            {coupon.automatic ? (
-              'Applied automatically'
-            ) : (
-              <span className="font-mono">{coupon.code}</span>
-            )}
-          </p>
-          <p className="text-body-sm text-on-surface-variant">{off}</p>
-        </div>
+        <p className="mt-space-xs text-body-sm text-white/80">
+          {balance > 0
+            ? `Use it at ${where}. It can cover up to ${wallet.percent}% of your cart there.`
+            : `Order from ${where} to start filling this wallet.`}
+        </p>
       </div>
 
-      <p className="text-body-sm text-on-surface-variant">
-        {coupon.description ??
-          (coupon.automatic
-            ? 'Comes off your order without being typed.'
-            : 'Type it at checkout to use it.')}
-      </p>
-
-      <p className="text-label-md text-on-surface-variant">
-        {/* Named in full rather than counted. A student deciding where to eat
-            needs to know which kitchens, and a card has the room a one-line
-            admin row does not. */}
-        {coupon.all_stalls ? 'At any stall' : `At ${listed(coupon.stall_names)}`}
-        {Number(coupon.min_order_value) > 0
-          ? ` · orders over ${rupees(coupon.min_order_value)}`
-          : ''}
-      </p>
+      <div className="relative flex flex-wrap items-center justify-between gap-space-sm border-t border-white/15 pt-space-md">
+        {balance > 0 && wallet.expires_next ? (
+          <span
+            className={`flex items-center gap-space-xs text-label-md ${
+              soon !== null && soon <= 7 ? 'text-[#FFD7A8]' : 'text-white/80'
+            }`}
+          >
+            <Icon name="schedule" className="text-[16px]" />
+            {soon !== null && soon <= 0
+              ? 'Some of it expires today'
+              : soon !== null && soon <= 7
+                ? `Some of it expires in ${soon} ${soon === 1 ? 'day' : 'days'}`
+                : `Next expiry ${on(wallet.expires_next)}`}
+          </span>
+        ) : (
+          <span className="text-label-md text-white/70">Nothing expiring</span>
+        )}
+        <Link
+          to="/"
+          data-testid={`wallet-${wallet.kind}-spend`}
+          className="inline-flex h-9 items-center gap-space-xs rounded-full bg-white px-space-md text-label-md text-on-surface transition-transform hover:scale-105"
+        >
+          {balance > 0 ? 'Spend it' : 'Order now'} <Icon name="arrow_forward" className="text-[16px]" />
+        </Link>
+      </div>
     </div>
   );
 }
+
+function CouponTicket({ coupon }: { coupon: Coupon }) {
+  const [copied, setCopied] = useState(false);
+  const headline =
+    coupon.discount_type === 'percent'
+      ? `${Number(coupon.discount_value)}% OFF`
+      : `${rupees(coupon.discount_value)} OFF`;
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(coupon.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="flex animate-rise overflow-hidden rounded-lg border border-outline bg-white transition-shadow hover:shadow-card-hover" data-testid={`coupon-${coupon.code}`}>
+      <div className="flex w-32 shrink-0 flex-col items-center justify-center gap-[2px] bg-primary px-space-sm py-space-md text-center text-white">
+        <span className="font-display text-[26px] font-extrabold leading-none">{headline.split(' ')[0]}</span>
+        <span className="text-label-sm uppercase tracking-[0.14em]">off</span>
+        {coupon.max_discount && coupon.discount_type === 'percent' && (
+          <span className="mt-space-xs text-[11px] text-white/80">up to {rupees(coupon.max_discount)}</span>
+        )}
+      </div>
+      <div className="relative w-0 border-l-2 border-dashed border-outline" aria-hidden>
+        <span className="absolute -left-[9px] -top-[9px] h-4 w-4 rounded-full border border-outline bg-surface" />
+        <span className="absolute -bottom-[9px] -left-[9px] h-4 w-4 rounded-full border border-outline bg-surface" />
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-space-sm p-space-md">
+        <p className="text-body-sm text-on-surface-medium">
+          {coupon.description ??
+            (coupon.automatic ? 'Comes off your order on its own at checkout.' : 'Enter this code at checkout.')}
+        </p>
+        <p className="text-label-md text-on-surface-variant">
+          {coupon.all_stalls ? 'Works at every stall' : `Only at ${listed(coupon.stall_names)}`}
+          {Number(coupon.min_order_value) > 0 ? ` · on orders above ${rupees(coupon.min_order_value)}` : ''}
+        </p>
+        <div className="mt-auto">
+          {coupon.automatic ? (
+            <span className="badge bg-success/10 text-success">
+              <Icon name="auto_awesome" className="text-[12px]" /> Applied for you
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void copy()}
+              data-testid={`coupon-copy-${coupon.code}`}
+              className="inline-flex h-9 items-center gap-space-sm rounded-full border-2 border-dashed border-primary/40 px-space-md font-mono text-label-lg tracking-[0.08em] text-primary transition-colors hover:bg-primary-tint"
+            >
+              {coupon.code}
+              <Icon name={copied ? 'check' : 'content_copy'} className="text-[16px]" />
+              <span className="sr-only">{copied ? 'Copied' : 'Copy code'}</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type HistoryFilter = 'all' | 'earned' | 'redeemed' | 'returned';
 
 function Movement({ entry }: { entry: CashbackEntry }) {
   const credit = Number(entry.amount) > 0;
@@ -139,26 +153,28 @@ function Movement({ entry }: { entry: CashbackEntry }) {
     entry.reason === 'earned'
       ? `Earned at ${entry.stall_name ?? 'a stall'}`
       : entry.reason === 'returned'
-        ? `Returned — ${entry.stall_name ?? 'the stall'} couldn't make your order`
-        : `Used at ${entry.stall_name ?? 'a stall'}`;
+        ? `Given back: ${entry.stall_name ?? 'the stall'} couldn't make your order`
+        : `Spent at ${entry.stall_name ?? 'a stall'}`;
 
   return (
-    <div className="flex items-center gap-space-md border-b border-outline-variant py-space-sm last:border-0">
-      <Icon
-        name={credit ? 'add_circle' : 'remove_circle'}
-        className={`text-[20px] ${credit ? 'text-success' : 'text-on-surface-variant'}`}
-      />
+    <div className="flex items-center gap-space-md border-b border-outline-variant py-space-md last:border-0" data-testid="cashback-entry">
+      <span
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${
+          credit ? 'bg-success/10 text-success' : 'bg-surface-container text-on-surface-variant'
+        }`}
+      >
+        <Icon name={entry.reason === 'earned' ? 'south_west' : entry.reason === 'returned' ? 'undo' : 'north_east'} className="text-[20px]" />
+      </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-body-md text-on-surface">{label}</p>
-        <p className="text-label-md text-on-surface-variant">
+        <p className="truncate text-label-lg text-on-surface">{label}</p>
+        <p className="text-body-sm text-on-surface-variant">
           {on(entry.created_at)}
-          {entry.order_number ? ` · ${entry.order_number}` : ''}
-          {entry.kind === 'gourmet' ? ' · Gourmet' : ''}
+          {entry.order_number ? ` · #${entry.order_number}` : ''}
+          {entry.kind === 'gourmet' ? ' · Gourmet wallet' : ' · Campus wallet'}
+          {entry.reason === 'earned' && entry.expires_at ? ` · expires ${on(entry.expires_at)}` : ''}
         </p>
       </div>
-      <span
-        className={`shrink-0 text-label-lg ${credit ? 'text-success' : 'text-on-surface'}`}
-      >
+      <span className={`shrink-0 font-display text-headline-sm ${credit ? 'text-success' : 'text-on-surface'}`}>
         {credit ? '+' : '−'}
         {rupees(Math.abs(Number(entry.amount)))}
       </span>
@@ -166,30 +182,42 @@ function Movement({ entry }: { entry: CashbackEntry }) {
   );
 }
 
-/**
- * What a student has to spend, and where it came from.
- *
- * The movements are shown alongside the balances rather than hidden behind
- * another tap, because a balance somebody cannot account for is the thing that
- * generates support messages - and because cashback that expires needs to be
- * explainable before it goes rather than afterwards.
- *
- * Coupons join this page once their design arrives.
- */
+function HowItWorks({ normal, gourmet, gourmetName, expiry }: { normal: number; gourmet: number; gourmetName: string; expiry: number }) {
+  const steps = [
+    ['shopping_bag', 'Order and pay online', "Orders paid on delivery, or with a coupon code, don't earn cashback."],
+    ['task_alt', 'Get your food', `Once the order is completed, ${normal}% comes back to you${gourmetName ? `, or ${gourmet}% at ${gourmetName}` : ''}.`],
+    ['redeem', 'Spend it next time', `Use it on your next order before it expires in ${expiry} days.`],
+  ];
+  return (
+    <section className="mb-space-xl grid gap-space-md md:grid-cols-3" data-testid="cashback-how-it-works">
+      {steps.map(([icon, title, body], i) => (
+        <div key={title} className="flex gap-space-md rounded-lg border border-outline bg-surface-container/50 p-space-md">
+          <span className="font-display text-[32px] font-extrabold leading-none text-primary/25">0{i + 1}</span>
+          <div className="flex flex-col gap-[2px]">
+            <span className="flex items-center gap-space-xs text-label-lg text-on-surface">
+              <Icon name={icon} className="text-[18px] text-primary" /> {title}
+            </span>
+            <span className="text-body-sm text-on-surface-variant">{body}</span>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export default function Offers() {
+  const config = useCashbackConfig();
   const [summary, setSummary] = useState<CashbackSummary | null>(null);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<HistoryFilter>('all');
 
   async function load() {
     setError(null);
     try {
       const [balances, codes] = await Promise.all([
         api.cashback(),
-        // Without a stall, so only the site-wide ones: a code pinned to one
-        // stall cannot be judged without knowing the cart it would apply to.
-        // Subtotal 0 for the same reason - this is a list of what exists, not a
-        // quote against a basket that has not been built yet.
+        // No stall and a zero subtotal: this lists what exists, not a quote.
         api.availableCoupons(null, '0').catch(() => []),
       ]);
       setSummary(balances);
@@ -199,7 +227,7 @@ export default function Offers() {
       setError(
         e instanceof ApiError && e.status === 401
           ? 'Sign in to see your cashback.'
-          : "Couldn't load your offers.",
+          : "We couldn't load your offers. Please try again.",
       );
     }
   }
@@ -208,83 +236,105 @@ export default function Offers() {
     void load();
   }, []);
 
-  if (error) return <ErrorRetry message={error} onRetry={load} />;
+  const entries = useMemo(
+    () => (summary?.entries ?? []).filter((e) => filter === 'all' || e.reason === filter),
+    [summary, filter],
+  );
+
+  if (error) return <div className="page"><ErrorRetry message={error} onRetry={load} /></div>;
   if (!summary) return <PageLoader />;
 
-  const anything = summary.wallets.some((w) => Number(w.balance) > 0);
+  const total = summary.wallets.reduce((sum, w) => sum + Number(w.balance), 0);
 
   return (
-    <div className="mx-auto max-w-content px-margin-mobile py-space-lg md:px-margin md:py-space-xl">
-      <div className="mb-space-lg flex flex-wrap items-end justify-between gap-space-md">
-        <div>
-          <h1 className="text-headline-lg text-on-surface">Offers</h1>
-          <p className="text-body-md text-on-surface-variant">
-            Cashback you have earned, and what it is worth where.
+    <div className="page" data-testid="offers-page">
+      <div className="mb-space-xl flex flex-wrap items-end justify-between gap-space-lg">
+        <div className="animate-rise">
+          <span className="eyebrow"><Icon name="redeem" className="text-[16px]" /> Offers & cashback</span>
+          <h1 className="mt-space-xs text-headline-lg text-on-surface md:text-[44px] md:leading-[48px]">
+            You have <span className="text-primary" data-testid="offers-total-balance">{rupees(total)}</span> to spend
+          </h1>
+          <p className="mt-space-xs max-w-xl text-body-md text-on-surface-variant">
+            Your cashback, the coupons you can use right now, and a record of every rupee in and out.
           </p>
         </div>
-
-        {/* Only once there is something to report. "You have saved ₹0" is a
-            worse greeting than none, and the empty-wallet card below already
-            explains how any of this starts.
-
-            Named as cashback rather than as savings on purpose: coupon
-            discounts are not in this figure. */}
         {Number(summary.saved_so_far) > 0 && (
-          <div className="text-right">
-            <p className="text-headline-lg text-success">
-              {rupees(summary.saved_so_far)}
-            </p>
-            <p className="text-label-md text-on-surface-variant">
-              saved with cashback so far
-            </p>
+          <div className="rounded-lg border border-success/20 bg-success/5 px-space-lg py-space-md text-right" data-testid="offers-saved-so-far">
+            <p className="font-display text-headline-lg text-success">{rupees(summary.saved_so_far)}</p>
+            <p className="text-label-md text-on-surface-variant">saved with cashback so far</p>
           </div>
         )}
       </div>
 
-      <div className="mb-space-lg grid gap-space-md md:grid-cols-2">
+      <div className="mb-space-lg grid gap-gutter md:grid-cols-2">
         {summary.wallets.map((wallet) => (
-          <Wallet key={wallet.kind} wallet={wallet} />
+          <Wallet key={wallet.kind} wallet={wallet} gourmetName={config?.gourmet_stall_name ?? ''} />
         ))}
       </div>
 
-      {!anything && (
-        <div className="mb-space-lg card flex flex-wrap items-center gap-space-md p-space-md">
-          <Icon name="lightbulb" className="text-[22px] text-primary" />
-          <p className="min-w-0 flex-1 text-body-md text-on-surface-variant">
-            Cashback lands when your order is completed, and it is yours to spend on
-            the next one.
-          </p>
-          <Link to="/" className="btn-primary h-10">
-            Find something to eat
-          </Link>
-        </div>
+      {config && (
+        <HowItWorks
+          normal={config.normal_percent}
+          gourmet={config.gourmet_percent}
+          gourmetName={config.gourmet_stall_name}
+          expiry={config.expiry_days}
+        />
       )}
 
-      {coupons.length > 0 && (
-        <>
-          <h2 className="mb-space-sm text-headline-sm text-on-surface">Coupons</h2>
-          <div className="mb-space-lg grid gap-space-md md:grid-cols-2">
+      <section className="mb-space-xl">
+        <div className="mb-space-md flex items-end justify-between">
+          <div>
+            <h2 className="text-headline-md text-on-surface">Coupons</h2>
+            <p className="text-body-sm text-on-surface-variant">Tap a code to copy it, then paste it at checkout. You can use one coupon or your cashback per order, not both.</p>
+          </div>
+        </div>
+        {coupons.length === 0 ? (
+          <EmptyState icon="sell" title="No coupons right now" message="New codes show up here when they go live. Keep an eye out around fests and exams." />
+        ) : (
+          <div className="grid gap-gutter md:grid-cols-2" data-testid="coupon-list">
             {coupons.map((c) => (
-              <CouponCard key={c.code} coupon={c} />
+              <CouponTicket key={c.code} coupon={c} />
             ))}
           </div>
-        </>
-      )}
+        )}
+      </section>
 
-      <h2 className="mb-space-sm text-headline-sm text-on-surface">History</h2>
-      {summary.entries.length === 0 ? (
-        <EmptyState
-          icon="history"
-          title="Nothing here yet"
-          message="Every rupee of cashback you earn or spend shows up here, with the order it came from."
-        />
-      ) : (
-        <div className="card px-space-md">
-          {summary.entries.map((entry) => (
-            <Movement key={entry.id} entry={entry} />
-          ))}
+      <section>
+        <div className="mb-space-md flex flex-wrap items-end justify-between gap-space-sm">
+          <h2 className="text-headline-md text-on-surface">Cashback history</h2>
+          <div className="flex flex-wrap gap-space-xs" role="group" aria-label="Filter history">
+            {(['all', 'earned', 'redeemed', 'returned'] as HistoryFilter[]).map((f) => (
+              <button
+                key={f}
+                type="button"
+                data-testid={`history-filter-${f}`}
+                onClick={() => setFilter(f)}
+                className={`pill ${filter === f ? 'pill-active' : ''}`}
+              >
+                {{ all: 'All', earned: 'Earned', redeemed: 'Spent', returned: 'Given back' }[f]}
+              </button>
+            ))}
+          </div>
         </div>
-      )}
+        {entries.length === 0 ? (
+          <EmptyState
+            icon="history"
+            title={filter === 'all' ? 'No cashback yet' : 'Nothing here'}
+            message={
+              filter === 'all'
+                ? 'Each rupee you earn or spend will show up here, with the order it came from.'
+                : 'Nothing matches this filter yet.'
+            }
+            action={filter === 'all' ? <Link to="/" className="btn-primary mt-space-sm">Order something</Link> : undefined}
+          />
+        ) : (
+          <div className="card px-space-md" data-testid="cashback-history">
+            {entries.map((entry) => (
+              <Movement key={entry.id} entry={entry} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

@@ -50,10 +50,10 @@ export function dayAndTime(iso: string): string {
 /** Deterministic fallback art so stalls without a photo still look intentional. */
 export function placeholderGradient(seed: string): string {
   const warm = [
-    'from-[#FFEBEE] to-[#FFCDD2]',
-    'from-[#FFF3E0] to-[#FFE0B2]',
-    'from-[#FBE9E7] to-[#FFCCBC]',
-    'from-[#FFF8E1] to-[#FFECB3]',
+    'from-[#FFF0F1] to-[#FFD3D8]',
+    'from-[#FFFFFF] to-[#FFE3E6]',
+    'from-[#FDE8E8] to-[#F9C6CC]',
+    'from-[#FFF5F5] to-[#FFDCDC]',
   ];
   let hash = 0;
   for (let i = 0; i < seed.length; i += 1) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;

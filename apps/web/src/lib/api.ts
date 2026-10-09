@@ -209,6 +209,42 @@ export interface Analytics {
   top_vendors: { vendor_id: string; stall_name: string; orders: number; revenue: number }[];
 }
 
+/** One slice of a stall's takings; `orders` counts paid orders only. */
+export interface MoneySplit {
+  orders: number;
+  revenue: number;
+}
+
+/** Mirrors VendorAnalyticsOut - the same breakdown the merchant app shows. */
+export interface VendorFinances {
+  range_days: number;
+  generated_at: string;
+  totals: {
+    orders: number;
+    revenue: number;
+    active_orders: number;
+    refused_orders: number;
+    refused_value: number;
+    dine_in: MoneySplit;
+    delivery: MoneySplit;
+    cash: MoneySplit;
+    prepaid: MoneySplit;
+    dine_in_prepaid: MoneySplit;
+    dine_in_cash: MoneySplit;
+    delivery_prepaid: MoneySplit;
+    delivery_cash: MoneySplit;
+    outstanding: MoneySplit;
+    refunded: MoneySplit;
+  };
+  orders_by_day: { day: string; orders: number; revenue: number }[];
+  hours: { hour: number; orders: number }[];
+  top_dishes: { name: string; variant_name: string | null; quantity: number; revenue: number }[];
+  pending_price_changes: number;
+}
+
+/** An order as the admin sees it: no handover code, plus the stall name. */
+export type AdminOrder = Omit<Order, 'delivery_code'> & { stall_name: string | null };
+
 /** A dish price, or one size of a dish. The two live in different id spaces. */
 export type PriceChangeTarget = 'item' | 'variant';
 
@@ -470,6 +506,15 @@ export const api = {
 
   // --- Admin ---
   analytics: (days = 30) => request<Analytics>('GET', `/admin/analytics?days=${days}`),
+
+  adminOrders: (params: { vendorId?: string; status?: OrderStatus; days: number }) => {
+    const query = new URLSearchParams({ days: String(params.days) });
+    if (params.vendorId) query.set('vendor_id', params.vendorId);
+    if (params.status) query.set('status', params.status);
+    return request<AdminOrder[]>('GET', `/admin/orders?${query}`);
+  },
+  vendorFinances: (vendorId: string, days: number) =>
+    request<VendorFinances>('GET', `/admin/vendors/${vendorId}/finances?days=${days}`),
 
   adminVendors: (pendingOnly = false) =>
     request<Vendor[]>('GET', `/admin/vendors?pending_only=${pendingOnly}`),

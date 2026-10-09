@@ -44,9 +44,12 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center gap-space-sm rounded-lg border border-dashed border-outline px-space-lg py-space-xl text-center">
-      <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-container">
-        <Icon name={icon} className="text-[28px] text-on-surface-variant" />
+    <div
+      data-testid="empty-state"
+      className="flex animate-rise flex-col items-center gap-space-sm rounded-xl border-2 border-dashed border-outline bg-surface-container/40 px-space-lg py-space-xl text-center"
+    >
+      <span className="flex h-16 w-16 -rotate-6 items-center justify-center rounded-lg bg-primary text-white shadow-card-hover">
+        <Icon name={icon} className="text-[30px]" />
       </span>
       <h3 className="text-headline-sm text-on-surface">{title}</h3>
       <p className="max-w-sm text-body-sm text-on-surface-variant">{message}</p>
@@ -57,10 +60,13 @@ export function EmptyState({
 
 export function ErrorRetry({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex flex-col items-center gap-space-sm rounded-lg border border-outline-variant bg-primary-tint/40 px-space-lg py-space-xl text-center">
-      <Icon name="error" className="text-[28px] text-primary" />
+    <div
+      data-testid="error-retry"
+      className="flex flex-col items-center gap-space-sm rounded-xl border border-primary/20 bg-primary-tint px-space-lg py-space-xl text-center"
+    >
+      <Icon name="wifi_off" className="text-[32px] text-primary" />
       <p className="max-w-sm text-body-sm text-on-surface-medium">{message}</p>
-      <button type="button" className="btn-secondary" onClick={onRetry}>
+      <button type="button" className="btn-primary" onClick={onRetry} data-testid="error-retry-button">
         Try again
       </button>
     </div>
@@ -142,13 +148,14 @@ export function Sheet({
         type="button"
         aria-label="Close"
         onClick={onClose}
-        className="absolute inset-0 cursor-default bg-black/40"
+        className="absolute inset-0 cursor-default bg-on-surface/50 backdrop-blur-sm"
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-t-xl bg-surface-container-lowest p-space-md shadow-sheet sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[28rem] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl"
+        data-testid="sheet-dialog"
+        className="absolute inset-x-0 bottom-0 max-h-[85vh] overflow-y-auto rounded-t-xl bg-surface-container-lowest p-space-md shadow-sheet sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[32rem] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl"
       >
         <div className="mb-space-sm flex items-center justify-between">
           <h3 className="text-headline-sm text-on-surface">{title}</h3>

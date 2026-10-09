@@ -202,7 +202,7 @@ function CartRail({ vendor }: { vendor: VendorDetail }) {
 
       {isEmpty ? (
         <p className="py-space-md text-center text-body-sm text-on-surface-variant">
-          Nothing added yet. Tap <span className="text-on-surface">Add</span> on any dish.
+          Your cart is empty. Tap <span className="font-semibold text-primary">Add</span> on a dish to start.
         </p>
       ) : (
         <>
@@ -234,14 +234,14 @@ function CartRail({ vendor }: { vendor: VendorDetail }) {
 
           <div className="flex flex-col gap-space-xs border-t border-outline-variant pt-space-sm text-body-sm">
             <div className="flex justify-between text-on-surface-variant">
-              <span>Item subtotal</span>
+              <span>Items</span>
               <span className="text-on-surface">{rupees(subtotal)}</span>
             </div>
             {/* No delivery fee, service charge or taxes: you collect at the
                 counter and pay the stall directly. */}
             <div className="flex justify-between text-on-surface-variant">
-              <span>Pickup</span>
-              <span className="text-success">Free</span>
+              <span>Service fee</span>
+              <span className="text-success">None</span>
             </div>
           </div>
 
@@ -256,17 +256,17 @@ function CartRail({ vendor }: { vendor: VendorDetail }) {
             disabled={!vendor.is_open}
             onClick={() => navigate('/checkout')}
           >
-            {vendor.is_open ? 'Review & place order' : 'Stall is closed'}
+            {vendor.is_open ? 'Go to checkout' : 'This stall is closed'}
             {vendor.is_open && <Icon name="arrow_forward" className="text-[18px]" />}
           </button>
 
           <button type="button" className="btn-ghost w-full text-body-sm" onClick={clear}>
-            Clear order
+            Empty cart
           </button>
 
           <p className="flex items-center justify-center gap-space-xs text-label-md text-on-surface-variant">
             <Icon name="lock" className="text-[16px] text-primary" />
-            Pay online to confirm
+            Secure checkout with Razorpay
           </p>
         </>
       )}
@@ -286,7 +286,7 @@ export default function Stall() {
     try {
       setVendor(await api.vendorDetail(vendorId));
     } catch {
-      setError("Couldn't load this stall.");
+      setError("We couldn't load this stall. Please try again.");
     }
   }
 
@@ -324,10 +324,11 @@ export default function Stall() {
     <div className="mx-auto max-w-content px-margin-mobile py-space-lg md:px-margin md:py-space-xl">
       <Link
         to="/"
-        className="mb-space-md inline-flex items-center gap-space-xs text-label-md text-on-surface-variant hover:text-on-surface"
+        data-testid="stall-back-link"
+        className="group mb-space-md inline-flex items-center gap-space-xs text-label-md text-on-surface-variant transition-colors hover:text-primary"
       >
-        <Icon name="arrow_back" className="text-[18px]" />
-        All stalls
+        <Icon name="arrow_back" className="text-[18px] transition-transform group-hover:-translate-x-1" />
+        Back to all stalls
       </Link>
 
       {/* Banner */}
@@ -340,15 +341,17 @@ export default function Stall() {
               className="h-full w-full object-cover"
             />
           ) : (
-            <div
-              className={`h-full w-full bg-gradient-to-br ${placeholderGradient(vendor.id)}`}
-            />
+            <div className="relative h-full w-full overflow-hidden bg-primary">
+              <span className="absolute -right-6 -top-10 select-none font-display text-[260px] font-extrabold leading-none text-white/10">
+                {vendor.stall_name.charAt(0)}
+              </span>
+            </div>
           )}
         </div>
-        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+        {vendor.cover_image_url && <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />}
         <div className="absolute bottom-space-md left-space-md right-space-md flex flex-wrap items-end justify-between gap-space-sm">
           <div className="min-w-0">
-            <h1 className="truncate text-headline-lg text-white">{vendor.stall_name}</h1>
+            <h1 className="truncate text-headline-lg text-white md:text-[44px] md:leading-[48px]" data-testid="stall-name">{vendor.stall_name}</h1>
             {vendor.description && (
               <p className="line-clamp-1 max-w-xl text-body-sm text-white/85">
                 {vendor.description}
@@ -357,7 +360,7 @@ export default function Stall() {
           </div>
           <span
             className={`inline-flex h-8 items-center gap-space-xs rounded-full px-space-md text-label-md ${
-              vendor.is_open ? 'bg-success text-white' : 'bg-on-surface/85 text-white'
+              vendor.is_open ? 'bg-white text-success' : 'bg-on-surface text-white'
             }`}
           >
             <Icon name={vendor.is_open ? 'check_circle' : 'bedtime'} className="text-[16px]" />
@@ -369,23 +372,23 @@ export default function Stall() {
       {!vendor.is_open && (
         <div className="mb-space-lg flex items-center gap-space-sm rounded-lg bg-primary-tint px-space-md py-space-sm text-body-sm text-on-surface-medium">
           <Icon name="info" className="text-[20px] text-primary" />
-          This stall isn't taking orders right now. You can still browse the menu.
+          This stall is closed at the moment. Have a look at the menu and come back when it opens.
         </div>
       )}
 
       {/* Info strip - the mockup's delivery time / fee / min order row,
           carrying what's actually true for campus pickup. */}
-      <div className="mb-space-lg grid grid-cols-3 divide-x divide-outline-variant overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest">
+      <div className="mb-space-lg grid grid-cols-3 divide-x divide-outline overflow-hidden rounded-lg border border-outline bg-white">
         {[
           [
             'storefront',
             'Serves',
             [vendor.dine_in_enabled && 'Dine in', vendor.delivery_enabled && 'Delivery']
               .filter(Boolean)
-              .join(' · ') || 'Not taking orders',
+              .join(' · ') || 'Not serving right now',
           ],
-          ['credit_card', 'Payment', 'Online'],
-          ['restaurant_menu', 'On the menu', `${itemCount} items`],
+          ['credit_card', 'Pay', vendor.delivery_enabled ? 'Online, or on delivery' : 'Online'],
+          ['restaurant_menu', 'Menu', `${itemCount} ${itemCount === 1 ? 'dish' : 'dishes'}`],
         ].map(([icon, label, value]) => (
           <div key={label} className="flex flex-col items-center gap-space-xs px-space-sm py-space-md">
             <Icon name={icon} className="text-[20px] text-primary" />
@@ -417,8 +420,8 @@ export default function Stall() {
           {sections.length === 0 ? (
             <EmptyState
               icon="restaurant_menu"
-              title="No dishes yet"
-              message="This stall hasn't added anything to its menu. Check back soon."
+              title="The menu is empty"
+              message="This stall hasn't put up its menu yet. Check back a little later."
             />
           ) : (
             sections.map((section) => (
@@ -470,7 +473,7 @@ function MobileCartBar({ vendor }: { vendor: VendorDetail }) {
           disabled={!vendor.is_open}
           onClick={() => navigate('/checkout')}
         >
-          {vendor.is_open ? 'Review order' : 'Stall closed'}
+          {vendor.is_open ? 'Checkout' : 'Stall closed'}
         </button>
       </div>
     </div>

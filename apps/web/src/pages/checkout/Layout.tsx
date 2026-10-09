@@ -79,10 +79,10 @@ export default function CheckoutLayout() {
         <EmptyState
           icon="shopping_bag"
           title="Your order is empty"
-          message="Pick a stall and add a few dishes, then come back here to place the order."
+          message="Pick a stall, add a few dishes, and come back here to order."
           action={
             <Link to="/" className="btn-primary mt-space-sm">
-              Browse stalls
+              See the stalls
             </Link>
           }
         />

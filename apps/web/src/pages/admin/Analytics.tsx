@@ -3,6 +3,8 @@ import { ApiError, api } from '../../lib/api';
 import type { Analytics as AnalyticsData } from '../../lib/api';
 import { BarList, TimeSeries } from '../../components/charts';
 import { ErrorRetry, Icon, PageLoader } from '../../components/ui';
+import { STATUS_LABEL } from '../../lib/types';
+import { Panel, RangePicker, StatTile, inr } from './parts';
 
 const RANGES = [
   { days: 7, label: '7 days' },
@@ -10,67 +12,12 @@ const RANGES = [
   { days: 90, label: '90 days' },
 ];
 
-const STATUS_LABELS: Record<string, string> = {
-  placed: 'Placed',
-  accepted: 'Accepted',
-  preparing: 'Preparing',
-  ready: 'Ready',
-  completed: 'Completed',
-  rejected: 'Rejected',
-  cancelled: 'Cancelled',
-};
-
-const rupees = (n: number) =>
-  `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const rupees = inr;
 
 /** "12 Sep" - short enough to sit under a tick without collisions. */
 function dayLabel(iso: string) {
   const d = new Date(`${iso}T00:00:00`);
   return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-}
-
-function StatTile({
-  icon,
-  label,
-  value,
-  hint,
-}: {
-  icon: string;
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <div className="card flex flex-col gap-space-xs p-space-md">
-      <div className="flex items-center gap-space-xs text-on-surface-variant">
-        <Icon name={icon} className="text-[18px]" />
-        <span className="text-label-md">{label}</span>
-      </div>
-      {/* The number is the point of a stat tile, so it gets the size. */}
-      <p className="text-headline-lg text-on-surface tabular-nums">{value}</p>
-      {hint && <p className="text-body-sm text-on-surface-variant">{hint}</p>}
-    </div>
-  );
-}
-
-function Panel({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="card flex flex-col gap-space-md p-space-md">
-      <div className="flex flex-col gap-1">
-        <h3 className="text-title-md text-on-surface">{title}</h3>
-        {subtitle && <p className="text-body-sm text-on-surface-variant">{subtitle}</p>}
-      </div>
-      {children}
-    </section>
-  );
 }
 
 export default function Analytics() {
@@ -110,62 +57,47 @@ export default function Analytics() {
 
   return (
     <div className="flex flex-col gap-space-lg">
-      {/* Filters in one row above the charts. */}
-      <div className="flex flex-wrap items-center gap-space-xs">
-        {RANGES.map((r) => (
-          <button
-            key={r.days}
-            type="button"
-            onClick={() => setDays(r.days)}
-            aria-pressed={days === r.days}
-            className={`rounded-full px-space-md py-space-xs text-label-md transition ${
-              days === r.days
-                ? 'bg-primary text-on-primary'
-                : 'bg-surface-container text-on-surface-medium hover:bg-surface-container-high'
-            }`}
-          >
-            {r.label}
-          </button>
-        ))}
-      </div>
+      <RangePicker days={days} onChange={setDays} options={RANGES} testid="overview-range" />
 
-      <div className="grid grid-cols-2 gap-space-md lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-space-sm lg:grid-cols-3">
         <StatTile
           icon="receipt_long"
           label="Orders"
+          tone="red"
           value={totals.orders.toLocaleString('en-IN')}
           hint={`in the last ${data.range_days} days`}
         />
         <StatTile
           icon="payments"
-          label="Revenue"
+          label="Money earned"
+          tone="dark"
           value={rupees(totals.revenue)}
-          hint="cancelled orders excluded"
+          hint="paid orders only, refusals left out"
         />
         <StatTile
           icon="pending_actions"
           label="Active now"
           value={String(totals.active_orders)}
-          hint="not yet collected"
+          hint="being made or on the way"
         />
         <StatTile icon="group" label="Customers" value={totals.customers.toLocaleString('en-IN')} />
-        <StatTile icon="storefront" label="Open stalls" value={String(totals.vendors)} />
+        <StatTile icon="storefront" label="Approved stalls" value={String(totals.vendors)} />
         <StatTile
           icon="how_to_reg"
           label="Awaiting approval"
           value={String(totals.pending_vendors)}
-          hint={totals.pending_vendors ? 'needs your attention' : 'all caught up'}
+          hint={totals.pending_vendors ? 'waiting for you' : 'all caught up'}
         />
       </div>
 
       {/* Two charts, not one with two axes: orders and rupees are different
           scales, and a shared axis would make their crossings meaningless. */}
       <div className="grid gap-space-md lg:grid-cols-2">
-        <Panel title="Orders per day" subtitle="Every day in range, including quiet ones.">
+        <Panel title="Orders per day" subtitle="Every day in the range, quiet days included.">
           <TimeSeries points={orderPoints} ariaLabel="Orders per day" />
         </Panel>
 
-        <Panel title="Revenue per day" subtitle="Cancelled orders are not counted.">
+        <Panel title="Money earned per day" subtitle="Only paid orders that weren't refused.">
           <TimeSeries
             points={revenuePoints}
             ariaLabel="Revenue per day in rupees"
@@ -173,17 +105,17 @@ export default function Analytics() {
           />
         </Panel>
 
-        <Panel title="Where orders are" subtitle="Status mix across the range.">
+        <Panel title="Order status" subtitle="Where every order in the range ended up.">
           <BarList
             items={data.status_breakdown.map((s) => ({
-              label: STATUS_LABELS[s.status] ?? s.status,
+              label: STATUS_LABEL[s.status] ?? s.status,
               value: s.count,
             }))}
             emptyLabel="No orders in this range yet."
           />
         </Panel>
 
-        <Panel title="Busiest stalls" subtitle="By number of orders.">
+        <Panel title="Busiest stalls" subtitle="Ranked by number of orders.">
           <BarList
             items={data.top_vendors.map((v) => ({
               label: v.stall_name,

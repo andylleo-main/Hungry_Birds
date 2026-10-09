@@ -1,0 +1,8 @@
+{
+  "name": "hb-preview-shim",
+  "private": true,
+  "scripts": {
+    "start": "cd ../apps/web && npx vite --config ../../frontend/vite.config.ts"
+  },
+  "type": "module"
+}

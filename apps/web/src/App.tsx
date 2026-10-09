@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { useLayoutEffect } from 'react';
 import type { ReactNode } from 'react';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -17,6 +18,15 @@ import Offers from './pages/Offers';
 import Profile from './pages/Profile';
 import AdminPanel from './pages/admin/AdminPanel';
 
+/** Every navigation lands at the top of the new page, not where the old one was. */
+function ScrollToTop() {
+  const { pathname, search } = useLocation();
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [pathname, search]);
+  return null;
+}
+
 function Shell({ children }: { children: ReactNode }) {
   // The four-column footer is the landing page's, and only its. Under a
   // checkout, an order being tracked or the admin panel it is a wall of
@@ -26,6 +36,7 @@ function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col">
+      <ScrollToTop />
       <Header />
       {/* Offset the fixed 80px header. */}
       <main className="flex-1 pt-20">{children}</main>
@@ -43,8 +54,8 @@ function AdminOnly({ children }: { children: ReactNode }) {
       <div className="mx-auto max-w-content px-margin-mobile py-space-xl md:px-margin">
         <EmptyState
           icon="lock"
-          title="Admins only"
-          message="This account doesn't have admin access. Ask an existing admin to promote it."
+          title="This page is for admins"
+          message="Your account can't open the admin panel. If you should have access, ask an existing admin to add you."
         />
       </div>
     );

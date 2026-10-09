@@ -14,7 +14,21 @@
     overscroll-behavior: none;
   }
 
-  /* Material Symbols, used throughout the mockups for iconography. */
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+  }
+
+  ::selection {
+    @apply bg-primary text-on-primary;
+  }
+
+  :focus-visible {
+    outline: 2px solid #d7263d;
+    outline-offset: 2px;
+  }
+
   .material-symbols-outlined {
     font-family: 'Material Symbols Outlined';
     font-weight: normal;
@@ -32,49 +46,75 @@
 }
 
 @layer components {
-  /* Primary CTA: pill, 48px, per the spec's Buttons section. */
   .btn-primary {
     @apply inline-flex h-12 items-center justify-center gap-space-sm rounded-full bg-primary px-space-lg
-           text-label-lg text-on-primary transition-colors hover:bg-primary-hover
+           text-label-lg text-on-primary transition-[background-color,transform,box-shadow] duration-200
+           hover:bg-primary-hover active:scale-[0.98]
            disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-secondary {
-    @apply inline-flex h-12 items-center justify-center gap-space-sm rounded-full bg-primary-tint px-space-lg
-           text-label-lg text-primary transition-colors hover:bg-[#FFCDD2]
+    @apply inline-flex h-12 items-center justify-center gap-space-sm rounded-full border border-primary/25
+           bg-primary-tint px-space-lg text-label-lg text-primary transition-[background-color,transform] duration-200
+           hover:bg-[#FFE0E3] active:scale-[0.98]
            disabled:cursor-not-allowed disabled:opacity-50;
   }
 
+  .btn-dark {
+    @apply inline-flex h-12 items-center justify-center gap-space-sm rounded-full bg-on-surface px-space-lg
+           text-label-lg text-white transition-[background-color,transform] duration-200
+           hover:bg-black active:scale-[0.98] disabled:opacity-50;
+  }
+
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-space-sm rounded px-space-md py-space-sm
-           text-label-lg text-on-surface transition-colors hover:bg-surface-container;
+    @apply inline-flex items-center justify-center gap-space-sm rounded-full px-space-md py-space-sm
+           text-label-lg text-on-surface transition-colors duration-200 hover:bg-surface-container;
   }
 
-  /* Card level (1dp) from the elevation scale. */
   .card {
-    @apply rounded-lg border border-outline-variant bg-surface-container-lowest shadow-card;
+    @apply rounded-lg border border-outline bg-surface-container-lowest shadow-card;
   }
 
-  /* 48px field, container fill, red focus ring. */
   .field {
-    @apply h-12 w-full rounded bg-surface-container px-space-md text-body-md text-on-surface
-           placeholder:text-on-surface-variant focus:bg-surface-container-lowest focus:outline-none
-           focus:ring-[1.5px] focus:ring-primary;
+    @apply h-12 w-full rounded-md border border-outline bg-white px-space-md text-body-md text-on-surface
+           transition-[border-color,box-shadow] duration-200
+           placeholder:text-on-surface-variant/70 focus:border-primary focus:outline-none
+           focus:ring-4 focus:ring-primary/10;
   }
 
   .pill {
-    @apply inline-flex h-9 items-center gap-space-xs rounded-full border border-outline-variant
-           bg-surface-container-lowest px-space-md text-label-md text-on-surface-medium
-           transition-colors hover:bg-surface-container;
+    @apply inline-flex h-9 items-center gap-space-xs whitespace-nowrap rounded-full border border-outline
+           bg-white px-space-md text-label-md text-on-surface-medium
+           transition-[background-color,border-color,color] duration-200 hover:border-primary/40 hover:text-primary;
   }
 
   .pill-active {
-    @apply border-transparent bg-primary text-on-primary hover:bg-primary-hover;
+    @apply border-primary bg-primary text-on-primary hover:bg-primary-hover hover:text-on-primary;
   }
 
-  /* Micro-pill used for tags (Bestseller, Veg, Closed...). */
   .badge {
-    @apply inline-flex h-5 items-center gap-space-xs rounded-full bg-primary-tint px-space-sm
-           text-label-sm uppercase tracking-[0.02em] text-primary;
+    @apply inline-flex h-5 items-center gap-space-xs whitespace-nowrap rounded-full bg-primary-tint px-space-sm
+           text-label-sm uppercase text-primary;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-space-xs text-label-sm uppercase tracking-[0.14em] text-primary;
+  }
+
+  .page {
+    @apply mx-auto max-w-content px-margin-mobile py-space-lg md:px-margin md:py-space-xl;
+  }
+
+  /* Perforated edge, for anything that reads like a ticket or a receipt. */
+  .perforated {
+    background-image: radial-gradient(circle at 8px 50%, transparent 5px, currentColor 5.5px);
+    background-size: 16px 100%;
+  }
+
+  .dotted-rule {
+    background-image: linear-gradient(to right, #ebdcd9 50%, transparent 50%);
+    background-size: 10px 1px;
+    background-repeat: repeat-x;
+    height: 1px;
   }
 }

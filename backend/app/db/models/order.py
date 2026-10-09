@@ -2,6 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -22,6 +23,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.locations import label_for
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.db.models.payment import PaymentStatus, PaymentStatusType
+
+if TYPE_CHECKING:
+    from app.db.models.rider import Rider
+    from app.db.models.user import User
 
 
 class FulfilmentType(StrEnum):

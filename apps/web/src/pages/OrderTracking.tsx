@@ -18,23 +18,23 @@ type Step = { status: OrderStatus; icon: string; blurb: string };
  */
 function timelineFor(fulfilment: FulfilmentType): Step[] {
   const start: Step[] = [
-    { status: 'awaiting_payment', icon: 'credit_card', blurb: 'Waiting for your payment' },
-    { status: 'placed', icon: 'receipt_long', blurb: 'Sent to the stall' },
-    { status: 'accepted', icon: 'check_circle', blurb: 'The stall confirmed your order' },
-    { status: 'preparing', icon: 'skillet', blurb: 'Being cooked right now' },
+    { status: 'awaiting_payment', icon: 'credit_card', blurb: 'Finish paying to send it to the stall' },
+    { status: 'placed', icon: 'receipt_long', blurb: 'The stall has your order' },
+    { status: 'accepted', icon: 'check_circle', blurb: 'The stall said yes' },
+    { status: 'preparing', icon: 'skillet', blurb: 'On the stove right now' },
   ];
   if (fulfilment === 'delivery') {
     return [
       ...start,
-      { status: 'ready', icon: 'shopping_bag', blurb: 'Packed and ready to go out' },
-      { status: 'out_for_delivery', icon: 'delivery_dining', blurb: 'On its way to you' },
-      { status: 'completed', icon: 'done_all', blurb: 'Delivered and paid' },
+      { status: 'ready', icon: 'shopping_bag', blurb: 'Packed and waiting for the rider' },
+      { status: 'out_for_delivery', icon: 'delivery_dining', blurb: 'Heading your way' },
+      { status: 'completed', icon: 'done_all', blurb: 'Delivered. Enjoy your food!' },
     ];
   }
   return [
     ...start,
-    { status: 'ready', icon: 'shopping_bag', blurb: 'Ready at the counter' },
-    { status: 'completed', icon: 'done_all', blurb: 'Picked up and paid' },
+    { status: 'ready', icon: 'shopping_bag', blurb: 'Ready. Grab it from the counter' },
+    { status: 'completed', icon: 'done_all', blurb: 'Picked up. Enjoy your food!' },
   ];
 }
 
@@ -52,7 +52,7 @@ export default function OrderTracking() {
     try {
       setOrder(await api.order(orderId));
     } catch {
-      setError("Couldn't load this order.");
+      setError("We couldn't load this order. Please try again.");
     }
   }
 
@@ -104,7 +104,7 @@ export default function OrderTracking() {
       setPayError(
         err instanceof ApiError
           ? err.message
-          : "Couldn't reopen the payment. Nothing was charged.",
+          : "We couldn't reopen the payment. You haven't been charged.",
       );
       setPaying(false);
     }
@@ -190,7 +190,7 @@ export default function OrderTracking() {
         className="mb-space-md inline-flex items-center gap-space-xs text-label-md text-on-surface-variant hover:text-on-surface"
       >
         <Icon name="arrow_back" className="text-[18px]" />
-        All orders
+        Back to your orders
       </Link>
 
       {order.payment_status === 'due' && (
@@ -252,8 +252,8 @@ export default function OrderTracking() {
             </p>
             <p className="text-body-sm text-on-surface-variant">
               {order.fulfilment_type === 'delivery'
-                ? 'Includes the ride over. The stall will update this if it changes.'
-                : 'The stall will update this if it changes.'}
+                ? 'Includes the delivery trip. The stall will update this if anything changes.'
+                : 'The stall will update this if anything changes.'}
             </p>
           </div>
         </div>
@@ -309,17 +309,17 @@ export default function OrderTracking() {
               <div>
                 <p className="text-label-lg text-on-surface">
                   {order.status === 'rejected'
-                    ? 'The stall could not take this order'
+                    ? "The stall couldn't take this order"
                     : 'This order was cancelled'}
                 </p>
                 <p className="text-body-sm text-on-surface-variant">
                   {order.payment_status === 'refunded'
-                    ? 'Your money has been refunded.'
+                    ? "You've been refunded in full."
                     : order.payment_status === 'paid' ||
                         order.payment_status === 'refund_pending' ||
                         order.payment_status === 'refund_failed'
                       ? 'Your refund is on its way back to the card you paid with. Banks usually take a few working days.'
-                      : 'Nothing was charged.'}
+                      : "You weren't charged anything."}
                 </p>
               </div>
             </div>
@@ -374,7 +374,7 @@ export default function OrderTracking() {
               refunds. */}
           {order.status === 'placed' && (
             <p className="mt-space-sm text-body-sm text-on-surface-variant">
-              Need to change something? Call the stall before they start cooking.
+              Want to change something? Call the stall before they start cooking.
             </p>
           )}
         </div>
@@ -420,7 +420,7 @@ export default function OrderTracking() {
             isActive(order.status) && (
               <div className="rounded-lg border-[1.5px] border-primary bg-primary-tint/40 p-space-md text-center">
                 <p className="text-label-sm uppercase tracking-wide text-on-surface-variant">
-                  Give this to whoever delivers
+                  Your delivery code
                 </p>
                 <p className="py-space-xs text-[32px] font-bold leading-none tracking-[0.3em] text-primary">
                   {order.delivery_code}
@@ -459,8 +459,8 @@ export default function OrderTracking() {
           {order.fulfilment_type === 'delivery' && !order.rider_phone && (
             <p className="rounded bg-surface-container px-space-sm py-space-sm text-body-sm text-on-surface-variant">
               {order.self_delivery
-                ? "The stall is bringing this one over themselves."
-                : 'The stall will let you know who is bringing it.'}
+                ? "The stall is delivering this one themselves."
+                : "You'll see who's bringing it once the stall assigns a rider."}
             </p>
           )}
 
