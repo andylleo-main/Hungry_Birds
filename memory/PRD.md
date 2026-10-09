@@ -18,8 +18,12 @@
 - Copy rephrased across pages.
 - Tested: iteration_1 — 100% backend & frontend.
 
+- Weekly payouts (admin): GET /api/admin/payouts?weeks=&vendor_id= (IST Mon–Sun weeks; prepaid via Razorpay, cash in hand, Hungry Birds-funded discounts, owed to stall). New 'Weekly payouts' admin tab + per-stall weekly payouts panel in Finances. Tested iteration_2: 100%.
+
 ## Backlog
-- P1: CSV export of a stall's finances / orders for settlement.
+- P1: CSV export of a stall's finances / weekly payouts for settlement.
+- P1: Mark a week as settled (paid out) per stall.
+- P2: Show the weekly payout to stall owners in the merchant app (user asked to leave the merchant app unchanged for now).
 - P1: Pagination on admin orders beyond 500.
 - P2: Live (websocket) refresh on admin orders.
 - P2: Restyle remaining inner components of checkout/tracking more deeply.

@@ -1,0 +1,19 @@
+{
+  "summary": "Full E2E test of the new Weekly Payouts feature (admin). Backend: 14/14 pytest cases pass covering auth gating (401/403), weeks bounds (0/27 -> 422; default 8; explicit N), newest-first ordering, Monday-Sunday calendar, per-row invariants (prepaid+cash+discounts == order_value; owed == order_value - cash_in_hand), totals equal sum of rows, vendor_id filter, unknown vendor returns empty weeks, and cross-check vs /admin/vendors/{id}/finances. Frontend: admin login -> admin-tab-payouts shows week label '5 Oct – 11 Oct' with prev/next arrows (next disabled on current week, prev disabled after walking 7 weeks back), all four tiles render correct totals (₹9,390 / ₹0 / ₹80 / ₹9,470 matching API sum), payout-table has rows for Gourmet Kitchen, Down South Cafe, Chai Point Hostel 4 with correct owed values, clicking payout-stall-<id> navigates to Finances tab and renders stall-payouts-table with 8 stall-payout-week-<YYYY-MM-DD> rows. Regression: all admin tabs (overview, orders, finances, stalls, prices, coupons, payouts) render and each tab switch resets scrollY to 0.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_admin_payouts.py", "/app/test_reports/pytest/admin_payouts.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/app/modules/admin/payouts.py build_payouts: SQL groups by date_trunc('week', ...) which in Postgres is ISO (Monday-based) -> matches week_start calculation. Correct.",
+    "AdminPayouts.tsx: SplitBar divides by (prepaid+cash+discounts) which equals order_value by invariant; safe. Totals row 'All stalls' uses vendor_id=uuid(int=0) sentinel - fine, but if ever rendered as a row via vendor_id key it could collide; currently only shown in <tfoot>, no issue.",
+    "Unknown vendor_id on /admin/payouts returns 200 with empty weeks instead of 404. Not required by spec (spec allows this) but inconsistent with /admin/vendors/{id}/finances which 404s on unknown vendor. Low priority."
+  ],
+  "updated_files": ["/app/backend/tests/test_admin_payouts.py", "/app/test_reports/iteration_2.json"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@bitmesra.ac.in / HungryAdmin@2026 (admin password login); student@bitmesra.ac.in via OTP (debug_code echoed).",
+  "seed_data_creation": "None added - used existing preview seed (3 stalls, 54 orders across 6 days).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Weekly payouts feature fully verified. Backend endpoint GET /api/admin/payouts?weeks=N&vendor_id=... is admin-only, returns PayoutsOut with weeks newest-first. Pytest file at /app/backend/tests/test_admin_payouts.py reusable as regression. UI data-testids used: admin-tab-payouts, admin-payouts, payout-week-label, payout-prev-week, payout-next-week, payout-total-{prepaid,cash,discounts,owed}, payout-table, payout-row-<vid>, payout-stall-<vid>, payout-owed-<vid>, stall-payouts-table, stall-payout-week-<YYYY-MM-DD>."
+}
