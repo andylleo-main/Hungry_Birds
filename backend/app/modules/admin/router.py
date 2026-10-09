@@ -13,6 +13,7 @@ from app.db.models.user import UserRole
 from app.db.models.vendor import Vendor
 from app.db.session import get_db
 from app.modules.admin.analytics import AnalyticsOut, build_analytics
+from app.modules.admin.payouts import PayoutsOut, build_payouts
 from app.modules.orders.schemas import OrderOut
 from app.modules.orders.service import order_query
 from app.modules.vendors.analytics import VendorAnalyticsOut, build_vendor_analytics
@@ -146,3 +147,17 @@ async def vendor_finances(
     """The same breakdown the stall sees in its merchant app, for one stall."""
     await _get_vendor_or_404(vendor_id, db)
     return await build_vendor_analytics(days, vendor_id, db)
+
+
+@analytics_router.get(
+    "/payouts",
+    response_model=PayoutsOut,
+    dependencies=[Depends(limit_by_user("admin_read", *limits.ADMIN_READ))],
+)
+async def weekly_payouts(
+    weeks: int = Query(8, ge=1, le=26),
+    vendor_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> PayoutsOut:
+    """Weekly settlement per stall: prepaid via Razorpay next to cash in hand."""
+    return await build_payouts(weeks, vendor_id, db)

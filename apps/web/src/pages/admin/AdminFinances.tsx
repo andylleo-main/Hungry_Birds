@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ApiError, api } from '../../lib/api';
-import type { MoneySplit, VendorFinances } from '../../lib/api';
+import type { MoneySplit, PayoutWeek, VendorFinances } from '../../lib/api';
+import { Legend, SplitBar, weekLabel } from './AdminPayouts';
 import type { Vendor } from '../../lib/types';
 import { EmptyState, ErrorRetry, Icon, PageLoader } from '../../components/ui';
 import { Panel, RangePicker, SectionHeading, StatTile, inr } from './parts';
@@ -87,6 +88,58 @@ function DayBars({ days }: { days: VendorFinances['orders_by_day'] }) {
   );
 }
 
+function StallPayouts({ vendorId }: { vendorId: string }) {
+  const [weeks, setWeeks] = useState<PayoutWeek[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setWeeks(null);
+    setFailed(false);
+    api.payouts(8, vendorId).then((r) => setWeeks(r.weeks)).catch(() => setFailed(true));
+  }, [vendorId]);
+
+  return (
+    <Panel title="Weekly payouts" subtitle="Prepaid via Razorpay next to cash already in the stall's hands, Monday to Sunday." action={<Legend />}>
+      {failed ? (
+        <p className="text-body-sm text-on-surface-variant">We couldn't load the weekly payouts.</p>
+      ) : !weeks ? (
+        <PageLoader />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-body-sm" data-testid="stall-payouts-table">
+            <thead>
+              <tr className="text-label-sm uppercase text-on-surface-variant">
+                <th className="py-space-sm text-left font-bold">Week</th>
+                <th className="px-space-sm text-right font-bold text-primary">Prepaid</th>
+                <th className="px-space-sm text-right font-bold text-on-surface">Cash in hand</th>
+                <th className="px-space-sm text-right font-bold">Discounts</th>
+                <th className="bg-primary-tint/60 px-space-sm text-right font-bold text-on-surface">Owed to stall</th>
+              </tr>
+            </thead>
+            <tbody>
+              {weeks.map((w) => {
+                const p = w.stalls[0];
+                return (
+                  <tr key={w.week_start} className="border-t border-outline" data-testid={`stall-payout-week-${w.week_start}`}>
+                    <td className="py-space-sm pr-space-md">
+                      <p className="text-label-lg">{weekLabel(w)}</p>
+                      {p && <div className="mt-[4px] max-w-[160px]"><SplitBar p={p} /></div>}
+                    </td>
+                    <td className="px-space-sm text-right font-display tabular-nums text-primary">{p ? inr(p.prepaid_online) : '—'}</td>
+                    <td className="px-space-sm text-right font-display tabular-nums">{p?.cash_in_hand ? inr(p.cash_in_hand) : '—'}</td>
+                    <td className="px-space-sm text-right tabular-nums text-on-surface-variant">{p?.discounts ? inr(p.discounts) : '—'}</td>
+                    <td className="bg-primary-tint/60 px-space-sm text-right font-display tabular-nums">{p ? inr(p.owed_to_stall) : '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function StallFinance({ vendor, onViewOrders }: { vendor: Vendor; onViewOrders: () => void }) {
   const [days, setDays] = useState(7);
   const [data, setData] = useState<VendorFinances | null>(null);
@@ -129,6 +182,7 @@ function StallFinance({ vendor, onViewOrders }: { vendor: Vendor; onViewOrders: 
       ) : (
         <FinanceBody data={data} />
       )}
+      <StallPayouts vendorId={vendor.id} />
     </div>
   );
 }

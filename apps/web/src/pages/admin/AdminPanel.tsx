@@ -7,9 +7,10 @@ import PriceChanges from './PriceChanges';
 import Coupons from './Coupons';
 import AdminOrders from './AdminOrders';
 import AdminFinances from './AdminFinances';
+import AdminPayouts from './AdminPayouts';
 import { SectionHeading } from './parts';
 
-type Tab = 'overview' | 'orders' | 'finances' | 'stalls' | 'prices' | 'coupons';
+type Tab = 'overview' | 'orders' | 'finances' | 'payouts' | 'stalls' | 'prices' | 'coupons';
 
 function VendorRow({
   vendor,
@@ -198,6 +199,7 @@ export default function AdminPanel() {
     { id: 'overview', label: 'Overview', icon: 'monitoring' },
     { id: 'orders', label: 'All orders', icon: 'receipt_long' },
     { id: 'finances', label: 'Finances', icon: 'account_balance' },
+    { id: 'payouts', label: 'Weekly payouts', icon: 'handshake' },
     { id: 'stalls', label: 'Stalls', icon: 'storefront', count: pending.length || null },
     { id: 'prices', label: 'Price changes', icon: 'price_change', count: priceCount },
     { id: 'coupons', label: 'Coupons', icon: 'sell', count: couponCount },
@@ -265,6 +267,8 @@ export default function AdminPanel() {
               <AdminOrders vendors={vendors} vendorId={ordersVendor} onVendorChange={setOrdersVendor} />
             ) : tab === 'finances' ? (
               <AdminFinances vendors={approved} vendorId={financeVendor} onSelect={setFinanceVendor} onViewOrders={openOrders} />
+            ) : tab === 'payouts' ? (
+              <AdminPayouts onOpenStall={openFinances} />
             ) : tab === 'stalls' ? (
               <Stalls pending={pending} approved={approved} busyId={busyId} act={act} openFinances={openFinances} openOrders={openOrders} />
             ) : tab === 'prices' ? (

@@ -242,6 +242,25 @@ export interface VendorFinances {
   pending_price_changes: number;
 }
 
+/** One stall's settlement for one week. prepaid_online + cash_in_hand + discounts = order_value. */
+export interface StallPayout {
+  vendor_id: string;
+  stall_name: string;
+  orders: number;
+  order_value: number;
+  prepaid_online: number;
+  cash_in_hand: number;
+  discounts: number;
+  owed_to_stall: number;
+}
+
+export interface PayoutWeek {
+  week_start: string;
+  week_end: string;
+  stalls: StallPayout[];
+  totals: StallPayout | null;
+}
+
 /** An order as the admin sees it: no handover code, plus the stall name. */
 export type AdminOrder = Omit<Order, 'delivery_code'> & { stall_name: string | null };
 
@@ -513,6 +532,11 @@ export const api = {
     if (params.status) query.set('status', params.status);
     return request<AdminOrder[]>('GET', `/admin/orders?${query}`);
   },
+  payouts: (weeks: number, vendorId?: string) =>
+    request<{ generated_at: string; weeks: PayoutWeek[] }>(
+      'GET',
+      `/admin/payouts?weeks=${weeks}${vendorId ? `&vendor_id=${vendorId}` : ''}`,
+    ),
   vendorFinances: (vendorId: string, days: number) =>
     request<VendorFinances>('GET', `/admin/vendors/${vendorId}/finances?days=${days}`),
 
